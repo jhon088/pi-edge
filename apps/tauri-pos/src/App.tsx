@@ -9,16 +9,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   describeError,
+  fetchCatalogStatus,
   fetchConnection,
   fetchCoreInfo,
   fetchEdgeState,
+  lookupBarcode,
   onStateChanged,
 } from "./api";
 import type {
   BridgeError,
+  CatalogStatus,
   ConnectionStatus,
   CoreInfo,
   EdgeState,
+  ProductLookup,
 } from "./types";
 
 /** Fallback refresh while the core is unreachable, so the UI notices its return. */
@@ -28,6 +32,7 @@ interface Snapshot {
   connection: ConnectionStatus;
   info: CoreInfo | null;
   state: EdgeState | null;
+  catalog: CatalogStatus | null;
   error: BridgeError | null;
 }
 
@@ -46,17 +51,19 @@ export default function App() {
     try {
       const connection = await fetchConnection();
       try {
-        const [info, state] = await Promise.all([
+        const [info, state, catalog] = await Promise.all([
           fetchCoreInfo(),
           fetchEdgeState(),
+          fetchCatalogStatus(),
         ]);
-        setSnapshot({ connection, info, state, error: null });
+        setSnapshot({ connection, info, state, catalog, error: null });
       } catch (failure) {
         // The core is unreachable or refused: report it, invent nothing.
         setSnapshot({
           connection: await fetchConnection(),
           info: null,
           state: null,
+          catalog: null,
           error: describeError(failure),
         });
       }
@@ -98,7 +105,7 @@ export default function App() {
     );
   }
 
-  const { connection, info, state, error } = snapshot;
+  const { connection, info, state, catalog, error } = snapshot;
 
   return (
     <main className="app">
@@ -160,6 +167,60 @@ export default function App() {
           )}
         </Card>
 
+        <Card title="Catalog">
+          {catalog?.active ? (
+            <>
+              <Field
+                label="Active version"
+                value={String(catalog.active.snapshot.version)}
+              />
+              <Field
+                label="Products"
+                value={String(catalog.active.stored.products)}
+              />
+              <Field
+                label="Barcodes"
+                value={String(catalog.active.stored.barcodes)}
+              />
+              <Field
+                label="Tax profiles"
+                value={String(catalog.active.stored.tax_profiles)}
+              />
+              <Field
+                label="Last activation"
+                value={catalog.active.snapshot.activated_at ?? "—"}
+              />
+              <Field
+                label="Content hash"
+                value={shortHash(catalog.active.snapshot.content_hash)}
+                mono
+              />
+            </>
+          ) : (
+            <p className="muted">
+              No active catalog: the register cannot start a sale.
+            </p>
+          )}
+          <Field
+            label="Pending version"
+            value={
+              catalog?.pending.length
+                ? catalog.pending
+                    .map((view) => String(view.snapshot.version))
+                    .join(", ")
+                : "—"
+            }
+          />
+          {catalog?.importing.length ? (
+            <Field
+              label="Importing"
+              value={catalog.importing
+                .map((view) => `v${view.snapshot.version}`)
+                .join(", ")}
+            />
+          ) : null}
+        </Card>
+
         <Card title="Outbox">
           <Field
             label="Pending events"
@@ -170,6 +231,10 @@ export default function App() {
           </p>
         </Card>
       </section>
+
+      <Card title="Barcode lookup">
+        <BarcodeLookup enabled={connection.connected} />
+      </Card>
 
       <Card title="Active transaction">
         {state?.active_transaction ? (
@@ -187,6 +252,84 @@ export default function App() {
         </span>
       </footer>
     </main>
+  );
+}
+
+function shortHash(hash: string | null): string {
+  if (!hash) {
+    return "—";
+  }
+  const [algorithm, digest] = hash.split(":");
+  return digest ? `${algorithm}:${digest.slice(0, 12)}…` : hash;
+}
+
+/**
+ * Diagnostic lookup. The core resolves the product and states the price; this
+ * component only shows what came back.
+ */
+function BarcodeLookup({ enabled }: { enabled: boolean }) {
+  const [barcode, setBarcode] = useState("");
+  const [result, setResult] = useState<ProductLookup | null>(null);
+  const [error, setError] = useState<BridgeError | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!barcode.trim()) {
+      return;
+    }
+    setBusy(true);
+    try {
+      setResult(await lookupBarcode(barcode.trim()));
+      setError(null);
+    } catch (failure) {
+      setResult(null);
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <form className="lookup" onSubmit={submit}>
+        <input
+          type="text"
+          value={barcode}
+          placeholder="Scan or type a barcode"
+          onChange={(event) => setBarcode(event.target.value)}
+          disabled={!enabled}
+        />
+        <button type="submit" disabled={!enabled || busy}>
+          {busy ? "Resolving…" : "Resolve"}
+        </button>
+      </form>
+      {result ? (
+        <div className="row">
+          <Field label="Product" value={result.product.name} />
+          <Field label="Reference" value={result.product.product_ref} mono />
+          <Field label="Unit price" value={result.product.unit_price.formatted} />
+          <Field
+            label="Tax"
+            value={`${result.tax_profile.code} (${
+              result.tax_profile.rate_bps / 100
+            }%, ${result.tax_profile.price_mode})`}
+          />
+          <Field
+            label="Snapshot"
+            value={`v${result.snapshot_version}`}
+          />
+        </div>
+      ) : null}
+      {error ? (
+        <p className="muted">
+          <code>{error.code}</code> {error.message}
+        </p>
+      ) : null}
+      <p className="muted">
+        Price and tax come from the core. React computes nothing.
+      </p>
+    </>
   );
 }
 

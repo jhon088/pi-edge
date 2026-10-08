@@ -1,0 +1,112 @@
+{
+  "version": 2,
+  "currency": "MXN",
+  "generated_at": "2026-10-09T06:00:00Z",
+  "tax_profiles": [
+    {
+      "code": "IVA16",
+      "name": "IVA 16%",
+      "rate_bps": 1600,
+      "price_mode": "TAX_EXCLUSIVE"
+    },
+    {
+      "code": "IVA8",
+      "name": "IVA 8% frontera",
+      "rate_bps": 800,
+      "price_mode": "TAX_EXCLUSIVE"
+    },
+    {
+      "code": "IVA0",
+      "name": "Tasa 0%",
+      "rate_bps": 0,
+      "price_mode": "TAX_EXCLUSIVE"
+    },
+    {
+      "code": "IVA16-INC",
+      "name": "IVA 16% incluido",
+      "rate_bps": 1600,
+      "price_mode": "TAX_INCLUSIVE"
+    }
+  ],
+  "products": [
+    {
+      "product_ref": "P-LECHE-1L",
+      "external_ref": "ERP-000123",
+      "sku": "SKU-LECHE",
+      "name": "Leche entera 1L",
+      "tax_profile": "IVA16",
+      "unit_price_minor": 2650,
+      "barcodes": [
+        "7501000000011",
+        "07501000000011"
+      ]
+    },
+    {
+      "product_ref": "P-TORTILLA-1K",
+      "external_ref": "ERP-000124",
+      "sku": "SKU-TORTILLA",
+      "name": "Tortilla de maiz 1kg",
+      "tax_profile": "IVA0",
+      "unit_price_minor": 1850,
+      "barcodes": [
+        "7501000000028"
+      ]
+    },
+    {
+      "product_ref": "P-REFRESCO-600",
+      "external_ref": "ERP-000125",
+      "sku": "SKU-REFRESCO",
+      "name": "Refresco 600ml",
+      "tax_profile": "IVA8",
+      "unit_price_minor": 1800,
+      "barcodes": [
+        "7501000000035"
+      ]
+    },
+    {
+      "product_ref": "P-CAFE-500",
+      "external_ref": "ERP-000126",
+      "sku": "SKU-CAFE",
+      "name": "Cafe molido 500g",
+      "tax_profile": "IVA16-INC",
+      "unit_price_minor": 14900,
+      "barcodes": [
+        "7501000000042"
+      ]
+    },
+    {
+      "product_ref": "P-JAMON-GRANEL",
+      "external_ref": "ERP-000127",
+      "sku": "SKU-JAMON",
+      "name": "Jamon granel 1kg",
+      "tax_profile": "IVA16",
+      "unit_price_minor": 18900,
+      "barcodes": [
+        "7501000000059"
+      ]
+    },
+    {
+      "product_ref": "P-SERVICIO-ENVIO",
+      "external_ref": "ERP-000900",
+      "sku": "SKU-ENVIO",
+      "name": "Servicio de envio",
+      "sellable": false,
+      "tax_profile": "IVA16",
+      "unit_price_minor": 5000,
+      "barcodes": [
+        "7501000000066"
+      ]
+    },
+    {
+      "product_ref": "P-PAN-BLANCO",
+      "external_ref": "ERP-000128",
+      "sku": "SKU-PAN",
+      "name": "Pan blanco grande",
+      "tax_profile": "IVA0",
+      "unit_price_minor": 4200,
+      "barcodes": [
+        "7501000000073"
+      ]
+    }
+  ]
+}

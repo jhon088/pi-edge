@@ -14,8 +14,12 @@ path = "src/main.rs"
 # No edge-application, no edge-storage: the CLI cannot reach the core
 # in-process even by accident.
 [dependencies]
+# The importer stands in for the server, so it needs the canonical content
+# model to compute the hashes PI.Edge will verify. It still owns no core and
+# never touches the database.
+edge-catalog = { workspace = true }
 edge-client = { workspace = true }
-edge-protocol = { workspace = true }
+edge-protocol = { workspace = true, features = ["catalog-mapping"] }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

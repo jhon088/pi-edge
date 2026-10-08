@@ -26,6 +26,8 @@ pub enum JournalEventType {
     TransactionCancelled,
     SessionClosed,
     BusinessDayClosed,
+    CatalogSnapshotImported,
+    CatalogSnapshotActivated,
 }
 
 impl JournalEventType {
@@ -41,6 +43,8 @@ impl JournalEventType {
             JournalEventType::TransactionCancelled => "TRANSACTION_CANCELLED",
             JournalEventType::SessionClosed => "SESSION_CLOSED",
             JournalEventType::BusinessDayClosed => "BUSINESS_DAY_CLOSED",
+            JournalEventType::CatalogSnapshotImported => "CATALOG_SNAPSHOT_IMPORTED",
+            JournalEventType::CatalogSnapshotActivated => "CATALOG_SNAPSHOT_ACTIVATED",
         }
     }
 
@@ -56,6 +60,8 @@ impl JournalEventType {
             "TRANSACTION_CANCELLED" => Ok(JournalEventType::TransactionCancelled),
             "SESSION_CLOSED" => Ok(JournalEventType::SessionClosed),
             "BUSINESS_DAY_CLOSED" => Ok(JournalEventType::BusinessDayClosed),
+            "CATALOG_SNAPSHOT_IMPORTED" => Ok(JournalEventType::CatalogSnapshotImported),
+            "CATALOG_SNAPSHOT_ACTIVATED" => Ok(JournalEventType::CatalogSnapshotActivated),
             other => Err(DomainError::UnknownEnumValue {
                 kind: "JournalEventType",
                 value: other.to_owned(),

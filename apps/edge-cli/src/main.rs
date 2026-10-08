@@ -10,17 +10,18 @@
 //! The Tauri UI uses the same `EdgeClient` against the same daemon, which is
 //! how we know the contract is real and not CLI-shaped.
 
+mod catalog;
 mod error;
 mod render;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, CommitCashPaymentRequestV1, InitDeviceRequestV1,
-    OpenRegisterSessionRequestV1, PROTOCOL_VERSION,
+    OpenRegisterSessionRequestV1, ProductSelectorV1, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -58,6 +59,34 @@ struct Cli {
     command: Command,
 }
 
+/// How to name a product. Exactly one, required.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct ProductArgs {
+    /// Scanned barcode.
+    #[arg(long)]
+    barcode: Option<String>,
+    /// Stock keeping unit.
+    #[arg(long)]
+    sku: Option<String>,
+    /// Canonical catalog reference assigned upstream.
+    #[arg(long)]
+    product: Option<String>,
+}
+
+impl ProductArgs {
+    fn to_selector(&self) -> Result<ProductSelectorV1, CliError> {
+        match (&self.barcode, &self.sku, &self.product) {
+            (Some(barcode), None, None) => Ok(ProductSelectorV1::Barcode(barcode.clone())),
+            (None, Some(sku), None) => Ok(ProductSelectorV1::Sku(sku.clone())),
+            (None, None, Some(product)) => Ok(ProductSelectorV1::ProductRef(product.clone())),
+            _ => Err(CliError::Input(
+                "name exactly one of --barcode, --sku or --product".to_owned(),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Runtime identity, status, schema version and uptime.
@@ -85,32 +114,52 @@ enum Command {
     },
     /// Start a new retail transaction.
     StartSale,
-    /// Add a priced item to the active transaction.
+    /// Add an item to the active transaction.
+    ///
+    /// The core resolves description, price, tax rate and price mode from the
+    /// snapshot this sale captured. A client cannot state a price.
     AddItem {
-        /// Canonical catalog reference.
-        #[arg(long)]
-        product: String,
-        #[arg(long)]
-        description: String,
-        /// Unit price in minor units.
-        #[arg(long)]
-        price: i64,
-        /// Tax rate in basis points (1600 = 16.00%).
-        #[arg(long = "tax-rate", default_value_t = 0)]
-        tax_rate: u32,
+        #[command(flatten)]
+        product: ProductArgs,
         /// Quantity in whole units.
         #[arg(long, default_value_t = 1)]
         qty: i64,
         /// Quantity in thousandths, for fractional units. Overrides --qty.
         #[arg(long = "qty-thousandths")]
         qty_thousandths: Option<i64>,
+    },
+    /// Import a catalog snapshot and stream it to the core in chunks.
+    ImportCatalog {
+        /// Snapshot file produced upstream (a fixture, for now).
+        file: PathBuf,
+        /// Activate the snapshot once it is committed.
         #[arg(long)]
-        sku: Option<String>,
-        #[arg(long)]
-        barcode: Option<String>,
-        /// Line discount in minor units.
-        #[arg(long, default_value_t = 0)]
-        discount: i64,
+        activate: bool,
+        /// Per-chunk byte budget. A client policy, not a protocol rule.
+        #[arg(long = "chunk-bytes")]
+        chunk_bytes: Option<usize>,
+    },
+    /// Active, pending and in-flight catalog snapshots.
+    CatalogStatus,
+    /// Progress of an open import, for resuming it.
+    ImportStatus {
+        #[arg(long = "snapshot")]
+        snapshot_id: String,
+    },
+    /// Activate a committed snapshot.
+    ActivateCatalog {
+        #[arg(long = "snapshot")]
+        snapshot_id: String,
+    },
+    /// Discard an open import.
+    AbortCatalog {
+        #[arg(long = "snapshot")]
+        snapshot_id: String,
+    },
+    /// Resolve a product the way a sale would, without touching a sale.
+    Lookup {
+        #[command(flatten)]
+        product: ProductArgs,
     },
     /// Compute the official totals.
     Total,
@@ -219,30 +268,43 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
         Command::StartSale => to_value(&client.start_transaction(request_id)?),
         Command::AddItem {
             product,
-            description,
-            price,
-            tax_rate,
             qty,
             qty_thousandths,
-            sku,
-            barcode,
-            discount,
         } => {
             let quantity_thousandths = qty_thousandths.unwrap_or(qty.saturating_mul(1_000));
             to_value(&client.add_item(
                 AddItemRequestV1 {
-                    product_ref: product.clone(),
-                    sku: sku.clone(),
-                    barcode: barcode.clone(),
-                    description: description.clone(),
+                    product: product.to_selector()?,
                     quantity_thousandths,
-                    unit_price_minor: *price,
-                    tax_rate_bps: *tax_rate,
-                    discount_minor: *discount,
                 },
                 request_id,
             )?)
         }
+        Command::ImportCatalog {
+            file,
+            activate,
+            chunk_bytes,
+        } => {
+            let outcome = catalog::import_catalog(
+                &client,
+                file,
+                chunk_bytes.unwrap_or(catalog::DEFAULT_CHUNK_BUDGET_BYTES),
+                *activate,
+            )?;
+            outcome.to_value()
+        }
+        Command::CatalogStatus => to_value(&client.catalog_status()?),
+        Command::ImportStatus { snapshot_id } => {
+            to_value(&client.catalog_import_status(snapshot_id)?)
+        }
+        Command::ActivateCatalog { snapshot_id } => {
+            to_value(&client.activate_catalog_snapshot(snapshot_id, request_id)?)
+        }
+        Command::AbortCatalog { snapshot_id } => {
+            client.abort_catalog_import(snapshot_id, request_id)?;
+            to_value(&json!({ "aborted": snapshot_id }))
+        }
+        Command::Lookup { product } => to_value(&client.lookup_product(product.to_selector()?)?),
         Command::Total => to_value(&client.totalize(request_id)?),
         Command::PayCash { amount } => to_value(&client.commit_cash_payment(
             CommitCashPaymentRequestV1 {

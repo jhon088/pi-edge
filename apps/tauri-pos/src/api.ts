@@ -11,9 +11,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   BridgeError,
+  CatalogStatus,
   ConnectionStatus,
   CoreInfo,
   EdgeState,
+  ProductLookup,
   StateChangedEvent,
 } from "./types";
 
@@ -46,6 +48,15 @@ export function fetchEdgeState(): Promise<EdgeState> {
 
 export function fetchConnection(): Promise<ConnectionStatus> {
   return invoke<ConnectionStatus>("connection_status");
+}
+
+export function fetchCatalogStatus(): Promise<CatalogStatus> {
+  return invoke<CatalogStatus>("catalog_status");
+}
+
+/** Resolve a barcode the way a sale would. The core prices it, not this code. */
+export function lookupBarcode(barcode: string): Promise<ProductLookup> {
+  return invoke<ProductLookup>("lookup_barcode", { barcode });
 }
 
 export function onStateChanged(

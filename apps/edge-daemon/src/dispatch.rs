@@ -11,15 +11,18 @@
 use std::sync::Arc;
 
 use edge_application::commands::{
-    CloseBusinessDayCommand, CloseRegisterSessionCommand, FinalizeTransactionCommand,
-    OpenBusinessDayCommand, StartTransactionCommand, TotalizeTransactionCommand,
+    AbortCatalogImportCommand, ActivateCatalogSnapshotCommand, CloseBusinessDayCommand,
+    CloseRegisterSessionCommand, FinalizeTransactionCommand, OpenBusinessDayCommand,
+    StartTransactionCommand, TotalizeTransactionCommand,
 };
 use edge_application::{AppError, EdgeApplication, CORE_VERSION};
+use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, RetailTransaction};
 use edge_protocol::{
-    error_codes, BusinessDayV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1,
-    OperationV1, PendingOutboxV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1,
-    ResultV1, RetailTransactionV1, PROTOCOL_VERSION,
+    error_codes, BusinessDayV1, CatalogImportStatusV1, CatalogSnapshotViewV1, CatalogStatusV1,
+    CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1, OperationV1, PendingOutboxV1,
+    ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
+    RetailTransactionV1, PROTOCOL_VERSION,
 };
 use edge_storage::SqliteEdgeStore;
 use uuid::Uuid;
@@ -118,6 +121,31 @@ impl Dispatcher {
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::PendingOutbox(PendingOutboxV1::from(&pending)))
             }
+            OperationV1::GetCatalogStatus => {
+                let status = self
+                    .core
+                    .get_catalog_status()
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CatalogStatus(CatalogStatusV1::from(&status)))
+            }
+            OperationV1::GetCatalogImportStatus(payload) => {
+                let snapshot_id = payload.snapshot_id().map_err(catalog_error)?;
+                let status = self
+                    .core
+                    .get_catalog_import_status(snapshot_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CatalogImport(CatalogImportStatusV1::from(
+                    &status,
+                )))
+            }
+            OperationV1::LookupProduct(payload) => {
+                let selector = payload.into_domain().map_err(catalog_error)?;
+                let lookup = self
+                    .core
+                    .lookup_product(selector)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::ProductLookup(ProductLookupV1::from(&lookup)))
+            }
             OperationV1::GetJournal(payload) => {
                 let events = self
                     .core
@@ -171,7 +199,7 @@ impl Dispatcher {
             OperationV1::AddItem(payload) => {
                 let command = payload
                     .into_command(Some(request_id))
-                    .map_err(domain_error)?;
+                    .map_err(catalog_error)?;
                 let transaction = self.core.add_item(command).map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
             }
@@ -208,6 +236,68 @@ impl Dispatcher {
                     })
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::RegisterSession(RegisterSessionV1::from(&session)))
+            }
+            OperationV1::BeginCatalogImport(payload) => {
+                let command = payload
+                    .into_command(Some(request_id))
+                    .map_err(catalog_error)?;
+                let status = self
+                    .core
+                    .begin_catalog_import(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CatalogImport(CatalogImportStatusV1::from(
+                    &status,
+                )))
+            }
+            OperationV1::PutCatalogChunk(payload) => {
+                // A snapshot belongs to one store, so its prices are in the
+                // device's currency; the import header already validated that.
+                let device = self.core.get_device().map_err(|e| self.app_error(e))?;
+                let command = payload
+                    .into_command(device.currency)
+                    .map_err(catalog_error)?;
+                let status = self
+                    .core
+                    .put_catalog_chunk(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CatalogImport(CatalogImportStatusV1::from(
+                    &status,
+                )))
+            }
+            OperationV1::CommitCatalogImport(payload) => {
+                let command = payload
+                    .into_command(Some(request_id))
+                    .map_err(catalog_error)?;
+                let view = self
+                    .core
+                    .commit_catalog_import(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CatalogSnapshot(CatalogSnapshotViewV1::from(
+                    &view,
+                )))
+            }
+            OperationV1::AbortCatalogImport(payload) => {
+                let snapshot_id = payload.snapshot_id().map_err(catalog_error)?;
+                self.core
+                    .abort_catalog_import(AbortCatalogImportCommand {
+                        request_id: Some(request_id),
+                        snapshot_id,
+                    })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Acknowledged)
+            }
+            OperationV1::ActivateCatalogSnapshot(payload) => {
+                let snapshot_id = payload.snapshot_id().map_err(catalog_error)?;
+                let view = self
+                    .core
+                    .activate_catalog_snapshot(ActivateCatalogSnapshotCommand {
+                        request_id: Some(request_id),
+                        snapshot_id,
+                    })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CatalogSnapshot(CatalogSnapshotViewV1::from(
+                    &view,
+                )))
             }
             OperationV1::CloseBusinessDay => {
                 let day = self
@@ -246,6 +336,11 @@ impl Dispatcher {
 
 fn dto(transaction: &RetailTransaction) -> Result<RetailTransactionV1, ErrorV1> {
     RetailTransactionV1::from_domain(transaction).map_err(domain_error)
+}
+
+/// Catalog failures already carry their own stable code.
+fn catalog_error(error: CatalogError) -> ErrorV1 {
+    ErrorV1::new(error.code(), error.to_string())
 }
 
 fn domain_error(error: DomainError) -> ErrorV1 {

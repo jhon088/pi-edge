@@ -9,27 +9,25 @@
 //! typed error instead of reaching a use case.
 
 use edge_application::commands::{
-    AddItemCommand, CommitCashPaymentCommand, InitDeviceCommand, OpenRegisterSessionCommand,
+    AddItemCommand, BeginCatalogImportCommand, CommitCashPaymentCommand,
+    CommitCatalogImportCommand, InitDeviceCommand, OpenRegisterSessionCommand,
+    PutCatalogChunkCommand,
 };
 use edge_application::ports::DeviceProfile;
-use edge_application::queries::{EdgeState, PendingOutbox};
+use edge_application::queries::{
+    CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState, PendingOutbox,
+    ProductLookup,
+};
+use edge_catalog::CatalogError;
 use edge_domain::prelude::*;
 use uuid::Uuid;
+
+use crate::content_mapping::{parse_snapshot_id, parse_timestamp};
 
 use crate::dto::*;
 use crate::PROTOCOL_VERSION;
 
 // ------------------------------------------------------------------- outbound
-
-impl From<&Money> for MoneyV1 {
-    fn from(value: &Money) -> Self {
-        Self {
-            minor: value.minor(),
-            currency: value.currency().code().to_owned(),
-            formatted: value.format_amount(),
-        }
-    }
-}
 
 impl From<&DeviceProfile> for DeviceV1 {
     fn from(value: &DeviceProfile) -> Self {
@@ -86,7 +84,8 @@ impl From<&TransactionLine> for TransactionLineV1 {
             quantity_thousandths: line.quantity.thousandths(),
             unit_price: MoneyV1::from(&line.unit_price),
             tax_rate_bps: line.tax_rate.bps(),
-            gross_amount: MoneyV1::from(&line.gross_amount),
+            price_mode: line.price_mode.as_str().to_owned(),
+            extended_amount: MoneyV1::from(&line.extended_amount),
             discount_amount: MoneyV1::from(&line.discount_amount),
             taxable_amount: MoneyV1::from(&line.taxable_amount),
             tax_amount: MoneyV1::from(&line.tax_amount),
@@ -100,6 +99,7 @@ impl From<&Totals> for TotalsV1 {
         Self {
             subtotal: MoneyV1::from(&totals.subtotal),
             discount_total: MoneyV1::from(&totals.discount_total),
+            net_total: MoneyV1::from(&totals.net_total),
             tax_total: MoneyV1::from(&totals.tax_total),
             grand_total: MoneyV1::from(&totals.grand_total),
         }
@@ -132,6 +132,8 @@ impl RetailTransactionV1 {
             register_sequence: state.register_sequence,
             status: state.status.as_str().to_owned(),
             currency: state.currency.code().to_owned(),
+            catalog_snapshot_id: state.catalog.map(|catalog| catalog.snapshot_id.to_string()),
+            catalog_version: state.catalog.map(|catalog| catalog.version),
             lines: state.lines.iter().map(TransactionLineV1::from).collect(),
             totals: TotalsV1::from(&state.totals),
             payments: state.payments.iter().map(PaymentV1::from).collect(),
@@ -238,17 +240,11 @@ impl OpenRegisterSessionRequestV1 {
 }
 
 impl AddItemRequestV1 {
-    pub fn into_command(self, request_id: Option<Uuid>) -> Result<AddItemCommand, DomainError> {
+    pub fn into_command(self, request_id: Option<Uuid>) -> Result<AddItemCommand, CatalogError> {
         Ok(AddItemCommand {
             request_id,
-            product_ref: ProductRef::new(self.product_ref)?,
-            sku: self.sku,
-            barcode: self.barcode,
-            description: self.description,
+            selector: self.product.into_domain()?,
             quantity: Quantity::from_thousandths(self.quantity_thousandths)?,
-            unit_price_minor: self.unit_price_minor,
-            tax_rate: TaxRate::from_bps(self.tax_rate_bps)?,
-            discount_minor: self.discount_minor,
         })
     }
 }
@@ -259,5 +255,134 @@ impl CommitCashPaymentRequestV1 {
             request_id,
             amount_minor: self.amount_minor,
         }
+    }
+}
+
+// ----------------------------------------------------- catalog read models
+
+impl From<&CatalogSnapshotView> for CatalogSnapshotViewV1 {
+    fn from(view: &CatalogSnapshotView) -> Self {
+        Self {
+            snapshot: CatalogSnapshotV1::from(&view.snapshot),
+            stored: SnapshotCountsV1::from(view.stored),
+        }
+    }
+}
+
+impl From<&CatalogStatus> for CatalogStatusV1 {
+    fn from(status: &CatalogStatus) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            active: status.active.as_ref().map(CatalogSnapshotViewV1::from),
+            pending: status
+                .pending
+                .iter()
+                .map(CatalogSnapshotViewV1::from)
+                .collect(),
+            importing: status
+                .importing
+                .iter()
+                .map(CatalogSnapshotViewV1::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&CatalogImportStatus> for CatalogImportStatusV1 {
+    fn from(status: &CatalogImportStatus) -> Self {
+        Self {
+            snapshot: CatalogSnapshotV1::from(&status.snapshot),
+            progress: ImportProgressV1::from(&status.progress),
+        }
+    }
+}
+
+impl From<&ProductLookup> for ProductLookupV1 {
+    fn from(lookup: &ProductLookup) -> Self {
+        Self {
+            snapshot_id: lookup.snapshot_id.to_string(),
+            snapshot_version: lookup.snapshot_version,
+            product: CatalogProductV1::from(&lookup.product),
+            tax_profile: TaxProfileV1::from(&lookup.tax_profile),
+        }
+    }
+}
+
+// ------------------------------------------------------ catalog import input
+
+impl BeginCatalogImportRequestV1 {
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<BeginCatalogImportCommand, CatalogError> {
+        if self.version <= 0 {
+            return Err(CatalogError::InvalidRecord {
+                field: "version",
+                reason: "must be positive".to_owned(),
+            });
+        }
+        let generated_at = parse_timestamp(&self.generated_at, "generated_at")?;
+        let effective_at = match self.effective_at.as_deref() {
+            Some(value) => Some(parse_timestamp(value, "effective_at")?),
+            None => None,
+        };
+        let tax_profiles = self
+            .tax_profiles
+            .into_iter()
+            .map(TaxProfileV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(BeginCatalogImportCommand {
+            request_id,
+            version: self.version,
+            currency: Currency::from_code(&self.currency)?,
+            declared_content_hash: self.content_hash,
+            generated_at,
+            effective_at,
+            expected: edge_catalog::SnapshotCounts {
+                tax_profiles: self.expected.tax_profiles,
+                products: self.expected.products,
+                barcodes: self.expected.barcodes,
+            },
+            tax_profiles,
+        })
+    }
+}
+
+impl PutCatalogChunkRequestV1 {
+    pub fn into_command(self, currency: Currency) -> Result<PutCatalogChunkCommand, CatalogError> {
+        if self.chunk_index < 0 {
+            return Err(CatalogError::InvalidRecord {
+                field: "chunk_index",
+                reason: "must not be negative".to_owned(),
+            });
+        }
+        let snapshot_id = parse_snapshot_id(&self.snapshot_id)?;
+        let mut products = Vec::with_capacity(self.products.len());
+        let mut barcodes = Vec::new();
+        for record in self.products {
+            let (product, mut codes) = record.into_domain(currency)?;
+            products.push(product);
+            barcodes.append(&mut codes);
+        }
+        Ok(PutCatalogChunkCommand {
+            snapshot_id,
+            chunk_index: self.chunk_index,
+            chunk_hash: self.chunk_hash,
+            products,
+            barcodes,
+        })
+    }
+}
+
+impl CommitCatalogImportRequestV1 {
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<CommitCatalogImportCommand, CatalogError> {
+        Ok(CommitCatalogImportCommand {
+            request_id,
+            snapshot_id: parse_snapshot_id(&self.snapshot_id)?,
+            chunk_count: self.chunk_count,
+        })
     }
 }

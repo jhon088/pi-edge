@@ -28,11 +28,13 @@ pub mod prelude {
     };
     pub use crate::error::DomainError;
     pub use crate::ids::{
-        BusinessDayId, EventId, IdError, LineId, OperatorId, PaymentId, ProductRef, RegisterId,
-        SessionId, StoreId, TenantId, TransactionId,
+        BusinessDayId, CatalogSnapshotId, EventId, IdError, LineId, OperatorId, PaymentId,
+        ProductRef, RegisterId, SessionId, StoreId, TenantId, TransactionId,
     };
     pub use crate::journal::{JournalEvent, JournalEventType};
-    pub use crate::money::{Currency, Money, MoneyError, Quantity, TaxRate};
+    pub use crate::money::{
+        Currency, Money, MoneyError, PriceMode, Quantity, TaxRate, TaxedAmount,
+    };
     pub use crate::outbox::{OutboxEvent, OutboxEventType, OutboxStatus};
     pub use crate::payment::{Payment, PaymentStatus, TenderType};
     pub use crate::session::{
@@ -40,8 +42,8 @@ pub mod prelude {
     };
     pub use crate::time::{TimeError, Timestamp};
     pub use crate::transaction::{
-        NewLineInput, NewRetailTransaction, RetailTransaction, RetailTransactionState, Totals,
-        TransactionLine, TransactionStatus,
+        CatalogRef, NewLineInput, NewRetailTransaction, RetailTransaction, RetailTransactionState,
+        Totals, TransactionLine, TransactionStatus,
     };
 }
 

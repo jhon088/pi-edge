@@ -118,8 +118,8 @@ impl EdgeStore for SqliteEdgeStore {
     }
 }
 
-struct SqliteUnitOfWork<'a, 'conn> {
-    tx: &'a Transaction<'conn>,
+pub(crate) struct SqliteUnitOfWork<'a, 'conn> {
+    pub(crate) tx: &'a Transaction<'conn>,
 }
 
 impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
@@ -369,8 +369,9 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .query_row(
                 "SELECT transaction_id, business_day_id, session_id, store_id, register_id,
                         operator_id, register_sequence, status, currency, subtotal_minor,
-                        discount_total_minor, tax_total_minor, grand_total_minor,
-                        created_at, updated_at, finalized_at, version
+                        discount_total_minor, net_total_minor, tax_total_minor,
+                        grand_total_minor, created_at, updated_at, finalized_at, version,
+                        catalog_snapshot_id, catalog_version
                  FROM retail_transactions
                  WHERE session_id = ?1 AND status NOT IN ('FINALIZED', 'CANCELLED')
                  ORDER BY register_sequence DESC
@@ -395,8 +396,9 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .query_row(
                 "SELECT transaction_id, business_day_id, session_id, store_id, register_id,
                         operator_id, register_sequence, status, currency, subtotal_minor,
-                        discount_total_minor, tax_total_minor, grand_total_minor,
-                        created_at, updated_at, finalized_at, version
+                        discount_total_minor, net_total_minor, tax_total_minor,
+                        grand_total_minor, created_at, updated_at, finalized_at, version,
+                        catalog_snapshot_id, catalog_version
                  FROM retail_transactions
                  WHERE transaction_id = ?1",
                 params![id.to_string()],
@@ -432,9 +434,11 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                 "INSERT INTO retail_transactions
                      (transaction_id, business_day_id, session_id, store_id, register_id,
                       operator_id, register_sequence, status, currency, subtotal_minor,
-                      discount_total_minor, tax_total_minor, grand_total_minor,
-                      created_at, updated_at, finalized_at, version)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                      discount_total_minor, net_total_minor, tax_total_minor, grand_total_minor,
+                      created_at, updated_at, finalized_at, version,
+                      catalog_snapshot_id, catalog_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                         ?17, ?18, ?19, ?20)",
                 params![
                     state.transaction_id.to_string(),
                     state.business_day_id.to_string(),
@@ -447,12 +451,15 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.currency.code(),
                     state.totals.subtotal.minor(),
                     state.totals.discount_total.minor(),
+                    state.totals.net_total.minor(),
                     state.totals.tax_total.minor(),
                     state.totals.grand_total.minor(),
                     state.created_at.to_rfc3339(),
                     now.to_rfc3339(),
                     state.finalized_at.map(|ts| ts.to_rfc3339()),
                     state.version,
+                    state.catalog.map(|catalog| catalog.snapshot_id.to_string()),
+                    state.catalog.map(|catalog| catalog.version),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -470,14 +477,15 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .execute(
                 "UPDATE retail_transactions
                  SET status = ?2, subtotal_minor = ?3, discount_total_minor = ?4,
-                     tax_total_minor = ?5, grand_total_minor = ?6, updated_at = ?7,
-                     finalized_at = ?8, version = ?9
-                 WHERE transaction_id = ?1 AND version < ?9",
+                     net_total_minor = ?5, tax_total_minor = ?6, grand_total_minor = ?7,
+                     updated_at = ?8, finalized_at = ?9, version = ?10
+                 WHERE transaction_id = ?1 AND version < ?10",
                 params![
                     state.transaction_id.to_string(),
                     state.status.as_str(),
                     state.totals.subtotal.minor(),
                     state.totals.discount_total.minor(),
+                    state.totals.net_total.minor(),
                     state.totals.tax_total.minor(),
                     state.totals.grand_total.minor(),
                     now.to_rfc3339(),
@@ -651,9 +659,11 @@ impl SqliteUnitOfWork<'_, '_> {
                     "INSERT INTO transaction_lines
                          (line_id, transaction_id, line_number, product_ref, sku, barcode,
                           description, quantity_thousandths, unit_price_minor, tax_rate_bps,
-                          gross_amount_minor, discount_amount_minor, taxable_amount_minor,
-                          tax_amount_minor, line_total_minor, currency, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                          price_mode, extended_amount_minor, discount_amount_minor,
+                          taxable_amount_minor, tax_amount_minor, line_total_minor, currency,
+                          created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                             ?16, ?17, ?18)
                      ON CONFLICT(line_id) DO NOTHING",
                     params![
                         line.line_id.to_string(),
@@ -666,7 +676,8 @@ impl SqliteUnitOfWork<'_, '_> {
                         line.quantity.thousandths(),
                         line.unit_price.minor(),
                         line.tax_rate.bps(),
-                        line.gross_amount.minor(),
+                        line.price_mode.as_str(),
+                        line.extended_amount.minor(),
                         line.discount_amount.minor(),
                         line.taxable_amount.minor(),
                         line.tax_amount.minor(),
@@ -715,9 +726,9 @@ impl SqliteUnitOfWork<'_, '_> {
             .tx
             .prepare(
                 "SELECT line_id, line_number, product_ref, sku, barcode, description,
-                        quantity_thousandths, unit_price_minor, tax_rate_bps, gross_amount_minor,
-                        discount_amount_minor, taxable_amount_minor, tax_amount_minor,
-                        line_total_minor, currency
+                        quantity_thousandths, unit_price_minor, tax_rate_bps, price_mode,
+                        extended_amount_minor, discount_amount_minor, taxable_amount_minor,
+                        tax_amount_minor, line_total_minor, currency
                  FROM transaction_lines
                  WHERE transaction_id = ?1
                  ORDER BY line_number ASC",
@@ -759,14 +770,14 @@ impl SqliteUnitOfWork<'_, '_> {
 
 // ------------------------------------------------------------ row conversions
 
-fn parse_id<T>(value: &str) -> Result<T, AppError>
+pub(crate) fn parse_id<T>(value: &str) -> Result<T, AppError>
 where
     T: FromStr<Err = IdError>,
 {
     T::from_str(value).map_err(|e| AppError::Domain(DomainError::Id(e)))
 }
 
-fn parse_opt_id<T>(value: Option<String>) -> Result<Option<T>, AppError>
+pub(crate) fn parse_opt_id<T>(value: Option<String>) -> Result<Option<T>, AppError>
 where
     T: FromStr<Err = IdError>,
 {
@@ -776,30 +787,30 @@ where
     }
 }
 
-fn parse_ts(value: &str) -> Result<Timestamp, AppError> {
+pub(crate) fn parse_ts(value: &str) -> Result<Timestamp, AppError> {
     Timestamp::parse_rfc3339(value).map_err(|e| AppError::Domain(DomainError::Time(e)))
 }
 
-fn parse_opt_ts(value: Option<String>) -> Result<Option<Timestamp>, AppError> {
+pub(crate) fn parse_opt_ts(value: Option<String>) -> Result<Option<Timestamp>, AppError> {
     match value {
         Some(raw) => Ok(Some(parse_ts(&raw)?)),
         None => Ok(None),
     }
 }
 
-fn parse_currency(code: &str) -> Result<Currency, AppError> {
+pub(crate) fn parse_currency(code: &str) -> Result<Currency, AppError> {
     Currency::from_code(code).map_err(|e| AppError::Domain(DomainError::Money(e)))
 }
 
-fn parse_json(raw: &str) -> Result<Value, AppError> {
+pub(crate) fn parse_json(raw: &str) -> Result<Value, AppError> {
     serde_json::from_str(raw).map_err(|e| AppError::Serialization(e.to_string()))
 }
 
-fn to_json(value: &Value) -> Result<String, AppError> {
+pub(crate) fn to_json(value: &Value) -> Result<String, AppError> {
     serde_json::to_string(value).map_err(|e| AppError::Serialization(e.to_string()))
 }
 
-fn money(minor: i64, currency: Currency) -> Money {
+pub(crate) fn money(minor: i64, currency: Currency) -> Money {
     Money::from_minor(minor, currency)
 }
 
@@ -896,12 +907,15 @@ struct RawTransaction {
     currency: String,
     subtotal_minor: i64,
     discount_total_minor: i64,
+    net_total_minor: i64,
     tax_total_minor: i64,
     grand_total_minor: i64,
     created_at: String,
     updated_at: String,
     finalized_at: Option<String>,
     version: i64,
+    catalog_snapshot_id: Option<String>,
+    catalog_version: Option<i64>,
 }
 
 impl RawTransaction {
@@ -918,12 +932,15 @@ impl RawTransaction {
             currency: row.get(8)?,
             subtotal_minor: row.get(9)?,
             discount_total_minor: row.get(10)?,
-            tax_total_minor: row.get(11)?,
-            grand_total_minor: row.get(12)?,
-            created_at: row.get(13)?,
-            updated_at: row.get(14)?,
-            finalized_at: row.get(15)?,
-            version: row.get(16)?,
+            net_total_minor: row.get(11)?,
+            tax_total_minor: row.get(12)?,
+            grand_total_minor: row.get(13)?,
+            created_at: row.get(14)?,
+            updated_at: row.get(15)?,
+            finalized_at: row.get(16)?,
+            version: row.get(17)?,
+            catalog_snapshot_id: row.get(18)?,
+            catalog_version: row.get(19)?,
         })
     }
 
@@ -943,10 +960,18 @@ impl RawTransaction {
             register_sequence: self.register_sequence,
             status: TransactionStatus::parse(&self.status).map_err(AppError::from)?,
             currency,
+            catalog: match (self.catalog_snapshot_id, self.catalog_version) {
+                (Some(snapshot_id), Some(version)) => Some(CatalogRef {
+                    snapshot_id: parse_id(&snapshot_id)?,
+                    version,
+                }),
+                _ => None,
+            },
             lines,
             totals: Totals {
                 subtotal: money(self.subtotal_minor, currency),
                 discount_total: money(self.discount_total_minor, currency),
+                net_total: money(self.net_total_minor, currency),
                 tax_total: money(self.tax_total_minor, currency),
                 grand_total: money(self.grand_total_minor, currency),
             },
@@ -969,7 +994,8 @@ struct RawLine {
     quantity_thousandths: i64,
     unit_price_minor: i64,
     tax_rate_bps: i64,
-    gross_amount_minor: i64,
+    price_mode: String,
+    extended_amount_minor: i64,
     discount_amount_minor: i64,
     taxable_amount_minor: i64,
     tax_amount_minor: i64,
@@ -989,12 +1015,13 @@ impl RawLine {
             quantity_thousandths: row.get(6)?,
             unit_price_minor: row.get(7)?,
             tax_rate_bps: row.get(8)?,
-            gross_amount_minor: row.get(9)?,
-            discount_amount_minor: row.get(10)?,
-            taxable_amount_minor: row.get(11)?,
-            tax_amount_minor: row.get(12)?,
-            line_total_minor: row.get(13)?,
-            currency: row.get(14)?,
+            price_mode: row.get(9)?,
+            extended_amount_minor: row.get(10)?,
+            discount_amount_minor: row.get(11)?,
+            taxable_amount_minor: row.get(12)?,
+            tax_amount_minor: row.get(13)?,
+            line_total_minor: row.get(14)?,
+            currency: row.get(15)?,
         })
     }
 
@@ -1015,7 +1042,9 @@ impl RawLine {
             unit_price: money(self.unit_price_minor, currency),
             tax_rate: TaxRate::from_bps(tax_rate_bps)
                 .map_err(|e| AppError::Domain(DomainError::Money(e)))?,
-            gross_amount: money(self.gross_amount_minor, currency),
+            price_mode: PriceMode::parse(&self.price_mode)
+                .map_err(|e| AppError::Domain(DomainError::Money(e)))?,
+            extended_amount: money(self.extended_amount_minor, currency),
             discount_amount: money(self.discount_amount_minor, currency),
             taxable_amount: money(self.taxable_amount_minor, currency),
             tax_amount: money(self.tax_amount_minor, currency),

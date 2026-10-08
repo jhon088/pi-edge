@@ -1,0 +1,146 @@
+{
+  "transaction_id": "00000000-0000-0000-0000-000000000008",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "store_id": "STORE-DEMO",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "register_sequence": 1,
+  "status": "TOTALIZED",
+  "currency": "MXN",
+  "catalog_snapshot_id": "00000000-0000-0000-0000-000000000001",
+  "catalog_version": 1,
+  "lines": [
+    {
+      "line_id": "00000000-0000-0000-0000-00000000000a",
+      "line_number": 1,
+      "product_ref": "SKU-ODD-INC",
+      "sku": "SKU-ODD-INC",
+      "barcode": "7501000000099",
+      "description": "Centavo impar con IVA",
+      "quantity": "3.000",
+      "quantity_thousandths": 3000,
+      "unit_price": {
+        "minor": 99,
+        "currency": "MXN",
+        "formatted": "0.99"
+      },
+      "tax_rate_bps": 1600,
+      "price_mode": "TAX_INCLUSIVE",
+      "extended_amount": {
+        "minor": 297,
+        "currency": "MXN",
+        "formatted": "2.97"
+      },
+      "discount_amount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "taxable_amount": {
+        "minor": 256,
+        "currency": "MXN",
+        "formatted": "2.56"
+      },
+      "tax_amount": {
+        "minor": 41,
+        "currency": "MXN",
+        "formatted": "0.41"
+      },
+      "line_total": {
+        "minor": 297,
+        "currency": "MXN",
+        "formatted": "2.97"
+      }
+    },
+    {
+      "line_id": "00000000-0000-0000-0000-00000000000c",
+      "line_number": 2,
+      "product_ref": "SKU-ODD-INC",
+      "sku": "SKU-ODD-INC",
+      "barcode": "7501000000099",
+      "description": "Centavo impar con IVA",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "unit_price": {
+        "minor": 99,
+        "currency": "MXN",
+        "formatted": "0.99"
+      },
+      "tax_rate_bps": 1600,
+      "price_mode": "TAX_INCLUSIVE",
+      "extended_amount": {
+        "minor": 99,
+        "currency": "MXN",
+        "formatted": "0.99"
+      },
+      "discount_amount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "taxable_amount": {
+        "minor": 85,
+        "currency": "MXN",
+        "formatted": "0.85"
+      },
+      "tax_amount": {
+        "minor": 14,
+        "currency": "MXN",
+        "formatted": "0.14"
+      },
+      "line_total": {
+        "minor": 99,
+        "currency": "MXN",
+        "formatted": "0.99"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": {
+      "minor": 396,
+      "currency": "MXN",
+      "formatted": "3.96"
+    },
+    "discount_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "net_total": {
+      "minor": 341,
+      "currency": "MXN",
+      "formatted": "3.41"
+    },
+    "tax_total": {
+      "minor": 55,
+      "currency": "MXN",
+      "formatted": "0.55"
+    },
+    "grand_total": {
+      "minor": 396,
+      "currency": "MXN",
+      "formatted": "3.96"
+    }
+  },
+  "payments": [],
+  "paid_total": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "balance_due": {
+    "minor": 396,
+    "currency": "MXN",
+    "formatted": "3.96"
+  },
+  "change_due": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "created_at": "2026-10-08T15:00:00.000000Z",
+  "updated_at": "2026-10-08T15:00:00.000000Z",
+  "finalized_at": null,
+  "version": 4
+}

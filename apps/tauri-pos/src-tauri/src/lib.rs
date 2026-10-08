@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
-use edge_protocol::{CoreInfoV1, EdgeStateV1, EventV1};
+use edge_protocol::{
+    CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, ProductLookupV1, ProductSelectorV1,
+};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 use tracing_subscriber::EnvFilter;
@@ -94,6 +96,24 @@ fn edge_state(bridge: tauri::State<'_, EdgeBridge>) -> Result<EdgeStateV1, Bridg
 }
 
 #[tauri::command]
+fn catalog_status(bridge: tauri::State<'_, EdgeBridge>) -> Result<CatalogStatusV1, BridgeError> {
+    bridge.client.catalog_status().map_err(BridgeError::from)
+}
+
+/// Diagnostic lookup. Resolution, pricing and tax are the core's work; this
+/// only forwards the answer.
+#[tauri::command]
+fn lookup_barcode(
+    bridge: tauri::State<'_, EdgeBridge>,
+    barcode: String,
+) -> Result<ProductLookupV1, BridgeError> {
+    bridge
+        .client
+        .lookup_product(ProductSelectorV1::Barcode(barcode))
+        .map_err(BridgeError::from)
+}
+
+#[tauri::command]
 fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDto {
     let status = bridge.client.connection();
     ConnectionStatusDto {
@@ -135,6 +155,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             core_info,
             edge_state,
+            catalog_status,
+            lookup_barcode,
             connection_status
         ])
         .run(tauri::generate_context!());

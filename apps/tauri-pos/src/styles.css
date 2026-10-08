@@ -166,3 +166,23 @@ button:disabled {
   border-top: 1px solid var(--border);
   padding-top: 12px;
 }
+
+.lookup {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.lookup input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 8px 10px;
+}
+
+.lookup input:disabled {
+  opacity: 0.5;
+}

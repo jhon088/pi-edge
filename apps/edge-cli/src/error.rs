@@ -8,6 +8,8 @@ pub enum CliError {
     Client(#[from] ClientError),
     #[error("output serialization failed: {0}")]
     Serialization(String),
+    #[error("{0}")]
+    Input(String),
 }
 
 impl CliError {
@@ -16,6 +18,7 @@ impl CliError {
         match self {
             CliError::Client(error) => error.code(),
             CliError::Serialization(_) => "SERIALIZATION_FAILURE",
+            CliError::Input(_) => "INVALID_INPUT",
         }
     }
 

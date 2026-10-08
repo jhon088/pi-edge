@@ -38,6 +38,43 @@ pub const DOMAIN_RULE_VIOLATION: &str = "DOMAIN_RULE_VIOLATION";
 /// The local database failed. The runtime reports itself as `DEGRADED`.
 pub const STORAGE_FAILURE: &str = "STORAGE_FAILURE";
 
+// Catalog codes, produced by the catalog context.
+
+/// No product matches the selector in the snapshot being used.
+pub const PRODUCT_NOT_FOUND: &str = "PRODUCT_NOT_FOUND";
+/// The product exists but is not active in this snapshot.
+pub const PRODUCT_INACTIVE: &str = "PRODUCT_INACTIVE";
+/// The product exists and is active but may not be sold.
+pub const PRODUCT_NOT_SELLABLE: &str = "PRODUCT_NOT_SELLABLE";
+/// The register has no active catalog, so it cannot start a sale.
+pub const NO_ACTIVE_CATALOG: &str = "NO_ACTIVE_CATALOG";
+/// A chunk index was resent with different content.
+pub const CATALOG_CHUNK_CONFLICT: &str = "CATALOG_CHUNK_CONFLICT";
+/// A chunk is missing, so the import cannot be committed.
+pub const CATALOG_IMPORT_INCOMPLETE: &str = "CATALOG_IMPORT_INCOMPLETE";
+/// Declared counts do not match what was stored.
+pub const CATALOG_COUNT_MISMATCH: &str = "CATALOG_COUNT_MISMATCH";
+/// The hash computed from the stored rows differs from the declared one.
+pub const CATALOG_HASH_MISMATCH: &str = "CATALOG_HASH_MISMATCH";
+/// Two records claim the same barcode within one snapshot.
+pub const CATALOG_DUPLICATE_BARCODE: &str = "CATALOG_DUPLICATE_BARCODE";
+/// Two records claim the same product within one snapshot.
+pub const CATALOG_DUPLICATE_PRODUCT: &str = "CATALOG_DUPLICATE_PRODUCT";
+/// A record failed validation at the boundary.
+pub const CATALOG_INVALID_RECORD: &str = "CATALOG_INVALID_RECORD";
+/// A product references a tax profile the snapshot does not declare.
+pub const CATALOG_UNKNOWN_TAX_PROFILE: &str = "CATALOG_UNKNOWN_TAX_PROFILE";
+/// The snapshot id is unknown to this installation.
+pub const CATALOG_SNAPSHOT_NOT_FOUND: &str = "CATALOG_SNAPSHOT_NOT_FOUND";
+/// The import is no longer open for content.
+pub const CATALOG_IMPORT_NOT_OPEN: &str = "CATALOG_IMPORT_NOT_OPEN";
+/// Activation needs a committed (PENDING) snapshot.
+pub const CATALOG_SNAPSHOT_NOT_PENDING: &str = "CATALOG_SNAPSHOT_NOT_PENDING";
+/// That version already exists locally with different content.
+pub const CATALOG_VERSION_CONFLICT: &str = "CATALOG_VERSION_CONFLICT";
+/// The snapshot lifecycle refused the transition.
+pub const CATALOG_INVALID_TRANSITION: &str = "CATALOG_INVALID_TRANSITION";
+
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";
 /// A request arrived before a successful handshake.

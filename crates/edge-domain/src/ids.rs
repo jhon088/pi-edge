@@ -79,6 +79,14 @@ uuid_id!(
     /// Public id of a journal or outbox event.
     EventId
 );
+uuid_id!(
+    /// Local id of an imported catalog snapshot.
+    ///
+    /// Minted by PI.Edge because it identifies a *local import record*. The
+    /// catalog content itself is identified upstream by `(version,
+    /// content_hash)`; PI.Edge never mints product master ids.
+    CatalogSnapshotId
+);
 
 /// Maximum length accepted for server-owned opaque identifiers.
 pub const MAX_OPAQUE_ID_LEN: usize = 128;

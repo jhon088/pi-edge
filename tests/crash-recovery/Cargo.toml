@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 edge-application = { workspace = true, features = ["testing"] }
+edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
 edge-storage = { workspace = true, features = ["fault-injection"] }
 chrono = { workspace = true }

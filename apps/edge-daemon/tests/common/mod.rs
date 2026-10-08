@@ -6,8 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use edge_catalog::{hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency};
 use edge_client::{ClientError, EdgeClient, IpcEdgeClient};
-use edge_protocol::{AddItemRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1};
+use edge_protocol::{
+    AddItemRequestV1, BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
+    CommitCatalogImportRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
+};
 
 /// A spawned daemon process. Killed on drop so a failing test cannot leak a
 /// runtime that would block the next one.
@@ -169,7 +174,169 @@ pub fn client(database: &Path, name: &'static str) -> IpcEdgeClient {
     IpcEdgeClient::for_database(database, name).unwrap()
 }
 
-/// Provision the device, open the day and open a session on `REG-001`.
+/// Barcode of the default demo product.
+pub const DEMO_BARCODE: &str = "7501000000001";
+
+/// A catalog snapshot, in the shape the server will eventually send.
+pub struct CatalogSpec {
+    pub version: i64,
+    pub tax_profiles: Vec<TaxProfileV1>,
+    pub products: Vec<CatalogProductRecordV1>,
+}
+
+impl CatalogSpec {
+    /// One product: 100.00 MXN at 16%, tax exclusive.
+    pub fn demo(version: i64) -> Self {
+        Self::with_products(
+            version,
+            vec![product(DEMO_BARCODE, "SKU-001", 10_000, "IVA16")],
+        )
+    }
+
+    pub fn with_products(version: i64, products: Vec<CatalogProductRecordV1>) -> Self {
+        Self {
+            version,
+            tax_profiles: vec![
+                tax_profile("IVA16", 1_600, "TAX_EXCLUSIVE"),
+                tax_profile("IVA8", 800, "TAX_EXCLUSIVE"),
+                tax_profile("IVA0", 0, "TAX_EXCLUSIVE"),
+                tax_profile("IVA16-INC", 1_600, "TAX_INCLUSIVE"),
+            ],
+            products,
+        }
+    }
+
+    fn domain(&self) -> (Vec<CatalogProduct>, Vec<CatalogBarcode>) {
+        let mut products = Vec::new();
+        let mut barcodes = Vec::new();
+        for record in &self.products {
+            let (product, mut codes) = record.clone().into_domain(Currency::Mxn).unwrap();
+            products.push(product);
+            barcodes.append(&mut codes);
+        }
+        (products, barcodes)
+    }
+
+    pub fn declared_hash(&self) -> String {
+        let profiles: Vec<_> = self
+            .tax_profiles
+            .iter()
+            .cloned()
+            .map(TaxProfileV1::into_domain)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let (products, barcodes) = self.domain();
+        hash_snapshot(&profiles, &products, &barcodes)
+    }
+
+    pub fn begin_request(&self) -> BeginCatalogImportRequestV1 {
+        let (products, barcodes) = self.domain();
+        BeginCatalogImportRequestV1 {
+            version: self.version,
+            currency: "MXN".to_owned(),
+            content_hash: self.declared_hash(),
+            generated_at: "2026-10-01T00:00:00Z".to_owned(),
+            effective_at: None,
+            expected: SnapshotCountsV1 {
+                tax_profiles: self.tax_profiles.len() as i64,
+                products: products.len() as i64,
+                barcodes: barcodes.len() as i64,
+            },
+            tax_profiles: self.tax_profiles.clone(),
+        }
+    }
+
+    /// Chunk request for a slice of the products, with its canonical hash.
+    pub fn chunk(
+        &self,
+        snapshot_id: &str,
+        chunk_index: i64,
+        records: &[CatalogProductRecordV1],
+    ) -> PutCatalogChunkRequestV1 {
+        let mut products = Vec::new();
+        let mut barcodes = Vec::new();
+        for record in records {
+            let (product, mut codes) = record.clone().into_domain(Currency::Mxn).unwrap();
+            products.push(product);
+            barcodes.append(&mut codes);
+        }
+        PutCatalogChunkRequestV1 {
+            snapshot_id: snapshot_id.to_owned(),
+            chunk_index,
+            chunk_hash: hash_chunk(&products, &barcodes),
+            products: records.to_vec(),
+        }
+    }
+
+    /// Import in one chunk, optionally activating it.
+    pub fn import(&self, client: &IpcEdgeClient, activate: bool) -> CatalogSnapshotViewV1 {
+        let opened = client
+            .begin_catalog_import(self.begin_request(), None)
+            .unwrap();
+        let snapshot_id = opened.snapshot.snapshot_id.clone();
+        client
+            .put_catalog_chunk(self.chunk(&snapshot_id, 0, &self.products))
+            .unwrap();
+        let view = client
+            .commit_catalog_import(
+                CommitCatalogImportRequestV1 {
+                    snapshot_id: snapshot_id.clone(),
+                    chunk_count: 1,
+                },
+                None,
+            )
+            .unwrap();
+        if activate {
+            client
+                .activate_catalog_snapshot(&snapshot_id, None)
+                .unwrap()
+        } else {
+            view
+        }
+    }
+
+    /// Write the snapshot as a file the CLI importer can read.
+    pub fn write_fixture(&self, path: &Path) {
+        let fixture = serde_json::json!({
+            "version": self.version,
+            "currency": "MXN",
+            "generated_at": "2026-10-01T00:00:00Z",
+            "tax_profiles": self.tax_profiles,
+            "products": self.products,
+        });
+        std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
+    }
+}
+
+pub fn tax_profile(code: &str, rate_bps: u32, price_mode: &str) -> TaxProfileV1 {
+    TaxProfileV1 {
+        code: code.to_owned(),
+        name: format!("profile {code}"),
+        rate_bps,
+        price_mode: price_mode.to_owned(),
+    }
+}
+
+pub fn product(
+    barcode: &str,
+    product_ref: &str,
+    price_minor: i64,
+    tax_profile: &str,
+) -> CatalogProductRecordV1 {
+    CatalogProductRecordV1 {
+        product_ref: product_ref.to_owned(),
+        external_ref: None,
+        sku: Some(product_ref.to_owned()),
+        name: format!("Producto {product_ref}"),
+        active: true,
+        sellable: true,
+        tax_profile: tax_profile.to_owned(),
+        unit_price_minor: price_minor,
+        barcodes: vec![barcode.to_owned()],
+    }
+}
+
+/// Provision the device, import a catalog, open the day and open a session.
 pub fn open_register(client: &IpcEdgeClient) {
     client
         .init_device(InitDeviceRequestV1 {
@@ -178,6 +345,7 @@ pub fn open_register(client: &IpcEdgeClient) {
             currency: "MXN".to_owned(),
         })
         .unwrap();
+    CatalogSpec::demo(1).import(client, true);
     client.open_business_day(None).unwrap();
     client
         .open_session(
@@ -191,17 +359,11 @@ pub fn open_register(client: &IpcEdgeClient) {
         .unwrap();
 }
 
-/// 100.00 MXN at 16% tax.
+/// Scan the demo product: the core resolves 100.00 MXN at 16%.
 pub fn demo_item() -> AddItemRequestV1 {
     AddItemRequestV1 {
-        product_ref: "SKU-001".to_owned(),
-        sku: Some("SKU-001".to_owned()),
-        barcode: None,
-        description: "Producto prueba".to_owned(),
+        product: ProductSelectorV1::Barcode(DEMO_BARCODE.to_owned()),
         quantity_thousandths: 1_000,
-        unit_price_minor: 10_000,
-        tax_rate_bps: 1_600,
-        discount_minor: 0,
     }
 }
 

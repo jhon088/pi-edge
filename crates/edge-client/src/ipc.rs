@@ -6,10 +6,12 @@ use std::time::{Duration, Instant};
 
 use edge_ipc::{DesktopLocalTransport, EdgeEventStream, EdgeTransport, IpcError};
 use edge_protocol::{
-    AddItemRequestV1, BusinessDayV1, CommitCashPaymentRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1,
-    InitDeviceRequestV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
-    PendingOutboxV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
-    RetailTransactionV1,
+    AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
+    CatalogSnapshotRequestV1, CatalogSnapshotViewV1, CatalogStatusV1, CommitCashPaymentRequestV1,
+    CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
+    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PendingOutboxV1,
+    ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1,
+    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
 };
 use uuid::Uuid;
 
@@ -327,6 +329,110 @@ impl EdgeClient for IpcEdgeClient {
             self.call(OperationV1::CloseBusinessDay, request_id)?,
             ResultV1::BusinessDay,
             "BUSINESS_DAY"
+        )
+    }
+
+    fn catalog_status(&self) -> Result<CatalogStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetCatalogStatus, None)?,
+            ResultV1::CatalogStatus,
+            "CATALOG_STATUS"
+        )
+    }
+
+    fn catalog_import_status(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<CatalogImportStatusV1, ClientError> {
+        expect_result!(
+            self.call(
+                OperationV1::GetCatalogImportStatus(CatalogSnapshotRequestV1 {
+                    snapshot_id: snapshot_id.to_owned(),
+                }),
+                None
+            )?,
+            ResultV1::CatalogImport,
+            "CATALOG_IMPORT"
+        )
+    }
+
+    fn lookup_product(&self, selector: ProductSelectorV1) -> Result<ProductLookupV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::LookupProduct(selector), None)?,
+            ResultV1::ProductLookup,
+            "PRODUCT_LOOKUP"
+        )
+    }
+
+    fn begin_catalog_import(
+        &self,
+        request: BeginCatalogImportRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CatalogImportStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::BeginCatalogImport(request), request_id)?,
+            ResultV1::CatalogImport,
+            "CATALOG_IMPORT"
+        )
+    }
+
+    fn put_catalog_chunk(
+        &self,
+        request: PutCatalogChunkRequestV1,
+    ) -> Result<CatalogImportStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::PutCatalogChunk(request), None)?,
+            ResultV1::CatalogImport,
+            "CATALOG_IMPORT"
+        )
+    }
+
+    fn commit_catalog_import(
+        &self,
+        request: CommitCatalogImportRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CatalogSnapshotViewV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::CommitCatalogImport(request), request_id)?,
+            ResultV1::CatalogSnapshot,
+            "CATALOG_SNAPSHOT"
+        )
+    }
+
+    fn abort_catalog_import(
+        &self,
+        snapshot_id: &str,
+        request_id: Option<Uuid>,
+    ) -> Result<(), ClientError> {
+        let result = self.call(
+            OperationV1::AbortCatalogImport(CatalogSnapshotRequestV1 {
+                snapshot_id: snapshot_id.to_owned(),
+            }),
+            request_id,
+        )?;
+        match result {
+            ResultV1::Acknowledged => Ok(()),
+            other => Err(ClientError::UnexpectedResult {
+                expected: "ACKNOWLEDGED",
+                actual: other.name().to_owned(),
+            }),
+        }
+    }
+
+    fn activate_catalog_snapshot(
+        &self,
+        snapshot_id: &str,
+        request_id: Option<Uuid>,
+    ) -> Result<CatalogSnapshotViewV1, ClientError> {
+        expect_result!(
+            self.call(
+                OperationV1::ActivateCatalogSnapshot(CatalogSnapshotRequestV1 {
+                    snapshot_id: snapshot_id.to_owned(),
+                }),
+                request_id
+            )?,
+            ResultV1::CatalogSnapshot,
+            "CATALOG_SNAPSHOT"
         )
     }
 

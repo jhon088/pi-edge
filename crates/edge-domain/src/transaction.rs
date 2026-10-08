@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::DomainError;
 use crate::ids::{
-    BusinessDayId, LineId, OperatorId, PaymentId, ProductRef, RegisterId, SessionId, StoreId,
-    TransactionId,
+    BusinessDayId, CatalogSnapshotId, LineId, OperatorId, PaymentId, ProductRef, RegisterId,
+    SessionId, StoreId, TransactionId,
 };
-use crate::money::{Currency, Money, MoneyError, Quantity, TaxRate};
+use crate::money::{Currency, Money, MoneyError, PriceMode, Quantity, TaxRate};
 use crate::payment::Payment;
 use crate::time::Timestamp;
 
@@ -94,15 +94,19 @@ pub struct TransactionLine {
     pub barcode: Option<String>,
     pub description: String,
     pub quantity: Quantity,
+    /// Price as quoted by the catalog, in the line's [`PriceMode`].
     pub unit_price: Money,
     pub tax_rate: TaxRate,
-    /// `unit_price * quantity`, before discount.
-    pub gross_amount: Money,
+    /// Whether `unit_price` already includes tax.
+    pub price_mode: PriceMode,
+    /// `unit_price * quantity`, before discount, still in the quoted mode.
+    pub extended_amount: Money,
     pub discount_amount: Money,
-    /// `gross_amount - discount_amount`, the tax base.
+    /// Net tax base after discount. Equals `extended - discount` when the
+    /// price is tax-exclusive, and the backed-out net when it is inclusive.
     pub taxable_amount: Money,
     pub tax_amount: Money,
-    /// `taxable_amount + tax_amount`.
+    /// `taxable_amount + tax_amount`; what this line adds to the sale.
     pub line_total: Money,
 }
 
@@ -117,6 +121,7 @@ pub struct NewLineInput {
     pub quantity: Quantity,
     pub unit_price: Money,
     pub tax_rate: TaxRate,
+    pub price_mode: PriceMode,
     pub discount_amount: Option<Money>,
 }
 
@@ -137,16 +142,20 @@ impl TransactionLine {
                 discount.minor(),
             )));
         }
-        let gross = input.unit_price.mul_quantity(input.quantity)?;
-        let taxable = gross.checked_sub(discount)?;
-        if taxable.is_negative() {
+        // Extend first, then split the tax: the customer pays the quoted price
+        // times the quantity, exactly.
+        let extended = input.unit_price.mul_quantity(input.quantity)?;
+        let quoted = extended.checked_sub(discount)?;
+        if quoted.is_negative() {
             return Err(DomainError::DiscountExceedsLine {
                 discount_minor: discount.minor(),
-                gross_minor: gross.minor(),
+                gross_minor: extended.minor(),
             });
         }
-        let tax_amount = input.tax_rate.tax_on(taxable)?;
-        let line_total = taxable.checked_add(tax_amount)?;
+        let taxed = input.tax_rate.apply(quoted, input.price_mode)?;
+        let taxable = taxed.net;
+        let tax_amount = taxed.tax;
+        let line_total = taxed.gross;
         Ok(Self {
             line_id: input.line_id,
             line_number,
@@ -157,7 +166,8 @@ impl TransactionLine {
             quantity: input.quantity,
             unit_price: input.unit_price,
             tax_rate: input.tax_rate,
-            gross_amount: gross,
+            price_mode: input.price_mode,
+            extended_amount: extended,
             discount_amount: discount,
             taxable_amount: taxable,
             tax_amount,
@@ -169,9 +179,14 @@ impl TransactionLine {
 /// Official transaction totals. Only the core computes these.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Totals {
+    /// Sum of the quoted extended amounts, before discount. "Gross sales".
     pub subtotal: Money,
     pub discount_total: Money,
+    /// Sum of the net tax bases. This is the subtotal a receipt prints next to
+    /// the tax line, and it is mode-independent.
+    pub net_total: Money,
     pub tax_total: Money,
+    /// `net_total + tax_total`, and equal to the sum of the line totals.
     pub grand_total: Money,
 }
 
@@ -180,6 +195,7 @@ impl Totals {
         Self {
             subtotal: Money::zero(currency),
             discount_total: Money::zero(currency),
+            net_total: Money::zero(currency),
             tax_total: Money::zero(currency),
             grand_total: Money::zero(currency),
         }
@@ -188,27 +204,38 @@ impl Totals {
     fn compute(lines: &[TransactionLine], currency: Currency) -> Result<Self, DomainError> {
         let mut subtotal = Money::zero(currency);
         let mut discount_total = Money::zero(currency);
+        let mut net_total = Money::zero(currency);
         let mut tax_total = Money::zero(currency);
         let mut line_total_sum = Money::zero(currency);
         for line in lines {
-            subtotal = subtotal.checked_add(line.gross_amount)?;
+            subtotal = subtotal.checked_add(line.extended_amount)?;
             discount_total = discount_total.checked_add(line.discount_amount)?;
+            net_total = net_total.checked_add(line.taxable_amount)?;
             tax_total = tax_total.checked_add(line.tax_amount)?;
             line_total_sum = line_total_sum.checked_add(line.line_total)?;
         }
-        let grand_total = subtotal
-            .checked_sub(discount_total)?
-            .checked_add(tax_total)?;
+        let grand_total = net_total.checked_add(tax_total)?;
         if grand_total != line_total_sum {
             return Err(DomainError::InconsistentTotals);
         }
         Ok(Self {
             subtotal,
             discount_total,
+            net_total,
             tax_total,
             grand_total,
         })
     }
+}
+
+/// The catalog snapshot a sale was priced against.
+///
+/// Captured when the sale starts and never changed afterwards, so activating a
+/// new snapshot mid-sale cannot move a price (see ADR 013).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogRef {
+    pub snapshot_id: CatalogSnapshotId,
+    pub version: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,6 +250,8 @@ pub struct RetailTransactionState {
     pub register_sequence: i64,
     pub status: TransactionStatus,
     pub currency: Currency,
+    /// `None` only for sales created before the catalog existed.
+    pub catalog: Option<CatalogRef>,
     pub lines: Vec<TransactionLine>,
     pub totals: Totals,
     pub payments: Vec<Payment>,
@@ -242,6 +271,7 @@ pub struct NewRetailTransaction {
     pub operator_id: OperatorId,
     pub register_sequence: i64,
     pub currency: Currency,
+    pub catalog: Option<CatalogRef>,
     pub created_at: Timestamp,
 }
 
@@ -261,6 +291,7 @@ impl RetailTransaction {
             register_sequence: new.register_sequence,
             status: TransactionStatus::Open,
             currency: new.currency,
+            catalog: new.catalog,
             lines: Vec::new(),
             totals: Totals::zero(new.currency),
             payments: Vec::new(),
@@ -294,6 +325,11 @@ impl RetailTransaction {
 
     pub fn is_active(&self) -> bool {
         self.0.status.is_active()
+    }
+
+    /// The snapshot this sale must keep resolving against.
+    pub fn catalog(&self) -> Option<CatalogRef> {
+        self.0.catalog
     }
 
     fn touch(&mut self, now: Timestamp) {
@@ -503,6 +539,10 @@ mod tests {
             operator_id: OperatorId::new("CASHIER-001").unwrap(),
             register_sequence: 1,
             currency: MXN,
+            catalog: Some(CatalogRef {
+                snapshot_id: CatalogSnapshotId::from_uuid(Uuid::from_u128(900)),
+                version: 1,
+            }),
             created_at: ts(0),
         })
     }
@@ -517,6 +557,7 @@ mod tests {
             quantity: Quantity::from_units(qty_units).unwrap(),
             unit_price: money(price_minor),
             tax_rate: TaxRate::from_bps(tax_bps).unwrap(),
+            price_mode: PriceMode::TaxExclusive,
             discount_amount: None,
         }
     }
@@ -534,7 +575,7 @@ mod tests {
     fn prices_line_and_totalizes() {
         let mut tx = sale();
         let l = tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
-        assert_eq!(l.gross_amount, money(10_000));
+        assert_eq!(l.extended_amount, money(10_000));
         assert_eq!(l.tax_amount, money(1_600));
         assert_eq!(l.line_total, money(11_600));
         let totals = tx.totalize(ts(2)).unwrap();
@@ -557,6 +598,70 @@ mod tests {
         // 20000 * 16% = 3200 ; (5000-500) * 16% = 720
         assert_eq!(totals.tax_total, money(3_920));
         assert_eq!(totals.grand_total, money(28_420));
+    }
+
+    #[test]
+    fn prices_an_inclusive_line_by_backing_the_tax_out() {
+        let mut tx = sale();
+        let mut inclusive = line(11_600, 1, 1_600, 1);
+        inclusive.price_mode = PriceMode::TaxInclusive;
+        let l = tx.add_line(inclusive, ts(1)).unwrap();
+        assert_eq!(l.extended_amount, money(11_600));
+        assert_eq!(l.taxable_amount, money(10_000));
+        assert_eq!(l.tax_amount, money(1_600));
+        // The customer pays the shelf price, not shelf price plus tax.
+        assert_eq!(l.line_total, money(11_600));
+
+        let totals = tx.totalize(ts(2)).unwrap();
+        assert_eq!(totals.subtotal, money(11_600));
+        assert_eq!(totals.net_total, money(10_000));
+        assert_eq!(totals.tax_total, money(1_600));
+        assert_eq!(totals.grand_total, money(11_600));
+    }
+
+    #[test]
+    fn mixes_inclusive_and_exclusive_lines_in_one_sale() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        let mut inclusive = line(10_800, 2, 800, 2);
+        inclusive.price_mode = PriceMode::TaxInclusive;
+        tx.add_line(inclusive, ts(2)).unwrap();
+
+        let totals = tx.totalize(ts(3)).unwrap();
+        // exclusive: net 10000, tax 1600 ; inclusive: gross 21600 -> net 20000, tax 1600
+        assert_eq!(totals.net_total, money(30_000));
+        assert_eq!(totals.tax_total, money(3_200));
+        assert_eq!(totals.grand_total, money(33_200));
+        assert_eq!(
+            totals.grand_total,
+            tx.state()
+                .lines
+                .iter()
+                .fold(money(0), |acc, l| acc.checked_add(l.line_total).unwrap())
+        );
+    }
+
+    #[test]
+    fn extended_amount_multiplies_before_splitting_the_tax() {
+        // 3 x 0.99 inclusive at 16%: the customer pays 2.97, never 2.98.
+        let mut tx = sale();
+        let mut inclusive = line(99, 3, 1_600, 1);
+        inclusive.price_mode = PriceMode::TaxInclusive;
+        let l = tx.add_line(inclusive, ts(1)).unwrap();
+        assert_eq!(l.extended_amount, money(297));
+        assert_eq!(l.line_total, money(297));
+        assert_eq!(
+            l.taxable_amount.checked_add(l.tax_amount).unwrap(),
+            money(297)
+        );
+    }
+
+    #[test]
+    fn captures_the_catalog_snapshot_at_start() {
+        let tx = sale();
+        let catalog = tx.catalog().expect("a sale must know its snapshot");
+        assert_eq!(catalog.version, 1);
+        assert_eq!(tx.state().catalog, Some(catalog));
     }
 
     #[test]

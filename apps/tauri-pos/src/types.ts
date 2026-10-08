@@ -88,6 +88,67 @@ export interface EdgeState {
   pending_outbox: number;
 }
 
+export interface SnapshotCounts {
+  tax_profiles: number;
+  products: number;
+  barcodes: number;
+}
+
+export interface CatalogSnapshot {
+  snapshot_id: string;
+  store_id: string;
+  version: number;
+  status: string;
+  declared_content_hash: string;
+  /** Computed by the core from the rows it stored. */
+  content_hash: string | null;
+  generated_at: string;
+  effective_at: string | null;
+  expected: SnapshotCounts;
+  imported_at: string;
+  committed_at: string | null;
+  activated_at: string | null;
+  superseded_at: string | null;
+}
+
+export interface CatalogSnapshotView {
+  snapshot: CatalogSnapshot;
+  stored: SnapshotCounts;
+}
+
+export interface CatalogStatus {
+  protocol_version: number;
+  active: CatalogSnapshotView | null;
+  pending: CatalogSnapshotView[];
+  /** Open imports. These never price a sale. */
+  importing: CatalogSnapshotView[];
+}
+
+export interface TaxProfile {
+  code: string;
+  name: string;
+  rate_bps: number;
+  price_mode: string;
+}
+
+export interface CatalogProduct {
+  product_ref: string;
+  external_ref: string | null;
+  sku: string | null;
+  name: string;
+  active: boolean;
+  sellable: boolean;
+  tax_profile: string;
+  unit_price: Money;
+}
+
+export interface ProductLookup {
+  snapshot_id: string;
+  snapshot_version: number;
+  product: CatalogProduct;
+  tax_profile: TaxProfile;
+}
+
 export type CoreStatus = "STARTING" | "READY" | "DEGRADED" | "STOPPING";
 
 export interface CoreInfo {

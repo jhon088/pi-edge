@@ -5,8 +5,9 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
-use edge_application::testing::{FixedClock, SequentialIdFactory};
+use edge_application::testing::{CatalogFixture, FixedClock, SequentialIdFactory, DEMO_BARCODE};
 use edge_application::EdgeApplication;
+use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_storage::SqliteEdgeStore;
 
@@ -39,6 +40,7 @@ pub fn open_register(core: &TestCore) {
         currency: Currency::Mxn,
     })
     .unwrap();
+    CatalogFixture::demo(1).activate(core).unwrap();
     core.open_business_day(OpenBusinessDayCommand::default())
         .unwrap();
     core.open_register_session(OpenRegisterSessionCommand {
@@ -53,14 +55,8 @@ pub fn open_register(core: &TestCore) {
 pub fn demo_item() -> AddItemCommand {
     AddItemCommand {
         request_id: None,
-        product_ref: ProductRef::new("SKU-001").unwrap(),
-        sku: Some("SKU-001".to_owned()),
-        barcode: None,
-        description: "Producto prueba".to_owned(),
+        selector: ProductSelector::Barcode(Barcode::new(DEMO_BARCODE).unwrap()),
         quantity: Quantity::from_units(1).unwrap(),
-        unit_price_minor: 10_000,
-        tax_rate: TaxRate::from_bps(1_600).unwrap(),
-        discount_minor: 0,
     }
 }
 

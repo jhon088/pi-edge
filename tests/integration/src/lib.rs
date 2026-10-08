@@ -3,8 +3,11 @@
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
-use edge_application::testing::{FixedClock, SequentialIdFactory};
+use edge_application::testing::{
+    CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory, DEMO_BARCODE,
+};
 use edge_application::EdgeApplication;
+use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_storage::SqliteEdgeStore;
 
@@ -40,9 +43,14 @@ pub fn init_device(core: &TestCore) {
     .unwrap();
 }
 
-/// Device + open business day + open session on `REG-001`.
-pub fn open_register(core: &TestCore) {
-    init_device(core);
+/// Import and activate the default demo catalog.
+pub fn activate_demo_catalog(core: &TestCore) {
+    CatalogFixture::demo(1).activate(core).unwrap();
+}
+
+/// Open the business day and a session on `REG-001`, assuming the device and
+/// a catalog are already in place.
+pub fn open_day_and_session(core: &TestCore) {
     core.open_business_day(OpenBusinessDayCommand::default())
         .unwrap();
     core.open_register_session(OpenRegisterSessionCommand {
@@ -54,29 +62,62 @@ pub fn open_register(core: &TestCore) {
     .unwrap();
 }
 
-/// A single-line item command: 100.00 MXN at 16% tax.
-pub fn demo_item() -> AddItemCommand {
-    item("SKU-001", "Producto prueba", 10_000, 1_600, 1)
+/// Device + catalog + open business day + open session on `REG-001`.
+pub fn open_register(core: &TestCore) {
+    init_device(core);
+    activate_demo_catalog(core);
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor: 100_000,
+    })
+    .unwrap();
 }
 
-pub fn item(
-    product: &str,
-    description: &str,
-    price_minor: i64,
-    tax_rate_bps: u32,
-    qty_units: i64,
-) -> AddItemCommand {
+/// Scan the demo product: 100.00 MXN at 16%, resolved by the core.
+pub fn demo_item() -> AddItemCommand {
+    scan(DEMO_BARCODE, 1)
+}
+
+/// Add an item by barcode, the way a scanner would.
+pub fn scan(barcode: &str, qty_units: i64) -> AddItemCommand {
     AddItemCommand {
         request_id: None,
-        product_ref: ProductRef::new(product).unwrap(),
-        sku: Some(product.to_owned()),
-        barcode: None,
-        description: description.to_owned(),
+        selector: ProductSelector::Barcode(Barcode::new(barcode).unwrap()),
         quantity: Quantity::from_units(qty_units).unwrap(),
-        unit_price_minor: price_minor,
-        tax_rate: TaxRate::from_bps(tax_rate_bps).unwrap(),
-        discount_minor: 0,
     }
+}
+
+/// Add an item by canonical product reference.
+pub fn item(product_ref: &str, qty_units: i64) -> AddItemCommand {
+    AddItemCommand {
+        request_id: None,
+        selector: ProductSelector::ProductRef(ProductRef::new(product_ref).unwrap()),
+        quantity: Quantity::from_units(qty_units).unwrap(),
+    }
+}
+
+/// A catalog with the products the pricing tests need.
+pub fn pricing_catalog(version: i64) -> CatalogFixture {
+    CatalogFixture::demo(version)
+        .with(
+            FixtureProduct::new("SKU-002", "Segundo producto", 5_000)
+                .sku("SKU-002")
+                .barcode("7501000000002"),
+        )
+        .with(
+            FixtureProduct::new("SKU-INACTIVE", "Descontinuado", 1_000)
+                .barcode("7501000000003")
+                .inactive(),
+        )
+        .with(
+            FixtureProduct::new("SKU-SERVICE", "No vendible", 1_000)
+                .barcode("7501000000004")
+                .not_sellable(),
+        )
 }
 
 /// Journal event types, oldest first.

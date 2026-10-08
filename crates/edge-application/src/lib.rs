@@ -8,6 +8,7 @@
 //! aggregate, its journal event and its outbox event commit atomically.
 
 pub mod adapters;
+pub mod catalog_service;
 pub mod commands;
 pub mod error;
 pub mod ports;

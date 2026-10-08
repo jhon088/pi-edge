@@ -1,28 +1,22 @@
 //! Deterministic protocol output for known sales.
+//!
+//! Prices and tax rates come from an imported catalog snapshot, exactly as in
+//! production: nothing in these tests states a price. Time is frozen and ids
+//! are sequential, so the output is byte-stable.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use edge_application::commands::*;
 use edge_golden_tests::*;
-use edge_protocol::{EdgeStateV1, RetailTransactionV1};
+use edge_protocol::{CatalogStatusV1, EdgeStateV1, RetailTransactionV1};
 
-/// A single line at 16% tax: the canonical smoke case.
+/// A single line at 16% tax, paid with change: the canonical smoke case.
 #[test]
 fn golden_single_line_cash_sale() {
     let core = golden_core();
-    open_register(&core);
+    open_register_with(&core, &golden_catalog(1));
     core.start_transaction(StartTransactionCommand::default())
         .unwrap();
-    add_item(
-        &core,
-        ItemSpec {
-            product: "SKU-001",
-            description: "Producto prueba",
-            price_minor: 10_000,
-            tax_rate_bps: 1_600,
-            quantity_thousandths: 1_000,
-            discount_minor: 0,
-        },
-    );
+    scan(&core, BARCODE_16, 1_000);
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
     core.commit_cash_payment(CommitCashPaymentCommand {
@@ -34,6 +28,14 @@ fn golden_single_line_cash_sale() {
         .finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
 
+    // The core resolved everything from the catalog.
+    let line = &finalized.state().lines[0];
+    assert_eq!(line.description, "Gravado 16%");
+    assert_eq!(line.unit_price.minor(), 10_000);
+    assert_eq!(line.tax_amount.minor(), 1_600);
+    assert_eq!(line.line_total.minor(), 11_600);
+    assert_eq!(line.barcode.as_deref(), Some(BARCODE_16));
+
     let dto = RetailTransactionV1::from_domain(&finalized).unwrap();
     assert_golden(
         "single_line_cash_sale",
@@ -41,62 +43,34 @@ fn golden_single_line_cash_sale() {
     );
 }
 
-/// Mixed tax rates, a fractional quantity and a line discount: exercises every
-/// rounding path of the pricing math.
+/// Mixed rates and a fractional quantity: exercises every rounding path of the
+/// tax-exclusive math.
+///
+/// Line discounts are deliberately absent: no client may state one in this
+/// milestone, so the golden case reflects what the API can actually express.
+/// The discount arithmetic stays covered by the domain unit tests.
 #[test]
 fn golden_mixed_rates_and_rounding() {
     let core = golden_core();
-    open_register(&core);
+    open_register_with(&core, &golden_catalog(1));
     core.start_transaction(StartTransactionCommand::default())
         .unwrap();
-    add_item(
-        &core,
-        ItemSpec {
-            product: "SKU-001",
-            description: "Taxed at 16%",
-            price_minor: 333,
-            tax_rate_bps: 1_600,
-            quantity_thousandths: 2_500,
-            discount_minor: 0,
-        },
-    );
-    add_item(
-        &core,
-        ItemSpec {
-            product: "SKU-002",
-            description: "Zero rated",
-            price_minor: 1_999,
-            tax_rate_bps: 0,
-            quantity_thousandths: 3_000,
-            discount_minor: 0,
-        },
-    );
-    add_item(
-        &core,
-        ItemSpec {
-            product: "SKU-003",
-            description: "Discounted 8%",
-            price_minor: 12_345,
-            tax_rate_bps: 800,
-            quantity_thousandths: 1_000,
-            discount_minor: 1_111,
-        },
-    );
+    // 333 x 2.5 = 832.5 -> 833 ; tax 16% of 833 = 133.28 -> 133
+    scan(&core, BARCODE_FRACTIONAL, 2_500);
+    // 1999 x 3 = 5997 ; tax 0
+    scan(&core, BARCODE_0, 3_000);
+    // 10000 x 1 = 10000 ; tax 8% = 800
+    scan(&core, BARCODE_8, 1_000);
     let totalized = core
         .totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
 
-    // Guard the arithmetic explicitly, not only through the golden file.
-    // Line 1: 333 * 2.5 = 832.5 -> 833 ; tax 16% of 833 = 133.28 -> 133
-    // Line 2: 1999 * 3 = 5997 ; tax 0
-    // Line 3: 12345 - 1111 = 11234 ; tax 8% of 11234 = 898.72 -> 899
-    assert_eq!(
-        totalized.state().totals.subtotal.minor(),
-        833 + 5_997 + 12_345
-    );
-    assert_eq!(totalized.state().totals.discount_total.minor(), 1_111);
-    assert_eq!(totalized.state().totals.tax_total.minor(), 133 + 899);
-    assert_eq!(totalized.state().totals.grand_total.minor(), 19_096);
+    let totals = &totalized.state().totals;
+    assert_eq!(totals.subtotal.minor(), 833 + 5_997 + 10_000);
+    assert_eq!(totals.net_total.minor(), 833 + 5_997 + 10_000);
+    assert_eq!(totals.tax_total.minor(), 133 + 800);
+    assert_eq!(totals.grand_total.minor(), 17_763);
+    assert_eq!(totals.discount_total.minor(), 0);
 
     let dto = RetailTransactionV1::from_domain(&totalized).unwrap();
     assert_golden(
@@ -105,24 +79,99 @@ fn golden_mixed_rates_and_rounding() {
     );
 }
 
-/// The diagnostic payload the Tauri screen will render.
+/// Tax-inclusive shelf prices: the customer pays the quoted amount and the
+/// core reports how much of it is tax.
+#[test]
+fn golden_tax_inclusive_pricing() {
+    let core = golden_core();
+    open_register_with(&core, &golden_catalog(1));
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    scan(&core, BARCODE_INCLUSIVE_16, 1_000);
+    scan(&core, BARCODE_INCLUSIVE_8, 1_000);
+    scan(&core, BARCODE_INCLUSIVE_0, 1_000);
+    let totalized = core
+        .totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+
+    let lines = &totalized.state().lines;
+    // 116.00 including 16% -> net 100.00, tax 16.00
+    assert_eq!(lines[0].taxable_amount.minor(), 10_000);
+    assert_eq!(lines[0].tax_amount.minor(), 1_600);
+    assert_eq!(lines[0].line_total.minor(), 11_600);
+    // 108.00 including 8% -> net 100.00, tax 8.00
+    assert_eq!(lines[1].taxable_amount.minor(), 10_000);
+    assert_eq!(lines[1].tax_amount.minor(), 800);
+    assert_eq!(lines[1].line_total.minor(), 10_800);
+    // 0% inclusive: net equals gross, tax is zero
+    assert_eq!(lines[2].taxable_amount.minor(), 9_999);
+    assert_eq!(lines[2].tax_amount.minor(), 0);
+    assert_eq!(lines[2].line_total.minor(), 9_999);
+
+    let totals = &totalized.state().totals;
+    assert_eq!(totals.net_total.minor(), 10_000 + 10_000 + 9_999);
+    assert_eq!(totals.tax_total.minor(), 1_600 + 800);
+    assert_eq!(totals.grand_total.minor(), 11_600 + 10_800 + 9_999);
+    // The quoted total and the grand total agree: inclusive prices are final.
+    assert_eq!(totals.subtotal.minor(), totals.grand_total.minor());
+
+    let dto = RetailTransactionV1::from_domain(&totalized).unwrap();
+    assert_golden(
+        "tax_inclusive_pricing",
+        &serde_json::to_value(&dto).unwrap(),
+    );
+}
+
+/// Amounts where backing the tax out cannot divide evenly. Freezes the
+/// rounding policy and proves `net + tax == gross` line by line.
+#[test]
+fn golden_inclusive_rounding_boundaries() {
+    let core = golden_core();
+    open_register_with(&core, &golden_catalog(1));
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    // 0.99 x 3 = 2.97 inclusive at 16% -> net 2.56, tax 0.41
+    scan(&core, BARCODE_ODD_INCLUSIVE, 3_000);
+    // 0.99 x 1 = 0.99 inclusive at 16% -> net 0.85, tax 0.14
+    scan(&core, BARCODE_ODD_INCLUSIVE, 1_000);
+    let totalized = core
+        .totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+
+    for line in &totalized.state().lines {
+        assert_eq!(
+            line.taxable_amount
+                .checked_add(line.tax_amount)
+                .unwrap()
+                .minor(),
+            line.line_total.minor(),
+            "net + tax must equal the line total"
+        );
+        assert_eq!(line.line_total.minor(), line.extended_amount.minor());
+    }
+    let lines = &totalized.state().lines;
+    assert_eq!(lines[0].extended_amount.minor(), 297);
+    assert_eq!(lines[0].taxable_amount.minor(), 256);
+    assert_eq!(lines[0].tax_amount.minor(), 41);
+    assert_eq!(lines[1].extended_amount.minor(), 99);
+    assert_eq!(lines[1].taxable_amount.minor(), 85);
+    assert_eq!(lines[1].tax_amount.minor(), 14);
+
+    let dto = RetailTransactionV1::from_domain(&totalized).unwrap();
+    assert_golden(
+        "inclusive_rounding_boundaries",
+        &serde_json::to_value(&dto).unwrap(),
+    );
+}
+
+/// The diagnostic payload the Tauri screen renders.
 #[test]
 fn golden_edge_state_mid_sale() {
     let core = golden_core();
-    open_register(&core);
+    open_register_with(&core, &golden_catalog(1));
     core.start_transaction(StartTransactionCommand::default())
         .unwrap();
-    add_item(
-        &core,
-        ItemSpec {
-            product: "SKU-001",
-            description: "Producto prueba",
-            price_minor: 10_000,
-            tax_rate_bps: 1_600,
-            quantity_thousandths: 1_000,
-            discount_minor: 0,
-        },
-    );
+    scan(&core, BARCODE_16, 1_000);
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
     core.commit_cash_payment(CommitCashPaymentCommand {
@@ -134,4 +183,25 @@ fn golden_edge_state_mid_sale() {
     let state = core.get_edge_state().unwrap();
     let dto = EdgeStateV1::from_domain(&state).unwrap();
     assert_golden("edge_state_mid_sale", &serde_json::to_value(&dto).unwrap());
+}
+
+/// The catalog the register is running, including the hash the core computed
+/// from its own rows.
+#[test]
+fn golden_catalog_status() {
+    let core = golden_core();
+    open_register_with(&core, &golden_catalog(1));
+    let status = core.get_catalog_status().unwrap();
+    let active = status.active.as_ref().expect("a catalog must be active");
+    assert_eq!(active.stored.products, 8);
+    assert_eq!(active.stored.barcodes, 8);
+    assert_eq!(active.stored.tax_profiles, 6);
+    // The core stores the hash it computed, not the one it was given.
+    assert_eq!(
+        active.snapshot.state().content_hash.as_deref(),
+        Some(active.snapshot.state().declared_content_hash.as_str())
+    );
+
+    let dto = CatalogStatusV1::from(&status);
+    assert_golden("catalog_status", &serde_json::to_value(&dto).unwrap());
 }

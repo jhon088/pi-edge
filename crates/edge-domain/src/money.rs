@@ -26,6 +26,8 @@ pub enum MoneyError {
     InvalidQuantity(i64),
     #[error("tax rate out of range (got {0} basis points)")]
     InvalidTaxRate(u32),
+    #[error("unknown price mode `{0}`")]
+    UnknownPriceMode(String),
 }
 
 /// Supported currencies. Only MXN is active today; the type exists so that
@@ -214,6 +216,46 @@ impl fmt::Display for Quantity {
     }
 }
 
+/// How a quoted price relates to tax.
+///
+/// Always declared explicitly by the catalog's tax profile — never inferred
+/// from the amount, the rate or the kind of product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PriceMode {
+    /// The quoted price is net; tax is added on top. `gross = net + tax`.
+    TaxExclusive,
+    /// The quoted price is what the customer pays; tax is backed out of it.
+    /// This is how Mexican retail shelf prices normally work.
+    TaxInclusive,
+}
+
+impl PriceMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PriceMode::TaxExclusive => "TAX_EXCLUSIVE",
+            PriceMode::TaxInclusive => "TAX_INCLUSIVE",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, MoneyError> {
+        match value {
+            "TAX_EXCLUSIVE" => Ok(PriceMode::TaxExclusive),
+            "TAX_INCLUSIVE" => Ok(PriceMode::TaxInclusive),
+            other => Err(MoneyError::UnknownPriceMode(other.to_owned())),
+        }
+    }
+}
+
+/// A taxed amount, decomposed. `net + tax == gross` always holds, in both
+/// price modes and at every rate, by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaxedAmount {
+    pub net: Money,
+    pub tax: Money,
+    pub gross: Money,
+}
+
 /// Tax rate in basis points (1600 = 16.00%).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -245,6 +287,50 @@ impl TaxRate {
             div_round_half_away_from_zero(scaled, i128::from(Self::SCALE))?,
             base.currency(),
         ))
+    }
+
+    /// Back the tax out of a tax-inclusive amount.
+    ///
+    /// `net = round(gross * 10000 / (10000 + bps))` with the core's single
+    /// rounding policy, and `tax = gross - net`, which is what guarantees
+    /// `net + tax == gross` even when the division is not exact.
+    pub fn split_inclusive(&self, gross: Money) -> Result<(Money, Money), MoneyError> {
+        if self.0 == 0 {
+            return Ok((gross, Money::zero(gross.currency())));
+        }
+        let scaled = i128::from(gross.minor())
+            .checked_mul(i128::from(Self::SCALE))
+            .ok_or(MoneyError::Overflow)?;
+        let denominator = i128::from(Self::SCALE)
+            .checked_add(i128::from(self.0))
+            .ok_or(MoneyError::Overflow)?;
+        let net = Money::from_minor(
+            div_round_half_away_from_zero(scaled, denominator)?,
+            gross.currency(),
+        );
+        Ok((net, gross.checked_sub(net)?))
+    }
+
+    /// Decompose a quoted amount according to its price mode.
+    pub fn apply(&self, amount: Money, mode: PriceMode) -> Result<TaxedAmount, MoneyError> {
+        match mode {
+            PriceMode::TaxExclusive => {
+                let tax = self.tax_on(amount)?;
+                Ok(TaxedAmount {
+                    net: amount,
+                    tax,
+                    gross: amount.checked_add(tax)?,
+                })
+            }
+            PriceMode::TaxInclusive => {
+                let (net, tax) = self.split_inclusive(amount)?;
+                Ok(TaxedAmount {
+                    net,
+                    tax,
+                    gross: amount,
+                })
+            }
+        }
     }
 }
 
@@ -374,6 +460,83 @@ mod tests {
         assert!(m(11_600).is_at_least(&m(11_600)).unwrap());
         assert!(!m(11_599).is_at_least(&m(11_600)).unwrap());
         assert_eq!(m(-5).clamp_non_negative(), m(0));
+    }
+
+    #[test]
+    fn exclusive_mode_keeps_the_existing_arithmetic() {
+        let rate = TaxRate::from_bps(1_600).unwrap();
+        let taxed = rate.apply(m(10_000), PriceMode::TaxExclusive).unwrap();
+        assert_eq!(taxed.net, m(10_000));
+        assert_eq!(taxed.tax, m(1_600));
+        assert_eq!(taxed.gross, m(11_600));
+    }
+
+    #[test]
+    fn inclusive_mode_backs_the_tax_out_of_the_shelf_price() {
+        let rate = TaxRate::from_bps(1_600).unwrap();
+        let taxed = rate.apply(m(11_600), PriceMode::TaxInclusive).unwrap();
+        assert_eq!(taxed.net, m(10_000));
+        assert_eq!(taxed.tax, m(1_600));
+        assert_eq!(taxed.gross, m(11_600));
+
+        let rate = TaxRate::from_bps(800).unwrap();
+        let taxed = rate.apply(m(10_800), PriceMode::TaxInclusive).unwrap();
+        assert_eq!(taxed.net, m(10_000));
+        assert_eq!(taxed.tax, m(800));
+    }
+
+    #[test]
+    fn zero_rate_is_identical_in_both_modes() {
+        for mode in [PriceMode::TaxExclusive, PriceMode::TaxInclusive] {
+            let taxed = TaxRate::ZERO.apply(m(9_999), mode).unwrap();
+            assert_eq!(taxed.net, m(9_999));
+            assert_eq!(taxed.tax, m(0));
+            assert_eq!(taxed.gross, m(9_999));
+        }
+    }
+
+    #[test]
+    fn net_plus_tax_always_equals_gross() {
+        // Amounts where the inclusive division cannot be exact.
+        for bps in [1_600, 800, 1, 9_999] {
+            let rate = TaxRate::from_bps(bps).unwrap();
+            for minor in [1, 3, 7, 99, 101, 333, 1_001, 11_601, 123_457] {
+                for mode in [PriceMode::TaxExclusive, PriceMode::TaxInclusive] {
+                    let taxed = rate.apply(m(minor), mode).unwrap();
+                    assert_eq!(
+                        taxed.net.checked_add(taxed.tax).unwrap(),
+                        taxed.gross,
+                        "bps={bps} minor={minor} mode={mode:?}"
+                    );
+                    assert!(!taxed.tax.is_negative());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inclusive_rounding_policy_is_frozen() {
+        let rate = TaxRate::from_bps(1_600).unwrap();
+        // 100 / 1.16 = 86.2068... -> 86 ; tax = 14
+        let taxed = rate.apply(m(100), PriceMode::TaxInclusive).unwrap();
+        assert_eq!(taxed.net, m(86));
+        assert_eq!(taxed.tax, m(14));
+        // 1 / 1.16 = 0.862 -> 1 ; tax = 0
+        let taxed = rate.apply(m(1), PriceMode::TaxInclusive).unwrap();
+        assert_eq!(taxed.net, m(1));
+        assert_eq!(taxed.tax, m(0));
+        // 333 / 1.16 = 287.068... -> 287 ; tax = 46
+        let taxed = rate.apply(m(333), PriceMode::TaxInclusive).unwrap();
+        assert_eq!(taxed.net, m(287));
+        assert_eq!(taxed.tax, m(46));
+    }
+
+    #[test]
+    fn price_mode_round_trips_through_its_wire_value() {
+        for mode in [PriceMode::TaxExclusive, PriceMode::TaxInclusive] {
+            assert_eq!(PriceMode::parse(mode.as_str()).unwrap(), mode);
+        }
+        assert!(PriceMode::parse("GUESS").is_err());
     }
 
     #[test]

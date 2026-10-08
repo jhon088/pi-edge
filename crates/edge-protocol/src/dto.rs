@@ -59,8 +59,12 @@ pub struct TransactionLineV1 {
     pub quantity_thousandths: i64,
     pub unit_price: MoneyV1,
     pub tax_rate_bps: u32,
-    pub gross_amount: MoneyV1,
+    /// Whether `unit_price` already includes tax.
+    pub price_mode: String,
+    /// `unit_price * quantity`, in the quoted price mode.
+    pub extended_amount: MoneyV1,
     pub discount_amount: MoneyV1,
+    /// Net tax base after discount.
     pub taxable_amount: MoneyV1,
     pub tax_amount: MoneyV1,
     pub line_total: MoneyV1,
@@ -68,8 +72,11 @@ pub struct TransactionLineV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TotalsV1 {
+    /// Sum of quoted extended amounts, before discount.
     pub subtotal: MoneyV1,
     pub discount_total: MoneyV1,
+    /// Sum of net tax bases: the subtotal a receipt prints above the tax line.
+    pub net_total: MoneyV1,
     pub tax_total: MoneyV1,
     pub grand_total: MoneyV1,
 }
@@ -95,6 +102,9 @@ pub struct RetailTransactionV1 {
     pub register_sequence: i64,
     pub status: String,
     pub currency: String,
+    /// Snapshot that priced this sale, captured when it started.
+    pub catalog_snapshot_id: Option<String>,
+    pub catalog_version: Option<i64>,
     pub lines: Vec<TransactionLineV1>,
     pub totals: TotalsV1,
     pub payments: Vec<PaymentV1>,
@@ -218,18 +228,178 @@ pub struct OpenRegisterSessionRequestV1 {
     pub opening_cash_minor: i64,
 }
 
+/// How a client names a product. Exactly one way, explicitly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "by", content = "value", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ProductSelectorV1 {
+    Barcode(String),
+    Sku(String),
+    /// Canonical catalog reference assigned upstream.
+    ProductRef(String),
+}
+
+/// Identity and quantity. Description, price, tax rate and price mode are
+/// resolved by the core from the snapshot the sale captured — a client cannot
+/// state a price, so it cannot be wrong about one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddItemRequestV1 {
-    /// Canonical catalog reference. PI.Edge never creates products.
-    pub product_ref: String,
-    pub sku: Option<String>,
-    pub barcode: Option<String>,
-    pub description: String,
+    pub product: ProductSelectorV1,
     pub quantity_thousandths: i64,
-    pub unit_price_minor: i64,
-    pub tax_rate_bps: u32,
+}
+
+// ------------------------------------------------------------------- catalog
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SnapshotCountsV1 {
+    pub tax_profiles: i64,
+    pub products: i64,
+    pub barcodes: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaxProfileV1 {
+    pub code: String,
+    pub name: String,
+    pub rate_bps: u32,
+    pub price_mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogProductV1 {
+    pub product_ref: String,
+    /// Source-system code: traceability metadata, never identity.
+    pub external_ref: Option<String>,
+    pub sku: Option<String>,
+    pub name: String,
+    pub active: bool,
+    pub sellable: bool,
+    pub tax_profile: String,
+    pub unit_price: MoneyV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSnapshotV1 {
+    pub snapshot_id: String,
+    pub store_id: String,
+    pub version: i64,
+    pub status: String,
+    pub declared_content_hash: String,
+    /// Computed by the core from the rows it stored. `null` until committed.
+    pub content_hash: Option<String>,
+    pub generated_at: String,
+    pub effective_at: Option<String>,
+    pub expected: SnapshotCountsV1,
+    pub imported_at: String,
+    pub committed_at: Option<String>,
+    pub activated_at: Option<String>,
+    pub superseded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSnapshotViewV1 {
+    pub snapshot: CatalogSnapshotV1,
+    /// What is actually stored, as counted by the core.
+    pub stored: SnapshotCountsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogStatusV1 {
+    pub protocol_version: u32,
+    pub active: Option<CatalogSnapshotViewV1>,
+    pub pending: Vec<CatalogSnapshotViewV1>,
+    /// Open imports. These never price a sale.
+    pub importing: Vec<CatalogSnapshotViewV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportProgressV1 {
+    pub snapshot_id: String,
+    pub status: String,
+    pub version: i64,
+    pub received_chunks: Vec<i64>,
+    pub received_records: i64,
+    /// Lowest index the client still has to send.
+    pub next_chunk_index: i64,
+    pub expected: SnapshotCountsV1,
+    pub stored: SnapshotCountsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogImportStatusV1 {
+    pub snapshot: CatalogSnapshotV1,
+    pub progress: ImportProgressV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductLookupV1 {
+    pub snapshot_id: String,
+    pub snapshot_version: i64,
+    pub product: CatalogProductV1,
+    pub tax_profile: TaxProfileV1,
+}
+
+// ------------------------------------------------- catalog import requests
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeginCatalogImportRequestV1 {
+    /// Monotonic version assigned upstream.
+    pub version: i64,
+    /// Currency every price in this snapshot is quoted in. Checked against the
+    /// device, so a mismatched catalog fails with a clear error instead of a
+    /// hash mismatch.
+    pub currency: String,
+    /// Hash the producer claims the content has; verified, never trusted.
+    pub content_hash: String,
+    pub generated_at: String,
     #[serde(default)]
-    pub discount_minor: i64,
+    pub effective_at: Option<String>,
+    pub expected: SnapshotCountsV1,
+    pub tax_profiles: Vec<TaxProfileV1>,
+}
+
+/// One product record. Its barcodes travel with it, which is what keeps a
+/// product and its codes inside the same chunk and the same transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogProductRecordV1 {
+    pub product_ref: String,
+    #[serde(default)]
+    pub external_ref: Option<String>,
+    #[serde(default)]
+    pub sku: Option<String>,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub active: bool,
+    #[serde(default = "default_true")]
+    pub sellable: bool,
+    pub tax_profile: String,
+    pub unit_price_minor: i64,
+    #[serde(default)]
+    pub barcodes: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutCatalogChunkRequestV1 {
+    pub snapshot_id: String,
+    pub chunk_index: i64,
+    /// Hash of this chunk's canonical content, for replay detection.
+    pub chunk_hash: String,
+    pub products: Vec<CatalogProductRecordV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitCatalogImportRequestV1 {
+    pub snapshot_id: String,
+    /// Number of chunks sent, so a lost tail is detected.
+    pub chunk_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSnapshotRequestV1 {
+    pub snapshot_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

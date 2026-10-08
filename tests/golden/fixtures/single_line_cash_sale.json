@@ -1,21 +1,23 @@
 {
-  "transaction_id": "00000000-0000-0000-0000-000000000005",
-  "business_day_id": "00000000-0000-0000-0000-000000000001",
-  "session_id": "00000000-0000-0000-0000-000000000003",
+  "transaction_id": "00000000-0000-0000-0000-000000000008",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
   "store_id": "STORE-DEMO",
   "register_id": "REG-001",
   "operator_id": "CASHIER-001",
   "register_sequence": 1,
   "status": "FINALIZED",
   "currency": "MXN",
+  "catalog_snapshot_id": "00000000-0000-0000-0000-000000000001",
+  "catalog_version": 1,
   "lines": [
     {
-      "line_id": "00000000-0000-0000-0000-000000000007",
+      "line_id": "00000000-0000-0000-0000-00000000000a",
       "line_number": 1,
-      "product_ref": "SKU-001",
-      "sku": "SKU-001",
-      "barcode": null,
-      "description": "Producto prueba",
+      "product_ref": "SKU-16",
+      "sku": "SKU-16",
+      "barcode": "7501000000016",
+      "description": "Gravado 16%",
       "quantity": "1.000",
       "quantity_thousandths": 1000,
       "unit_price": {
@@ -24,7 +26,8 @@
         "formatted": "100.00"
       },
       "tax_rate_bps": 1600,
-      "gross_amount": {
+      "price_mode": "TAX_EXCLUSIVE",
+      "extended_amount": {
         "minor": 10000,
         "currency": "MXN",
         "formatted": "100.00"
@@ -62,6 +65,11 @@
       "currency": "MXN",
       "formatted": "0.00"
     },
+    "net_total": {
+      "minor": 10000,
+      "currency": "MXN",
+      "formatted": "100.00"
+    },
     "tax_total": {
       "minor": 1600,
       "currency": "MXN",
@@ -75,7 +83,7 @@
   },
   "payments": [
     {
-      "payment_id": "00000000-0000-0000-0000-00000000000a",
+      "payment_id": "00000000-0000-0000-0000-00000000000d",
       "tender_type": "CASH",
       "amount": {
         "minor": 20000,

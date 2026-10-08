@@ -1,21 +1,23 @@
 {
-  "transaction_id": "00000000-0000-0000-0000-000000000005",
-  "business_day_id": "00000000-0000-0000-0000-000000000001",
-  "session_id": "00000000-0000-0000-0000-000000000003",
+  "transaction_id": "00000000-0000-0000-0000-000000000008",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
   "store_id": "STORE-DEMO",
   "register_id": "REG-001",
   "operator_id": "CASHIER-001",
   "register_sequence": 1,
   "status": "TOTALIZED",
   "currency": "MXN",
+  "catalog_snapshot_id": "00000000-0000-0000-0000-000000000001",
+  "catalog_version": 1,
   "lines": [
     {
-      "line_id": "00000000-0000-0000-0000-000000000007",
+      "line_id": "00000000-0000-0000-0000-00000000000a",
       "line_number": 1,
-      "product_ref": "SKU-001",
-      "sku": "SKU-001",
-      "barcode": null,
-      "description": "Taxed at 16%",
+      "product_ref": "SKU-FRACTIONAL",
+      "sku": "SKU-FRACTIONAL",
+      "barcode": "7501000000333",
+      "description": "Granel 16%",
       "quantity": "2.500",
       "quantity_thousandths": 2500,
       "unit_price": {
@@ -24,7 +26,8 @@
         "formatted": "3.33"
       },
       "tax_rate_bps": 1600,
-      "gross_amount": {
+      "price_mode": "TAX_EXCLUSIVE",
+      "extended_amount": {
         "minor": 833,
         "currency": "MXN",
         "formatted": "8.33"
@@ -51,12 +54,12 @@
       }
     },
     {
-      "line_id": "00000000-0000-0000-0000-000000000009",
+      "line_id": "00000000-0000-0000-0000-00000000000c",
       "line_number": 2,
-      "product_ref": "SKU-002",
-      "sku": "SKU-002",
-      "barcode": null,
-      "description": "Zero rated",
+      "product_ref": "SKU-0",
+      "sku": "SKU-0",
+      "barcode": "7501000000000",
+      "description": "Tasa 0%",
       "quantity": "3.000",
       "quantity_thousandths": 3000,
       "unit_price": {
@@ -65,7 +68,8 @@
         "formatted": "19.99"
       },
       "tax_rate_bps": 0,
-      "gross_amount": {
+      "price_mode": "TAX_EXCLUSIVE",
+      "extended_amount": {
         "minor": 5997,
         "currency": "MXN",
         "formatted": "59.97"
@@ -92,67 +96,73 @@
       }
     },
     {
-      "line_id": "00000000-0000-0000-0000-00000000000b",
+      "line_id": "00000000-0000-0000-0000-00000000000e",
       "line_number": 3,
-      "product_ref": "SKU-003",
-      "sku": "SKU-003",
-      "barcode": null,
-      "description": "Discounted 8%",
+      "product_ref": "SKU-8",
+      "sku": "SKU-8",
+      "barcode": "7501000000008",
+      "description": "Gravado 8%",
       "quantity": "1.000",
       "quantity_thousandths": 1000,
       "unit_price": {
-        "minor": 12345,
+        "minor": 10000,
         "currency": "MXN",
-        "formatted": "123.45"
+        "formatted": "100.00"
       },
       "tax_rate_bps": 800,
-      "gross_amount": {
-        "minor": 12345,
+      "price_mode": "TAX_EXCLUSIVE",
+      "extended_amount": {
+        "minor": 10000,
         "currency": "MXN",
-        "formatted": "123.45"
+        "formatted": "100.00"
       },
       "discount_amount": {
-        "minor": 1111,
+        "minor": 0,
         "currency": "MXN",
-        "formatted": "11.11"
+        "formatted": "0.00"
       },
       "taxable_amount": {
-        "minor": 11234,
+        "minor": 10000,
         "currency": "MXN",
-        "formatted": "112.34"
+        "formatted": "100.00"
       },
       "tax_amount": {
-        "minor": 899,
+        "minor": 800,
         "currency": "MXN",
-        "formatted": "8.99"
+        "formatted": "8.00"
       },
       "line_total": {
-        "minor": 12133,
+        "minor": 10800,
         "currency": "MXN",
-        "formatted": "121.33"
+        "formatted": "108.00"
       }
     }
   ],
   "totals": {
     "subtotal": {
-      "minor": 19175,
+      "minor": 16830,
       "currency": "MXN",
-      "formatted": "191.75"
+      "formatted": "168.30"
     },
     "discount_total": {
-      "minor": 1111,
+      "minor": 0,
       "currency": "MXN",
-      "formatted": "11.11"
+      "formatted": "0.00"
+    },
+    "net_total": {
+      "minor": 16830,
+      "currency": "MXN",
+      "formatted": "168.30"
     },
     "tax_total": {
-      "minor": 1032,
+      "minor": 933,
       "currency": "MXN",
-      "formatted": "10.32"
+      "formatted": "9.33"
     },
     "grand_total": {
-      "minor": 19096,
+      "minor": 17763,
       "currency": "MXN",
-      "formatted": "190.96"
+      "formatted": "177.63"
     }
   },
   "payments": [],
@@ -162,9 +172,9 @@
     "formatted": "0.00"
   },
   "balance_due": {
-    "minor": 19096,
+    "minor": 17763,
     "currency": "MXN",
-    "formatted": "190.96"
+    "formatted": "177.63"
   },
   "change_due": {
     "minor": 0,

@@ -93,6 +93,10 @@ pub enum OperationV1 {
     /// accepted on it.
     Subscribe,
 
+    GetCatalogStatus,
+    GetCatalogImportStatus(CatalogSnapshotRequestV1),
+    LookupProduct(ProductSelectorV1),
+
     // commands
     InitDevice(InitDeviceRequestV1),
     OpenBusinessDay,
@@ -104,6 +108,13 @@ pub enum OperationV1 {
     FinalizeTransaction,
     CloseRegisterSession,
     CloseBusinessDay,
+
+    // catalog import: open, stream, close, put in force
+    BeginCatalogImport(BeginCatalogImportRequestV1),
+    PutCatalogChunk(PutCatalogChunkRequestV1),
+    CommitCatalogImport(CommitCatalogImportRequestV1),
+    AbortCatalogImport(CatalogSnapshotRequestV1),
+    ActivateCatalogSnapshot(CatalogSnapshotRequestV1),
 }
 
 impl OperationV1 {
@@ -115,6 +126,9 @@ impl OperationV1 {
             OperationV1::GetActiveTransaction => "GET_ACTIVE_TRANSACTION",
             OperationV1::GetPendingOutbox(_) => "GET_PENDING_OUTBOX",
             OperationV1::GetJournal(_) => "GET_JOURNAL",
+            OperationV1::GetCatalogStatus => "GET_CATALOG_STATUS",
+            OperationV1::GetCatalogImportStatus(_) => "GET_CATALOG_IMPORT_STATUS",
+            OperationV1::LookupProduct(_) => "LOOKUP_PRODUCT",
             OperationV1::Subscribe => "SUBSCRIBE",
             OperationV1::InitDevice(_) => "INIT_DEVICE",
             OperationV1::OpenBusinessDay => "OPEN_BUSINESS_DAY",
@@ -126,6 +140,11 @@ impl OperationV1 {
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
             OperationV1::CloseRegisterSession => "CLOSE_REGISTER_SESSION",
             OperationV1::CloseBusinessDay => "CLOSE_BUSINESS_DAY",
+            OperationV1::BeginCatalogImport(_) => "BEGIN_CATALOG_IMPORT",
+            OperationV1::PutCatalogChunk(_) => "PUT_CATALOG_CHUNK",
+            OperationV1::CommitCatalogImport(_) => "COMMIT_CATALOG_IMPORT",
+            OperationV1::AbortCatalogImport(_) => "ABORT_CATALOG_IMPORT",
+            OperationV1::ActivateCatalogSnapshot(_) => "ACTIVATE_CATALOG_SNAPSHOT",
         }
     }
 
@@ -144,6 +163,11 @@ impl OperationV1 {
                 | OperationV1::FinalizeTransaction
                 | OperationV1::CloseRegisterSession
                 | OperationV1::CloseBusinessDay
+                | OperationV1::BeginCatalogImport(_)
+                | OperationV1::PutCatalogChunk(_)
+                | OperationV1::CommitCatalogImport(_)
+                | OperationV1::AbortCatalogImport(_)
+                | OperationV1::ActivateCatalogSnapshot(_)
         )
     }
 }
@@ -223,6 +247,10 @@ pub enum ResultV1 {
     MaybeTransaction(Option<RetailTransactionV1>),
     PendingOutbox(PendingOutboxV1),
     Journal(Vec<JournalEventV1>),
+    CatalogStatus(CatalogStatusV1),
+    CatalogImport(CatalogImportStatusV1),
+    CatalogSnapshot(CatalogSnapshotViewV1),
+    ProductLookup(ProductLookupV1),
 }
 
 impl ResultV1 {
@@ -238,6 +266,10 @@ impl ResultV1 {
             ResultV1::MaybeTransaction(_) => "MAYBE_TRANSACTION",
             ResultV1::PendingOutbox(_) => "PENDING_OUTBOX",
             ResultV1::Journal(_) => "JOURNAL",
+            ResultV1::CatalogStatus(_) => "CATALOG_STATUS",
+            ResultV1::CatalogImport(_) => "CATALOG_IMPORT",
+            ResultV1::CatalogSnapshot(_) => "CATALOG_SNAPSHOT",
+            ResultV1::ProductLookup(_) => "PRODUCT_LOOKUP",
         }
     }
 }
@@ -388,34 +420,30 @@ mod tests {
         let envelope = RequestEnvelopeV1::new(
             Uuid::from_u128(3),
             OperationV1::AddItem(AddItemRequestV1 {
-                product_ref: "SKU-1".to_owned(),
-                sku: None,
-                barcode: None,
-                description: "two\nlines".to_owned(),
+                product: ProductSelectorV1::Barcode("750\n123".to_owned()),
                 quantity_thousandths: 1_000,
-                unit_price_minor: 100,
-                tax_rate_bps: 0,
-                discount_minor: 0,
             }),
         );
         let json = serde_json::to_string(&envelope).unwrap();
         assert!(!json.contains('\n'));
-        assert!(json.contains(r"two\nlines"));
+        assert!(json.contains(r"750\n123"));
     }
 
     #[test]
     fn commands_and_queries_are_classified() {
         assert!(OperationV1::AddItem(AddItemRequestV1 {
-            product_ref: "p".to_owned(),
-            sku: None,
-            barcode: None,
-            description: "d".to_owned(),
+            product: ProductSelectorV1::Sku("SKU-1".to_owned()),
             quantity_thousandths: 1,
-            unit_price_minor: 1,
-            tax_rate_bps: 0,
-            discount_minor: 0,
         })
         .is_command());
+        assert!(OperationV1::PutCatalogChunk(PutCatalogChunkRequestV1 {
+            snapshot_id: "s".to_owned(),
+            chunk_index: 0,
+            chunk_hash: "h".to_owned(),
+            products: Vec::new(),
+        })
+        .is_command());
+        assert!(!OperationV1::GetCatalogStatus.is_command());
         assert!(!OperationV1::GetEdgeState.is_command());
         assert!(!OperationV1::Subscribe.is_command());
     }

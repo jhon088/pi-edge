@@ -3,9 +3,11 @@
 use std::fmt::Debug;
 
 use edge_protocol::{
-    AddItemRequestV1, BusinessDayV1, CommitCashPaymentRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1,
-    InitDeviceRequestV1, JournalEventV1, OpenRegisterSessionRequestV1, PendingOutboxV1,
-    RegisterSessionV1, RetailTransactionV1,
+    AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
+    CatalogSnapshotViewV1, CatalogStatusV1, CommitCashPaymentRequestV1,
+    CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
+    JournalEventV1, OpenRegisterSessionRequestV1, PendingOutboxV1, ProductLookupV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1, RetailTransactionV1,
 };
 use uuid::Uuid;
 
@@ -39,6 +41,13 @@ pub trait EdgeClient: Debug + Send + Sync {
     fn get_active_transaction(&self) -> Result<Option<RetailTransactionV1>, ClientError>;
     fn get_pending_outbox(&self, limit: i64) -> Result<PendingOutboxV1, ClientError>;
     fn get_journal(&self, limit: i64) -> Result<Vec<JournalEventV1>, ClientError>;
+    fn catalog_status(&self) -> Result<CatalogStatusV1, ClientError>;
+    fn catalog_import_status(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<CatalogImportStatusV1, ClientError>;
+    /// Diagnostic product lookup. Adding to a sale goes through `add_item`.
+    fn lookup_product(&self, selector: ProductSelectorV1) -> Result<ProductLookupV1, ClientError>;
 
     // commands
     fn init_device(&self, request: InitDeviceRequestV1) -> Result<DeviceV1, ClientError>;
@@ -69,6 +78,35 @@ pub trait EdgeClient: Debug + Send + Sync {
     ) -> Result<RetailTransactionV1, ClientError>;
     fn close_session(&self, request_id: Option<Uuid>) -> Result<RegisterSessionV1, ClientError>;
     fn close_business_day(&self, request_id: Option<Uuid>) -> Result<BusinessDayV1, ClientError>;
+
+    // catalog import: open, stream, close, put in force
+    fn begin_catalog_import(
+        &self,
+        request: BeginCatalogImportRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CatalogImportStatusV1, ClientError>;
+    /// Idempotent on `(snapshot_id, chunk_index, chunk_hash)`, so a resend
+    /// after a disconnect is safe and a different payload for the same index is
+    /// refused.
+    fn put_catalog_chunk(
+        &self,
+        request: PutCatalogChunkRequestV1,
+    ) -> Result<CatalogImportStatusV1, ClientError>;
+    fn commit_catalog_import(
+        &self,
+        request: CommitCatalogImportRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CatalogSnapshotViewV1, ClientError>;
+    fn abort_catalog_import(
+        &self,
+        snapshot_id: &str,
+        request_id: Option<Uuid>,
+    ) -> Result<(), ClientError>;
+    fn activate_catalog_snapshot(
+        &self,
+        snapshot_id: &str,
+        request_id: Option<Uuid>,
+    ) -> Result<CatalogSnapshotViewV1, ClientError>;
 
     /// Link diagnostics for the UI's connection indicator.
     fn connection(&self) -> ConnectionStatus;

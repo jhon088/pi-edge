@@ -23,6 +23,8 @@ pub mod dto;
 pub mod envelope;
 pub mod error_codes;
 
+#[cfg(feature = "catalog-mapping")]
+pub mod content_mapping;
 #[cfg(feature = "core-mapping")]
 pub mod mapping;
 

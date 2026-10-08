@@ -179,16 +179,24 @@ fn replaying_a_request_id_does_not_apply_the_command_twice() {
 #[test]
 fn item_added_after_totalize_invalidates_the_official_totals() {
     let core = in_memory_core();
-    open_register(&core);
+    init_device(&core);
+    pricing_catalog(1).activate(&core).unwrap();
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor: 100_000,
+    })
+    .unwrap();
     core.start_transaction(StartTransactionCommand::default())
         .unwrap();
     core.add_item(demo_item()).unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
 
-    let reopened = core
-        .add_item(item("SKU-002", "Segundo", 5_000, 1_600, 1))
-        .unwrap();
+    let reopened = core.add_item(item("SKU-002", 1)).unwrap();
     assert_eq!(reopened.status(), TransactionStatus::Open);
     assert_eq!(reopened.state().totals.grand_total.minor(), 0);
 

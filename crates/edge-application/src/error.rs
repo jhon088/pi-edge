@@ -3,12 +3,16 @@
 //! Cross-aggregate invariants get their own variant so that clients (CLI, UI,
 //! future daemon) can react programmatically instead of matching on strings.
 
+use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {
     #[error(transparent)]
     Domain(#[from] DomainError),
+
+    #[error(transparent)]
+    Catalog(#[from] CatalogError),
 
     #[error("storage failure: {0}")]
     Storage(String),
@@ -67,6 +71,8 @@ impl AppError {
             // the most common thing a client has to react to.
             AppError::Domain(DomainError::InvalidTransition { .. }) => "INVALID_TRANSACTION_STATE",
             AppError::Domain(_) => "DOMAIN_RULE_VIOLATION",
+            // The catalog context publishes its own codes.
+            AppError::Catalog(error) => error.code(),
             AppError::Storage(_) => "STORAGE_FAILURE",
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
             AppError::Serialization(_) => "SERIALIZATION_FAILURE",

@@ -9,6 +9,7 @@
 //! business day and *the* active transaction of that session. Ambiguity is an
 //! error, never a guess.
 
+use edge_catalog::{resolve_sale_line, BasePriceResolver, CatalogSnapshot, PricingContext};
 use edge_domain::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -25,8 +26,8 @@ use crate::CORE_VERSION;
 #[derive(Debug)]
 pub struct EdgeApplication<S, C, I> {
     store: S,
-    clock: C,
-    ids: I,
+    pub(crate) clock: C,
+    pub(crate) ids: I,
 }
 
 impl<S, C, I> EdgeApplication<S, C, I>
@@ -201,6 +202,9 @@ where
                         transaction_id: active.id().to_string(),
                     });
                 }
+                // A sale cannot start without a catalog to price it, and it
+                // keeps the snapshot it captured here for its whole life.
+                let catalog = require_active_catalog(uow, &device.store_id)?;
                 let register_id = session.state().register_id.clone();
                 let register_sequence = uow.next_register_sequence(&register_id)?;
                 let transaction = RetailTransaction::start(NewRetailTransaction {
@@ -212,6 +216,10 @@ where
                     operator_id: session.state().operator_id.clone(),
                     register_sequence,
                     currency: device.currency,
+                    catalog: Some(CatalogRef {
+                        snapshot_id: catalog.id(),
+                        version: catalog.version(),
+                    }),
                     created_at: now,
                 });
                 uow.insert_transaction(&transaction, now)?;
@@ -232,6 +240,8 @@ where
                     json!({
                         "register_sequence": register_sequence,
                         "currency": device.currency.code(),
+                        "catalog_snapshot_id": catalog.id().to_string(),
+                        "catalog_version": catalog.version(),
                     }),
                 ))?;
                 Ok(transaction)
@@ -258,22 +268,55 @@ where
                 let session = require_single_open_session(uow, day.id())?;
                 require_session_open(&session)?;
                 let mut transaction = require_active_transaction(uow, session.id())?;
-                let discount = if cmd.discount_minor == 0 {
-                    None
-                } else {
-                    Some(Money::from_minor(cmd.discount_minor, device.currency))
-                };
+
+                // Resolve against the snapshot this sale captured, never
+                // against whatever is active right now (ADR 013).
+                let snapshot = require_sale_catalog(uow, &transaction)?;
+                let product = uow
+                    .lookup_catalog_product(snapshot.id(), &cmd.selector)?
+                    .ok_or_else(|| {
+                        AppError::Catalog(edge_catalog::CatalogError::ProductNotFound {
+                            selector: cmd.selector.to_string(),
+                        })
+                    })?;
+                let profile = uow
+                    .find_catalog_tax_profile(snapshot.id(), &product.tax_profile)?
+                    .ok_or_else(|| {
+                        AppError::Catalog(edge_catalog::CatalogError::UnknownTaxProfile {
+                            product_ref: product.product_ref.to_string(),
+                            code: product.tax_profile.to_string(),
+                        })
+                    })?;
+                let resolved = resolve_sale_line(
+                    &product,
+                    &profile,
+                    cmd.selector.scanned_barcode(),
+                    &BasePriceResolver,
+                    &PricingContext {
+                        store_id: &device.store_id,
+                        business_day_id: day.id(),
+                        snapshot_version: snapshot.version(),
+                        quantity: cmd.quantity,
+                        currency: device.currency,
+                    },
+                )?;
                 let line = transaction.add_line(
                     NewLineInput {
                         line_id,
-                        product_ref: cmd.product_ref.clone(),
-                        sku: cmd.sku.clone(),
-                        barcode: cmd.barcode.clone(),
-                        description: cmd.description.clone(),
-                        quantity: cmd.quantity,
-                        unit_price: Money::from_minor(cmd.unit_price_minor, device.currency),
-                        tax_rate: cmd.tax_rate,
-                        discount_amount: discount,
+                        product_ref: resolved.product_ref.clone(),
+                        sku: resolved.sku.clone(),
+                        barcode: resolved
+                            .barcode
+                            .as_ref()
+                            .map(|code| code.as_str().to_owned()),
+                        description: resolved.description.clone(),
+                        quantity: resolved.quantity,
+                        unit_price: resolved.unit_price,
+                        tax_rate: resolved.tax_rate,
+                        price_mode: resolved.price_mode,
+                        // Promotions and manual overrides will supply this; no
+                        // client may.
+                        discount_amount: None,
                     },
                     now,
                 )?;
@@ -300,9 +343,14 @@ where
                         "quantity_thousandths": line.quantity.thousandths(),
                         "unit_price_minor": line.unit_price.minor(),
                         "tax_rate_bps": line.tax_rate.bps(),
+                        "price_mode": line.price_mode.as_str(),
                         "discount_minor": line.discount_amount.minor(),
+                        "taxable_minor": line.taxable_amount.minor(),
                         "tax_minor": line.tax_amount.minor(),
                         "line_total_minor": line.line_total.minor(),
+                        "catalog_snapshot_id": snapshot.id().to_string(),
+                        "catalog_version": snapshot.version(),
+                        "resolved_by": cmd.selector.to_string(),
                     }),
                 ))?;
                 Ok(transaction)
@@ -348,6 +396,7 @@ where
                     json!({
                         "subtotal_minor": totals.subtotal.minor(),
                         "discount_total_minor": totals.discount_total.minor(),
+                        "net_total_minor": totals.net_total.minor(),
                         "tax_total_minor": totals.tax_total.minor(),
                         "grand_total_minor": totals.grand_total.minor(),
                         "line_count": transaction.state().lines.len(),
@@ -604,6 +653,12 @@ where
 
     // ----------------------------------------------------------------- queries
 
+    /// The device identity. Cheap single-row read, used by adapters that must
+    /// validate a payload against the store's currency.
+    pub fn get_device(&self) -> Result<DeviceProfile, AppError> {
+        self.store.transact(|uow| require_device(uow))
+    }
+
     /// Full recovery query: rebuilds the operational state from SQLite only.
     pub fn get_edge_state(&self) -> Result<EdgeState, AppError> {
         self.store.transact(|uow| {
@@ -663,7 +718,7 @@ where
 /// Replay guard. The lookup, the work and the result record all happen inside
 /// the caller's transaction, so a crash can never record a command whose
 /// effects were rolled back.
-fn idempotent<T, F>(
+pub(crate) fn idempotent<T, F>(
     uow: &mut dyn UnitOfWork,
     request_id: Option<Uuid>,
     command_type: &'static str,
@@ -688,16 +743,16 @@ where
     Ok(outcome)
 }
 
-struct EventContext<'a> {
-    device: &'a DeviceProfile,
-    register_id: Option<&'a RegisterId>,
-    business_day_id: Option<BusinessDayId>,
-    session_id: Option<SessionId>,
-    transaction_id: Option<TransactionId>,
-    operator_id: Option<&'a OperatorId>,
+pub(crate) struct EventContext<'a> {
+    pub(crate) device: &'a DeviceProfile,
+    pub(crate) register_id: Option<&'a RegisterId>,
+    pub(crate) business_day_id: Option<BusinessDayId>,
+    pub(crate) session_id: Option<SessionId>,
+    pub(crate) transaction_id: Option<TransactionId>,
+    pub(crate) operator_id: Option<&'a OperatorId>,
 }
 
-fn journal_event(
+pub(crate) fn journal_event(
     event_id: EventId,
     event_type: JournalEventType,
     aggregate_id: String,
@@ -721,11 +776,11 @@ fn journal_event(
     }
 }
 
-fn require_device(uow: &mut dyn UnitOfWork) -> Result<DeviceProfile, AppError> {
+pub(crate) fn require_device(uow: &mut dyn UnitOfWork) -> Result<DeviceProfile, AppError> {
     uow.device_profile()?.ok_or(AppError::DeviceNotInitialized)
 }
 
-fn require_open_business_day(
+pub(crate) fn require_open_business_day(
     uow: &mut dyn UnitOfWork,
     store_id: &StoreId,
 ) -> Result<BusinessDay, AppError> {
@@ -763,6 +818,46 @@ fn require_session_open(session: &RegisterSession) -> Result<(), AppError> {
             status: session.status().as_str(),
         })
     }
+}
+
+/// The snapshot a new sale must capture.
+pub(crate) fn require_active_catalog(
+    uow: &mut dyn UnitOfWork,
+    store_id: &StoreId,
+) -> Result<CatalogSnapshot, AppError> {
+    uow.find_active_catalog_snapshot(store_id)?
+        .ok_or(AppError::Catalog(
+            edge_catalog::CatalogError::NoActiveSnapshot,
+        ))
+}
+
+/// The snapshot an existing sale was priced against.
+///
+/// Reloaded by id, and required to still be usable: an import in flight can
+/// never price a line, and a superseded snapshot still can.
+pub(crate) fn require_sale_catalog(
+    uow: &mut dyn UnitOfWork,
+    transaction: &RetailTransaction,
+) -> Result<CatalogSnapshot, AppError> {
+    let captured = transaction.catalog().ok_or(AppError::Catalog(
+        edge_catalog::CatalogError::NoActiveSnapshot,
+    ))?;
+    let snapshot = uow
+        .find_catalog_snapshot(captured.snapshot_id)?
+        .ok_or_else(|| {
+            AppError::Catalog(edge_catalog::CatalogError::SnapshotNotFound {
+                snapshot_id: captured.snapshot_id.to_string(),
+            })
+        })?;
+    if !snapshot.resolves_sales() {
+        return Err(AppError::Catalog(
+            edge_catalog::CatalogError::ImportNotOpen {
+                snapshot_id: snapshot.id().to_string(),
+                status: snapshot.status().as_str(),
+            },
+        ));
+    }
+    Ok(snapshot)
 }
 
 fn require_active_transaction(

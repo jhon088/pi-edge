@@ -9,8 +9,9 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
-use edge_application::testing::{FixedClock, SequentialIdFactory};
+use edge_application::testing::{CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory};
 use edge_application::EdgeApplication;
+use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_storage::SqliteEdgeStore;
 use serde_json::Value;
@@ -31,13 +32,15 @@ pub fn golden_core() -> GoldenCore {
     )
 }
 
-pub fn open_register(core: &GoldenCore) {
+/// Import and activate a catalog, then open the register.
+pub fn open_register_with(core: &GoldenCore, catalog: &CatalogFixture) {
     core.init_device(InitDeviceCommand {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
     })
     .unwrap();
+    catalog.activate(core).unwrap();
     core.open_business_day(OpenBusinessDayCommand::default())
         .unwrap();
     core.open_register_session(OpenRegisterSessionCommand {
@@ -49,27 +52,73 @@ pub fn open_register(core: &GoldenCore) {
     .unwrap();
 }
 
-#[derive(Debug)]
-pub struct ItemSpec {
-    pub product: &'static str,
-    pub description: &'static str,
-    pub price_minor: i64,
-    pub tax_rate_bps: u32,
-    pub quantity_thousandths: i64,
-    pub discount_minor: i64,
+/// Catalog used by the golden cases: one product per tax rate and price mode,
+/// plus prices chosen so the arithmetic cannot be exact.
+pub fn golden_catalog(version: i64) -> CatalogFixture {
+    CatalogFixture::new(version)
+        .with(
+            FixtureProduct::new("SKU-16", "Gravado 16%", 10_000)
+                .sku("SKU-16")
+                .barcode(BARCODE_16),
+        )
+        .with(
+            FixtureProduct::new("SKU-8", "Gravado 8%", 10_000)
+                .sku("SKU-8")
+                .barcode(BARCODE_8)
+                .tax_profile("IVA8"),
+        )
+        .with(
+            FixtureProduct::new("SKU-0", "Tasa 0%", 1_999)
+                .sku("SKU-0")
+                .barcode(BARCODE_0)
+                .tax_profile("IVA0"),
+        )
+        .with(
+            FixtureProduct::new("SKU-INC-16", "Precio con IVA 16%", 11_600)
+                .sku("SKU-INC-16")
+                .barcode(BARCODE_INCLUSIVE_16)
+                .tax_profile("IVA16-INC"),
+        )
+        .with(
+            FixtureProduct::new("SKU-INC-8", "Precio con IVA 8%", 10_800)
+                .sku("SKU-INC-8")
+                .barcode(BARCODE_INCLUSIVE_8)
+                .tax_profile("IVA8-INC"),
+        )
+        .with(
+            FixtureProduct::new("SKU-INC-0", "Precio sin impuesto", 9_999)
+                .sku("SKU-INC-0")
+                .barcode(BARCODE_INCLUSIVE_0)
+                .tax_profile("IVA0-INC"),
+        )
+        .with(
+            FixtureProduct::new("SKU-FRACTIONAL", "Granel 16%", 333)
+                .sku("SKU-FRACTIONAL")
+                .barcode(BARCODE_FRACTIONAL),
+        )
+        .with(
+            FixtureProduct::new("SKU-ODD-INC", "Centavo impar con IVA", 99)
+                .sku("SKU-ODD-INC")
+                .barcode(BARCODE_ODD_INCLUSIVE)
+                .tax_profile("IVA16-INC"),
+        )
 }
 
-pub fn add_item(core: &GoldenCore, spec: ItemSpec) {
+pub const BARCODE_16: &str = "7501000000016";
+pub const BARCODE_8: &str = "7501000000008";
+pub const BARCODE_0: &str = "7501000000000";
+pub const BARCODE_INCLUSIVE_16: &str = "7501000000116";
+pub const BARCODE_INCLUSIVE_8: &str = "7501000000108";
+pub const BARCODE_INCLUSIVE_0: &str = "7501000000100";
+pub const BARCODE_FRACTIONAL: &str = "7501000000333";
+pub const BARCODE_ODD_INCLUSIVE: &str = "7501000000099";
+
+/// Scan a barcode with a quantity in thousandths.
+pub fn scan(core: &GoldenCore, barcode: &str, quantity_thousandths: i64) {
     core.add_item(AddItemCommand {
         request_id: None,
-        product_ref: ProductRef::new(spec.product).unwrap(),
-        sku: Some(spec.product.to_owned()),
-        barcode: None,
-        description: spec.description.to_owned(),
-        quantity: Quantity::from_thousandths(spec.quantity_thousandths).unwrap(),
-        unit_price_minor: spec.price_minor,
-        tax_rate: TaxRate::from_bps(spec.tax_rate_bps).unwrap(),
-        discount_minor: spec.discount_minor,
+        selector: ProductSelector::Barcode(Barcode::new(barcode).unwrap()),
+        quantity: Quantity::from_thousandths(quantity_thousandths).unwrap(),
     })
     .unwrap();
 }

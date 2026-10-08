@@ -54,10 +54,13 @@ fn completes_a_cash_sale_and_closes_the_day() {
     assert!(state.active_transaction.is_none());
     assert_eq!(state.pending_outbox, 1);
 
-    // Journal: one structured event per operation, in order.
+    // Journal: one structured event per operation, in order. Importing and
+    // activating a catalog are business facts too, and they come first.
     assert_eq!(
         journal_types(&core),
         vec![
+            "CATALOG_SNAPSHOT_IMPORTED",
+            "CATALOG_SNAPSHOT_ACTIVATED",
             "BUSINESS_DAY_OPENED",
             "SESSION_OPENED",
             "TRANSACTION_STARTED",

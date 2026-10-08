@@ -15,11 +15,18 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "0001_initial_schema",
-    sql: include_str!("../migrations/0001_initial_schema.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "0001_initial_schema",
+        sql: include_str!("../migrations/0001_initial_schema.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "0002_catalog",
+        sql: include_str!("../migrations/0002_catalog.sql"),
+    },
+];
 
 /// Schema version this binary expects.
 pub fn target_version() -> i64 {
@@ -99,7 +106,8 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, target_version());
+        assert_eq!(count, MIGRATIONS.len() as i64);
+        assert_eq!(target_version(), MIGRATIONS.len() as i64);
     }
 
     #[test]
