@@ -1,0 +1,109 @@
+{
+  "transaction_id": "00000000-0000-0000-0000-000000000005",
+  "business_day_id": "00000000-0000-0000-0000-000000000001",
+  "session_id": "00000000-0000-0000-0000-000000000003",
+  "store_id": "STORE-DEMO",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "register_sequence": 1,
+  "status": "FINALIZED",
+  "currency": "MXN",
+  "lines": [
+    {
+      "line_id": "00000000-0000-0000-0000-000000000007",
+      "line_number": 1,
+      "product_ref": "SKU-001",
+      "sku": "SKU-001",
+      "barcode": null,
+      "description": "Producto prueba",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "unit_price": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "tax_rate_bps": 1600,
+      "gross_amount": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "discount_amount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "taxable_amount": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "tax_amount": {
+        "minor": 1600,
+        "currency": "MXN",
+        "formatted": "16.00"
+      },
+      "line_total": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": {
+      "minor": 10000,
+      "currency": "MXN",
+      "formatted": "100.00"
+    },
+    "discount_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "tax_total": {
+      "minor": 1600,
+      "currency": "MXN",
+      "formatted": "16.00"
+    },
+    "grand_total": {
+      "minor": 11600,
+      "currency": "MXN",
+      "formatted": "116.00"
+    }
+  },
+  "payments": [
+    {
+      "payment_id": "00000000-0000-0000-0000-00000000000a",
+      "tender_type": "CASH",
+      "amount": {
+        "minor": 20000,
+        "currency": "MXN",
+        "formatted": "200.00"
+      },
+      "status": "COMMITTED",
+      "created_at": "2026-10-08T15:00:00.000000Z",
+      "committed_at": "2026-10-08T15:00:00.000000Z"
+    }
+  ],
+  "paid_total": {
+    "minor": 20000,
+    "currency": "MXN",
+    "formatted": "200.00"
+  },
+  "balance_due": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "change_due": {
+    "minor": 8400,
+    "currency": "MXN",
+    "formatted": "84.00"
+  },
+  "created_at": "2026-10-08T15:00:00.000000Z",
+  "updated_at": "2026-10-08T15:00:00.000000Z",
+  "finalized_at": "2026-10-08T15:00:00.000000Z",
+  "version": 5
+}

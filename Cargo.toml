@@ -1,0 +1,61 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "apps/*", "tests/*"]
+# The Tauri client has its own build pipeline (pnpm + tauri-cli) and its own
+# dependency tree. Keeping it out means the Rust core builds and tests with no
+# Node toolchain installed.
+exclude = ["apps/tauri-pos"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+license = "UNLICENSED"
+
+[workspace.dependencies]
+# Internal crates (strict dependency direction, see docs/ADR/001-headless-core.md)
+edge-domain = { path = "crates/edge-domain" }
+edge-application = { path = "crates/edge-application" }
+edge-storage = { path = "crates/edge-storage" }
+edge-protocol = { path = "crates/edge-protocol" }
+edge-ipc = { path = "crates/edge-ipc" }
+edge-client = { path = "crates/edge-client" }
+edge-hardware-api = { path = "crates/edge-hardware-api" }
+
+# External
+getrandom = "0.4.3"
+interprocess = "2.4.4"
+signal-hook = "0.4.5"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+uuid = { version = "1.27.0", features = ["v4", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+# Money and durable state must never be computed with floats or panic in prod paths.
+float_arithmetic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "allow"
+mem_forget = "deny"
+
+[profile.release]
+panic = "abort"
+strip = true

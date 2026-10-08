@@ -1,0 +1,24 @@
+[package]
+name = "edge-protocol"
+description = "Versioned wire contract between the PI.Edge core and its local clients. Pure DTOs by default; core mapping behind a feature."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Conversions between the wire contract and the core (domain + application).
+# Only the daemon and the in-process client need this; a UI client must not.
+core-mapping = ["dep:edge-domain", "dep:edge-application"]
+
+[dependencies]
+edge-application = { workspace = true, optional = true }
+edge-domain = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

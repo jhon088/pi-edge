@@ -1,0 +1,28 @@
+[package]
+name = "edge-cli"
+description = "Command line client of the PI.Edge core. Talks to edge-daemon over local IPC; owns no business logic and never opens the database."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "edge-cli"
+path = "src/main.rs"
+
+# No edge-application, no edge-storage: the CLI cannot reach the core
+# in-process even by accident.
+[dependencies]
+edge-client = { workspace = true }
+edge-protocol = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

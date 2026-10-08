@@ -1,0 +1,20 @@
+[package]
+name = "edge-client"
+description = "EdgeClient: the only way a UI or CLI talks to the PI.Edge core. Speaks the Edge Protocol over an EdgeTransport."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Deliberately does not depend on edge-application or edge-storage: a client
+# must not be able to reach the core in-process.
+[dependencies]
+edge-ipc = { workspace = true }
+edge-protocol = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

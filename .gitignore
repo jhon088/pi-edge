@@ -1,0 +1,13 @@
+/target
+**/target
+# Runtime directory of a local installation: database, socket, lock, credential.
+/data/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+node_modules/
+dist/
+apps/tauri-pos/src-tauri/target/
+apps/tauri-pos/src-tauri/gen/
+.pi-edge/

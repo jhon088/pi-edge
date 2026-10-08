@@ -1,0 +1,37 @@
+[package]
+name = "edge-daemon"
+description = "The PI.Edge production runtime: owns SQLite and the application core, serves local clients over the Edge Protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+name = "edge_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "edge-daemon"
+path = "src/main.rs"
+
+[dependencies]
+edge-application = { workspace = true }
+edge-domain = { workspace = true }
+edge-ipc = { workspace = true }
+edge-protocol = { workspace = true, features = ["core-mapping"] }
+edge-storage = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+signal-hook = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+edge-client = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

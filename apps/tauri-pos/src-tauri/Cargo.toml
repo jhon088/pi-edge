@@ -1,0 +1,38 @@
+# Deliberately NOT a member of the root workspace: the Rust core must build and
+# test with no Node toolchain and no Tauri dependency tree. This package is a
+# client of the core, built through its own pipeline.
+[workspace]
+
+[package]
+name = "tauri-pos"
+description = "PI.Edge diagnostic UI. A Tauri shell that is an IPC client of edge-daemon; it never owns the core."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+license = "UNLICENSED"
+
+[lib]
+name = "tauri_pos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+edge-client = { path = "../../../crates/edge-client" }
+edge-protocol = { path = "../../../crates/edge-protocol" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+float_arithmetic = "deny"

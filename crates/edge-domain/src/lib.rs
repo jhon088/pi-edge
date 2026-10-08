@@ -1,0 +1,49 @@
+//! PI.Edge domain model.
+//!
+//! This crate is **pure Rust**. It must never depend on SQLite, HTTP, Tauri,
+//! Android, the filesystem or any clock/IO facility. Time and identity are
+//! always injected by the caller (see `edge-application` ports).
+//!
+//! It owns:
+//! - value objects ([`money`], [`ids`], [`time`]),
+//! - aggregates with explicit state machines ([`business_day`], [`session`],
+//!   [`transaction`]),
+//! - durable event shapes ([`journal`], [`outbox`]).
+
+pub mod business_day;
+pub mod error;
+pub mod ids;
+pub mod journal;
+pub mod money;
+pub mod outbox;
+pub mod payment;
+pub mod session;
+pub mod time;
+pub mod transaction;
+
+pub mod prelude {
+    //! Convenience re-export for the application and adapter layers.
+    pub use crate::business_day::{
+        BusinessDay, BusinessDayState, BusinessDayStatus, NewBusinessDay,
+    };
+    pub use crate::error::DomainError;
+    pub use crate::ids::{
+        BusinessDayId, EventId, IdError, LineId, OperatorId, PaymentId, ProductRef, RegisterId,
+        SessionId, StoreId, TenantId, TransactionId,
+    };
+    pub use crate::journal::{JournalEvent, JournalEventType};
+    pub use crate::money::{Currency, Money, MoneyError, Quantity, TaxRate};
+    pub use crate::outbox::{OutboxEvent, OutboxEventType, OutboxStatus};
+    pub use crate::payment::{Payment, PaymentStatus, TenderType};
+    pub use crate::session::{
+        NewRegisterSession, RegisterSession, RegisterSessionState, RegisterSessionStatus,
+    };
+    pub use crate::time::{TimeError, Timestamp};
+    pub use crate::transaction::{
+        NewLineInput, NewRetailTransaction, RetailTransaction, RetailTransactionState, Totals,
+        TransactionLine, TransactionStatus,
+    };
+}
+
+/// Version of the domain model, propagated to clients for diagnostics.
+pub const DOMAIN_VERSION: &str = env!("CARGO_PKG_VERSION");

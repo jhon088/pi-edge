@@ -1,0 +1,15 @@
+[package]
+name = "edge-hardware-api"
+description = "Hardware ports for PI.Edge. Traits only: concrete iMin/Android/Windows adapters live outside the core."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+edge-domain = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

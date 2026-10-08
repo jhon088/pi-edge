@@ -1,0 +1,24 @@
+[package]
+name = "edge-ipc"
+description = "Local IPC transport for the Edge Protocol: framing, credentials and the EdgeTransport abstraction. The only crate that knows about sockets and pipes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+edge-protocol = { workspace = true }
+getrandom = { workspace = true }
+interprocess = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

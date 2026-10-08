@@ -1,0 +1,168 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #272c36;
+  --text: #e6e8ee;
+  --muted: #8b93a4;
+  --accent: #4da3ff;
+  --warn: #ffb224;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.5 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.2px;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+button {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #06101d;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 8px 16px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+.banner {
+  background: rgba(255, 178, 36, 0.12);
+  border: 1px solid rgba(255, 178, 36, 0.4);
+  border-radius: 8px;
+  color: var(--warn);
+  margin: 16px 0 0;
+  padding: 12px 14px;
+}
+
+.banner-code {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  margin-left: 8px;
+  padding: 2px 6px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  margin: 20px 0;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.field {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+.label {
+  color: var(--muted);
+}
+
+.value {
+  text-align: right;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+}
+
+.row .field {
+  min-width: 180px;
+}
+
+.totals {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.lines {
+  border-collapse: collapse;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.lines th,
+.lines td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.lines th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}

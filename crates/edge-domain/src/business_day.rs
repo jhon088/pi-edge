@@ -1,0 +1,196 @@
+//! BusinessDay aggregate.
+//!
+//! State machine: `OPEN -> CLOSING -> CLOSED` (and `OPEN -> CLOSED` directly).
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::DomainError;
+use crate::ids::{BusinessDayId, StoreId, TenantId};
+use crate::time::Timestamp;
+
+const AGGREGATE: &str = "BusinessDay";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BusinessDayStatus {
+    Open,
+    Closing,
+    Closed,
+}
+
+impl BusinessDayStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BusinessDayStatus::Open => "OPEN",
+            BusinessDayStatus::Closing => "CLOSING",
+            BusinessDayStatus::Closed => "CLOSED",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, DomainError> {
+        match value {
+            "OPEN" => Ok(BusinessDayStatus::Open),
+            "CLOSING" => Ok(BusinessDayStatus::Closing),
+            "CLOSED" => Ok(BusinessDayStatus::Closed),
+            other => Err(DomainError::UnknownEnumValue {
+                kind: "BusinessDayStatus",
+                value: other.to_owned(),
+            }),
+        }
+    }
+
+    /// A business day that still owns activity (not terminal).
+    pub const fn is_active(self) -> bool {
+        matches!(self, BusinessDayStatus::Open | BusinessDayStatus::Closing)
+    }
+}
+
+/// Durable state of a business day. Read freely; mutate only through
+/// [`BusinessDay`] methods so invariants hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BusinessDayState {
+    pub business_day_id: BusinessDayId,
+    pub tenant_id: TenantId,
+    pub store_id: StoreId,
+    pub status: BusinessDayStatus,
+    pub opened_at: Timestamp,
+    pub closed_at: Option<Timestamp>,
+    /// Monotonic aggregate version, used for sync ordering and stale-write detection.
+    pub version: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewBusinessDay {
+    pub business_day_id: BusinessDayId,
+    pub tenant_id: TenantId,
+    pub store_id: StoreId,
+    pub opened_at: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BusinessDay(BusinessDayState);
+
+impl BusinessDay {
+    pub fn open(new: NewBusinessDay) -> Self {
+        Self(BusinessDayState {
+            business_day_id: new.business_day_id,
+            tenant_id: new.tenant_id,
+            store_id: new.store_id,
+            status: BusinessDayStatus::Open,
+            opened_at: new.opened_at,
+            closed_at: None,
+            version: 1,
+        })
+    }
+
+    /// Rebuild from persisted state (storage adapters only).
+    pub fn rehydrate(state: BusinessDayState) -> Self {
+        Self(state)
+    }
+
+    pub fn state(&self) -> &BusinessDayState {
+        &self.0
+    }
+
+    pub fn into_state(self) -> BusinessDayState {
+        self.0
+    }
+
+    pub fn id(&self) -> BusinessDayId {
+        self.0.business_day_id
+    }
+
+    pub fn status(&self) -> BusinessDayStatus {
+        self.0.status
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.0.status == BusinessDayStatus::Open
+    }
+
+    /// Mark the day as closing: no new sales, pending work may finish.
+    pub fn request_close(&mut self) -> Result<(), DomainError> {
+        match self.0.status {
+            BusinessDayStatus::Open => {
+                self.0.status = BusinessDayStatus::Closing;
+                self.0.version += 1;
+                Ok(())
+            }
+            other => Err(DomainError::InvalidTransition {
+                aggregate: AGGREGATE,
+                from: other.as_str(),
+                attempted: "CLOSING",
+            }),
+        }
+    }
+
+    pub fn close(&mut self, now: Timestamp) -> Result<(), DomainError> {
+        match self.0.status {
+            BusinessDayStatus::Open | BusinessDayStatus::Closing => {
+                self.0.status = BusinessDayStatus::Closed;
+                self.0.closed_at = Some(now);
+                self.0.version += 1;
+                Ok(())
+            }
+            other => Err(DomainError::InvalidTransition {
+                aggregate: AGGREGATE,
+                from: other.as_str(),
+                attempted: "CLOSED",
+            }),
+        }
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn day() -> BusinessDay {
+        BusinessDay::open(NewBusinessDay {
+            business_day_id: BusinessDayId::from_uuid(Uuid::from_u128(1)),
+            tenant_id: TenantId::new("TENANT-1").unwrap(),
+            store_id: StoreId::new("STORE-1").unwrap(),
+            opened_at: Timestamp::parse_rfc3339("2026-10-08T08:00:00Z").unwrap(),
+        })
+    }
+
+    #[test]
+    fn opens_in_open_status_at_version_one() {
+        let d = day();
+        assert_eq!(d.status(), BusinessDayStatus::Open);
+        assert_eq!(d.state().version, 1);
+        assert!(d.state().closed_at.is_none());
+    }
+
+    #[test]
+    fn closes_through_closing() {
+        let mut d = day();
+        d.request_close().unwrap();
+        assert_eq!(d.status(), BusinessDayStatus::Closing);
+        let now = Timestamp::parse_rfc3339("2026-10-08T22:00:00Z").unwrap();
+        d.close(now).unwrap();
+        assert_eq!(d.status(), BusinessDayStatus::Closed);
+        assert_eq!(d.state().closed_at, Some(now));
+        assert_eq!(d.state().version, 3);
+    }
+
+    #[test]
+    fn rejects_double_close() {
+        let mut d = day();
+        let now = Timestamp::parse_rfc3339("2026-10-08T22:00:00Z").unwrap();
+        d.close(now).unwrap();
+        let err = d.close(now).unwrap_err();
+        assert!(matches!(err, DomainError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn rejects_close_request_after_closed() {
+        let mut d = day();
+        d.close(Timestamp::parse_rfc3339("2026-10-08T22:00:00Z").unwrap())
+            .unwrap();
+        assert!(d.request_close().is_err());
+    }
+}
