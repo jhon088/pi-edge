@@ -6,26 +6,38 @@
     {
       "code": "IVA16",
       "name": "IVA 16%",
-      "rate_bps": 1600,
-      "price_mode": "TAX_EXCLUSIVE"
+      "rate_bps": 1600
     },
     {
       "code": "IVA8",
       "name": "IVA 8% frontera",
-      "rate_bps": 800,
-      "price_mode": "TAX_EXCLUSIVE"
+      "rate_bps": 800
     },
     {
       "code": "IVA0",
       "name": "Tasa 0%",
-      "rate_bps": 0,
-      "price_mode": "TAX_EXCLUSIVE"
+      "rate_bps": 0
+    }
+  ],
+  "price_books": [
+    {
+      "price_book_id": "BASE",
+      "code": "BASE",
+      "name": "Lista base nacional",
+      "currency": "MXN",
+      "scope": "TENANT",
+      "priority": 0,
+      "active": true
     },
     {
-      "code": "IVA16-INC",
-      "name": "IVA 16% incluido",
-      "rate_bps": 1600,
-      "price_mode": "TAX_INCLUSIVE"
+      "price_book_id": "STORE-DEMO",
+      "code": "STORE-DEMO",
+      "name": "Lista de la tienda STORE-DEMO",
+      "currency": "MXN",
+      "scope": "STORE",
+      "store_id": "STORE-DEMO",
+      "priority": 0,
+      "active": true
     }
   ],
   "products": [
@@ -35,10 +47,16 @@
       "sku": "SKU-LECHE",
       "name": "Leche entera 1L",
       "tax_profile": "IVA16",
-      "unit_price_minor": 2650,
       "barcodes": [
         "7501000000011",
         "07501000000011"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2650,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
       ]
     },
     {
@@ -47,9 +65,15 @@
       "sku": "SKU-TORTILLA",
       "name": "Tortilla de maiz 1kg",
       "tax_profile": "IVA0",
-      "unit_price_minor": 1850,
       "barcodes": [
         "7501000000028"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1850,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
       ]
     },
     {
@@ -58,9 +82,15 @@
       "sku": "SKU-REFRESCO",
       "name": "Refresco 600ml",
       "tax_profile": "IVA8",
-      "unit_price_minor": 1800,
       "barcodes": [
         "7501000000035"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1800,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
       ]
     },
     {
@@ -68,10 +98,16 @@
       "external_ref": "ERP-000126",
       "sku": "SKU-CAFE",
       "name": "Cafe molido 500g",
-      "tax_profile": "IVA16-INC",
-      "unit_price_minor": 14900,
+      "tax_profile": "IVA16",
       "barcodes": [
         "7501000000042"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 14900,
+          "price_mode": "TAX_INCLUSIVE"
+        }
       ]
     },
     {
@@ -80,9 +116,61 @@
       "sku": "SKU-JAMON",
       "name": "Jamon granel 1kg",
       "tax_profile": "IVA16",
-      "unit_price_minor": 18900,
       "barcodes": [
         "7501000000059"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 18900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "P-ACEITE-1L",
+      "external_ref": "ERP-000130",
+      "sku": "SKU-ACEITE",
+      "name": "Aceite vegetal 1L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7501000000080"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 5900,
+          "price_mode": "TAX_EXCLUSIVE"
+        },
+        {
+          "price_book": "STORE-DEMO",
+          "amount_minor": 4990,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "P-ARROZ-1K",
+      "external_ref": "ERP-000131",
+      "sku": "SKU-ARROZ",
+      "name": "Arroz 1kg",
+      "tax_profile": "IVA0",
+      "barcodes": [
+        "7501000000097"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3200,
+          "price_mode": "TAX_EXCLUSIVE",
+          "valid_until": "2026-10-15T00:00:00Z"
+        },
+        {
+          "price_book": "BASE",
+          "amount_minor": 3600,
+          "price_mode": "TAX_EXCLUSIVE",
+          "valid_from": "2026-10-15T00:00:00Z"
+        }
       ]
     },
     {
@@ -90,12 +178,18 @@
       "external_ref": "ERP-000900",
       "sku": "SKU-ENVIO",
       "name": "Servicio de envio",
-      "sellable": false,
       "tax_profile": "IVA16",
-      "unit_price_minor": 5000,
       "barcodes": [
         "7501000000066"
-      ]
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 5000,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ],
+      "sellable": false
     },
     {
       "product_ref": "P-PAN-BLANCO",
@@ -103,9 +197,15 @@
       "sku": "SKU-PAN",
       "name": "Pan blanco grande",
       "tax_profile": "IVA0",
-      "unit_price_minor": 4200,
       "barcodes": [
         "7501000000073"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
       ]
     }
   ]

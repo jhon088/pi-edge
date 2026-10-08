@@ -6,12 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use edge_catalog::{hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency};
+use edge_catalog::{
+    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceEntry,
+    SnapshotContent,
+};
 use edge_client::{ClientError, EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
-    CommitCatalogImportRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1,
-    ProductSelectorV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
+    CommitCatalogImportRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1, PriceBookV1,
+    PriceRecordV1, ProductSelectorV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
 };
 
 /// A spawned daemon process. Killed on drop so a failing test cannot leak a
@@ -181,6 +184,7 @@ pub const DEMO_BARCODE: &str = "7501000000001";
 pub struct CatalogSpec {
     pub version: i64,
     pub tax_profiles: Vec<TaxProfileV1>,
+    pub price_books: Vec<PriceBookV1>,
     pub products: Vec<CatalogProductRecordV1>,
 }
 
@@ -197,24 +201,26 @@ impl CatalogSpec {
         Self {
             version,
             tax_profiles: vec![
-                tax_profile("IVA16", 1_600, "TAX_EXCLUSIVE"),
-                tax_profile("IVA8", 800, "TAX_EXCLUSIVE"),
-                tax_profile("IVA0", 0, "TAX_EXCLUSIVE"),
-                tax_profile("IVA16-INC", 1_600, "TAX_INCLUSIVE"),
+                tax_profile("IVA16", 1_600),
+                tax_profile("IVA8", 800),
+                tax_profile("IVA0", 0),
             ],
+            price_books: vec![base_book()],
             products,
         }
     }
 
-    fn domain(&self) -> (Vec<CatalogProduct>, Vec<CatalogBarcode>) {
+    fn domain(&self) -> (Vec<CatalogProduct>, Vec<PriceEntry>, Vec<CatalogBarcode>) {
         let mut products = Vec::new();
+        let mut prices = Vec::new();
         let mut barcodes = Vec::new();
         for record in &self.products {
-            let (product, mut codes) = record.clone().into_domain(Currency::Mxn).unwrap();
-            products.push(product);
-            barcodes.append(&mut codes);
+            let mut parsed = record.clone().into_domain(Currency::Mxn).unwrap();
+            products.push(parsed.product);
+            prices.append(&mut parsed.prices);
+            barcodes.append(&mut parsed.barcodes);
         }
-        (products, barcodes)
+        (products, prices, barcodes)
     }
 
     pub fn declared_hash(&self) -> String {
@@ -225,12 +231,25 @@ impl CatalogSpec {
             .map(TaxProfileV1::into_domain)
             .collect::<Result<_, _>>()
             .unwrap();
-        let (products, barcodes) = self.domain();
-        hash_snapshot(&profiles, &products, &barcodes)
+        let books: Vec<_> = self
+            .price_books
+            .iter()
+            .cloned()
+            .map(PriceBookV1::into_domain)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let (products, price_entries, barcodes) = self.domain();
+        hash_snapshot(SnapshotContent {
+            tax_profiles: &profiles,
+            price_books: &books,
+            products: &products,
+            price_entries: &price_entries,
+            barcodes: &barcodes,
+        })
     }
 
     pub fn begin_request(&self) -> BeginCatalogImportRequestV1 {
-        let (products, barcodes) = self.domain();
+        let (products, price_entries, barcodes) = self.domain();
         BeginCatalogImportRequestV1 {
             version: self.version,
             currency: "MXN".to_owned(),
@@ -239,10 +258,13 @@ impl CatalogSpec {
             effective_at: None,
             expected: SnapshotCountsV1 {
                 tax_profiles: self.tax_profiles.len() as i64,
+                price_books: self.price_books.len() as i64,
                 products: products.len() as i64,
+                price_entries: price_entries.len() as i64,
                 barcodes: barcodes.len() as i64,
             },
             tax_profiles: self.tax_profiles.clone(),
+            price_books: self.price_books.clone(),
         }
     }
 
@@ -254,16 +276,18 @@ impl CatalogSpec {
         records: &[CatalogProductRecordV1],
     ) -> PutCatalogChunkRequestV1 {
         let mut products = Vec::new();
+        let mut prices = Vec::new();
         let mut barcodes = Vec::new();
         for record in records {
-            let (product, mut codes) = record.clone().into_domain(Currency::Mxn).unwrap();
-            products.push(product);
-            barcodes.append(&mut codes);
+            let mut parsed = record.clone().into_domain(Currency::Mxn).unwrap();
+            products.push(parsed.product);
+            prices.append(&mut parsed.prices);
+            barcodes.append(&mut parsed.barcodes);
         }
         PutCatalogChunkRequestV1 {
             snapshot_id: snapshot_id.to_owned(),
             chunk_index,
-            chunk_hash: hash_chunk(&products, &barcodes),
+            chunk_hash: hash_chunk(&products, &prices, &barcodes),
             products: records.to_vec(),
         }
     }
@@ -302,18 +326,32 @@ impl CatalogSpec {
             "currency": "MXN",
             "generated_at": "2026-10-01T00:00:00Z",
             "tax_profiles": self.tax_profiles,
+            "price_books": self.price_books,
             "products": self.products,
         });
         std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
     }
 }
 
-pub fn tax_profile(code: &str, rate_bps: u32, price_mode: &str) -> TaxProfileV1 {
+pub fn tax_profile(code: &str, rate_bps: u32) -> TaxProfileV1 {
     TaxProfileV1 {
         code: code.to_owned(),
         name: format!("profile {code}"),
         rate_bps,
-        price_mode: price_mode.to_owned(),
+    }
+}
+
+/// The tenant-wide base book every spec starts with.
+pub fn base_book() -> PriceBookV1 {
+    PriceBookV1 {
+        price_book_id: "BASE".to_owned(),
+        code: "BASE".to_owned(),
+        name: "Base".to_owned(),
+        currency: "MXN".to_owned(),
+        scope: "TENANT".to_owned(),
+        store_id: None,
+        priority: 0,
+        active: true,
     }
 }
 
@@ -331,8 +369,14 @@ pub fn product(
         active: true,
         sellable: true,
         tax_profile: tax_profile.to_owned(),
-        unit_price_minor: price_minor,
         barcodes: vec![barcode.to_owned()],
+        prices: vec![PriceRecordV1 {
+            price_book: "BASE".to_owned(),
+            amount_minor: price_minor,
+            price_mode: "TAX_EXCLUSIVE".to_owned(),
+            valid_from: None,
+            valid_until: None,
+        }],
     }
 }
 

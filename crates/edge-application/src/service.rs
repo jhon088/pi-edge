@@ -9,7 +9,7 @@
 //! business day and *the* active transaction of that session. Ambiguity is an
 //! error, never a guess.
 
-use edge_catalog::{resolve_sale_line, BasePriceResolver, CatalogSnapshot, PricingContext};
+use edge_catalog::{resolve_price, resolve_sale_line, CatalogSnapshot, PricingContext};
 use edge_domain::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -216,9 +216,12 @@ where
                     operator_id: session.state().operator_id.clone(),
                     register_sequence,
                     currency: device.currency,
-                    catalog: Some(CatalogRef {
+                    // Pin both the catalog and the instant: a scheduled price
+                    // change must not move a price mid-sale either (ADR 014).
+                    pricing: Some(PricingCapture {
                         snapshot_id: catalog.id(),
-                        version: catalog.version(),
+                        catalog_version: catalog.version(),
+                        effective_at: now,
                     }),
                     created_at: now,
                 });
@@ -242,6 +245,7 @@ where
                         "currency": device.currency.code(),
                         "catalog_snapshot_id": catalog.id().to_string(),
                         "catalog_version": catalog.version(),
+                        "pricing_effective_at": now.to_rfc3339(),
                     }),
                 ))?;
                 Ok(transaction)
@@ -271,7 +275,7 @@ where
 
                 // Resolve against the snapshot this sale captured, never
                 // against whatever is active right now (ADR 013).
-                let snapshot = require_sale_catalog(uow, &transaction)?;
+                let (snapshot, capture) = require_sale_pricing(uow, &transaction)?;
                 let product = uow
                     .lookup_catalog_product(snapshot.id(), &cmd.selector)?
                     .ok_or_else(|| {
@@ -287,18 +291,25 @@ where
                             code: product.tax_profile.to_string(),
                         })
                     })?;
+                // Prices come from price books, resolved at the instant this
+                // sale captured, never at "now".
+                let context = PricingContext {
+                    store_id: &device.store_id,
+                    product_ref: &product.product_ref,
+                    effective_at: capture.effective_at,
+                    snapshot_id: snapshot.id(),
+                    quantity: cmd.quantity,
+                    currency: device.currency,
+                };
+                let candidates =
+                    uow.price_candidates(snapshot.id(), &device.store_id, &product.product_ref)?;
+                let price = resolve_price(&candidates, &context)?;
                 let resolved = resolve_sale_line(
                     &product,
                     &profile,
+                    &price,
                     cmd.selector.scanned_barcode(),
-                    &BasePriceResolver,
-                    &PricingContext {
-                        store_id: &device.store_id,
-                        business_day_id: day.id(),
-                        snapshot_version: snapshot.version(),
-                        quantity: cmd.quantity,
-                        currency: device.currency,
-                    },
+                    &context,
                 )?;
                 let line = transaction.add_line(
                     NewLineInput {
@@ -314,6 +325,7 @@ where
                         unit_price: resolved.unit_price,
                         tax_rate: resolved.tax_rate,
                         price_mode: resolved.price_mode,
+                        price_book_id: Some(resolved.price_book_id.clone()),
                         // Promotions and manual overrides will supply this; no
                         // client may.
                         discount_amount: None,
@@ -350,6 +362,8 @@ where
                         "line_total_minor": line.line_total.minor(),
                         "catalog_snapshot_id": snapshot.id().to_string(),
                         "catalog_version": snapshot.version(),
+                        "price_book_id": resolved.price_book_id.to_string(),
+                        "priced_at": resolved.priced_at.to_rfc3339(),
                         "resolved_by": cmd.selector.to_string(),
                     }),
                 ))?;
@@ -831,15 +845,15 @@ pub(crate) fn require_active_catalog(
         ))
 }
 
-/// The snapshot an existing sale was priced against.
+/// The pricing context an existing sale must keep using.
 ///
-/// Reloaded by id, and required to still be usable: an import in flight can
-/// never price a line, and a superseded snapshot still can.
-pub(crate) fn require_sale_catalog(
+/// The snapshot is reloaded by id and required to still be usable: an import in
+/// flight can never price a line, and a superseded snapshot still can.
+pub(crate) fn require_sale_pricing(
     uow: &mut dyn UnitOfWork,
     transaction: &RetailTransaction,
-) -> Result<CatalogSnapshot, AppError> {
-    let captured = transaction.catalog().ok_or(AppError::Catalog(
+) -> Result<(CatalogSnapshot, PricingCapture), AppError> {
+    let captured = transaction.pricing().ok_or(AppError::Catalog(
         edge_catalog::CatalogError::NoActiveSnapshot,
     ))?;
     let snapshot = uow
@@ -857,7 +871,7 @@ pub(crate) fn require_sale_catalog(
             },
         ));
     }
-    Ok(snapshot)
+    Ok((snapshot, captured))
 }
 
 fn require_active_transaction(

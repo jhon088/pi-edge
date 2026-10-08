@@ -371,7 +371,7 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                         operator_id, register_sequence, status, currency, subtotal_minor,
                         discount_total_minor, net_total_minor, tax_total_minor,
                         grand_total_minor, created_at, updated_at, finalized_at, version,
-                        catalog_snapshot_id, catalog_version
+                        catalog_snapshot_id, catalog_version, pricing_effective_at
                  FROM retail_transactions
                  WHERE session_id = ?1 AND status NOT IN ('FINALIZED', 'CANCELLED')
                  ORDER BY register_sequence DESC
@@ -398,7 +398,7 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                         operator_id, register_sequence, status, currency, subtotal_minor,
                         discount_total_minor, net_total_minor, tax_total_minor,
                         grand_total_minor, created_at, updated_at, finalized_at, version,
-                        catalog_snapshot_id, catalog_version
+                        catalog_snapshot_id, catalog_version, pricing_effective_at
                  FROM retail_transactions
                  WHERE transaction_id = ?1",
                 params![id.to_string()],
@@ -436,9 +436,9 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                       operator_id, register_sequence, status, currency, subtotal_minor,
                       discount_total_minor, net_total_minor, tax_total_minor, grand_total_minor,
                       created_at, updated_at, finalized_at, version,
-                      catalog_snapshot_id, catalog_version)
+                      catalog_snapshot_id, catalog_version, pricing_effective_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?18, ?19, ?20)",
+                         ?17, ?18, ?19, ?20, ?21)",
                 params![
                     state.transaction_id.to_string(),
                     state.business_day_id.to_string(),
@@ -458,8 +458,11 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     now.to_rfc3339(),
                     state.finalized_at.map(|ts| ts.to_rfc3339()),
                     state.version,
-                    state.catalog.map(|catalog| catalog.snapshot_id.to_string()),
-                    state.catalog.map(|catalog| catalog.version),
+                    state.pricing.map(|pricing| pricing.snapshot_id.to_string()),
+                    state.pricing.map(|pricing| pricing.catalog_version),
+                    state
+                        .pricing
+                        .map(|pricing| pricing.effective_at.to_rfc3339()),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -659,11 +662,11 @@ impl SqliteUnitOfWork<'_, '_> {
                     "INSERT INTO transaction_lines
                          (line_id, transaction_id, line_number, product_ref, sku, barcode,
                           description, quantity_thousandths, unit_price_minor, tax_rate_bps,
-                          price_mode, extended_amount_minor, discount_amount_minor,
-                          taxable_amount_minor, tax_amount_minor, line_total_minor, currency,
-                          created_at)
+                          price_mode, price_book_id, extended_amount_minor,
+                          discount_amount_minor, taxable_amount_minor, tax_amount_minor,
+                          line_total_minor, currency, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16, ?17, ?18)
+                             ?16, ?17, ?18, ?19)
                      ON CONFLICT(line_id) DO NOTHING",
                     params![
                         line.line_id.to_string(),
@@ -677,6 +680,7 @@ impl SqliteUnitOfWork<'_, '_> {
                         line.unit_price.minor(),
                         line.tax_rate.bps(),
                         line.price_mode.as_str(),
+                        line.price_book_id.as_ref().map(PriceBookId::as_str),
                         line.extended_amount.minor(),
                         line.discount_amount.minor(),
                         line.taxable_amount.minor(),
@@ -727,8 +731,8 @@ impl SqliteUnitOfWork<'_, '_> {
             .prepare(
                 "SELECT line_id, line_number, product_ref, sku, barcode, description,
                         quantity_thousandths, unit_price_minor, tax_rate_bps, price_mode,
-                        extended_amount_minor, discount_amount_minor, taxable_amount_minor,
-                        tax_amount_minor, line_total_minor, currency
+                        price_book_id, extended_amount_minor, discount_amount_minor,
+                        taxable_amount_minor, tax_amount_minor, line_total_minor, currency
                  FROM transaction_lines
                  WHERE transaction_id = ?1
                  ORDER BY line_number ASC",
@@ -916,6 +920,7 @@ struct RawTransaction {
     version: i64,
     catalog_snapshot_id: Option<String>,
     catalog_version: Option<i64>,
+    pricing_effective_at: Option<String>,
 }
 
 impl RawTransaction {
@@ -941,6 +946,7 @@ impl RawTransaction {
             version: row.get(17)?,
             catalog_snapshot_id: row.get(18)?,
             catalog_version: row.get(19)?,
+            pricing_effective_at: row.get(20)?,
         })
     }
 
@@ -960,11 +966,18 @@ impl RawTransaction {
             register_sequence: self.register_sequence,
             status: TransactionStatus::parse(&self.status).map_err(AppError::from)?,
             currency,
-            catalog: match (self.catalog_snapshot_id, self.catalog_version) {
-                (Some(snapshot_id), Some(version)) => Some(CatalogRef {
-                    snapshot_id: parse_id(&snapshot_id)?,
-                    version,
-                }),
+            pricing: match (
+                self.catalog_snapshot_id,
+                self.catalog_version,
+                self.pricing_effective_at,
+            ) {
+                (Some(snapshot_id), Some(catalog_version), Some(effective_at)) => {
+                    Some(PricingCapture {
+                        snapshot_id: parse_id(&snapshot_id)?,
+                        catalog_version,
+                        effective_at: parse_ts(&effective_at)?,
+                    })
+                }
                 _ => None,
             },
             lines,
@@ -995,6 +1008,7 @@ struct RawLine {
     unit_price_minor: i64,
     tax_rate_bps: i64,
     price_mode: String,
+    price_book_id: Option<String>,
     extended_amount_minor: i64,
     discount_amount_minor: i64,
     taxable_amount_minor: i64,
@@ -1016,12 +1030,13 @@ impl RawLine {
             unit_price_minor: row.get(7)?,
             tax_rate_bps: row.get(8)?,
             price_mode: row.get(9)?,
-            extended_amount_minor: row.get(10)?,
-            discount_amount_minor: row.get(11)?,
-            taxable_amount_minor: row.get(12)?,
-            tax_amount_minor: row.get(13)?,
-            line_total_minor: row.get(14)?,
-            currency: row.get(15)?,
+            price_book_id: row.get(10)?,
+            extended_amount_minor: row.get(11)?,
+            discount_amount_minor: row.get(12)?,
+            taxable_amount_minor: row.get(13)?,
+            tax_amount_minor: row.get(14)?,
+            line_total_minor: row.get(15)?,
+            currency: row.get(16)?,
         })
     }
 
@@ -1044,6 +1059,7 @@ impl RawLine {
                 .map_err(|e| AppError::Domain(DomainError::Money(e)))?,
             price_mode: PriceMode::parse(&self.price_mode)
                 .map_err(|e| AppError::Domain(DomainError::Money(e)))?,
+            price_book_id: parse_opt_id(self.price_book_id)?,
             extended_amount: money(self.extended_amount_minor, currency),
             discount_amount: money(self.discount_amount_minor, currency),
             taxable_amount: money(self.taxable_amount_minor, currency),

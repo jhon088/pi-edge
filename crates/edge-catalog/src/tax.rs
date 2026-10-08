@@ -1,13 +1,17 @@
 //! Tax profiles.
 //!
-//! A profile is the catalog's statement of *how* a product is taxed: the rate
-//! and whether the quoted price already includes it. The POS never guesses
-//! either, and never derives a rate from the amount or the product kind.
+//! A profile is the catalog's statement of the rate a product is taxed at. The
+//! POS never derives a rate from an amount or a product kind.
+//!
+//! Whether a quoted amount *includes* that tax is a property of the price, not
+//! of the rate, so `price_mode` lives on the price entry (see
+//! [`crate::pricing`]). The same 16% profile can serve a tax-inclusive shelf
+//! price and a tax-exclusive wholesale price.
 //!
 //! Mexico needs 16%, 8% (border region) and 0% today; nothing here is specific
 //! to those values. Fiscal document semantics (CFDI) are out of scope.
 
-use edge_domain::prelude::{PriceMode, TaxRate};
+use edge_domain::prelude::TaxRate;
 use serde::{Deserialize, Serialize};
 
 use crate::error::CatalogError;
@@ -55,8 +59,6 @@ pub struct TaxProfile {
     pub code: TaxProfileCode,
     pub name: String,
     pub rate: TaxRate,
-    /// Declared explicitly by the catalog, never inferred.
-    pub price_mode: PriceMode,
 }
 
 impl TaxProfile {
@@ -64,7 +66,6 @@ impl TaxProfile {
         code: TaxProfileCode,
         name: impl Into<String>,
         rate: TaxRate,
-        price_mode: PriceMode,
     ) -> Result<Self, CatalogError> {
         let name = name.into();
         if name.trim().is_empty() {
@@ -77,7 +78,6 @@ impl TaxProfile {
             code,
             name: name.trim().to_owned(),
             rate,
-            price_mode,
         })
     }
 }
@@ -97,20 +97,8 @@ mod tests {
     #[test]
     fn requires_a_name() {
         let code = TaxProfileCode::new("IVA16").unwrap();
-        assert!(TaxProfile::new(
-            code.clone(),
-            "  ",
-            TaxRate::from_bps(1_600).unwrap(),
-            PriceMode::TaxExclusive
-        )
-        .is_err());
-        let profile = TaxProfile::new(
-            code,
-            "IVA 16%",
-            TaxRate::from_bps(1_600).unwrap(),
-            PriceMode::TaxInclusive,
-        )
-        .unwrap();
-        assert_eq!(profile.price_mode, PriceMode::TaxInclusive);
+        assert!(TaxProfile::new(code.clone(), "  ", TaxRate::from_bps(1_600).unwrap()).is_err());
+        let profile = TaxProfile::new(code, "IVA 16%", TaxRate::from_bps(1_600).unwrap()).unwrap();
+        assert_eq!(profile.rate.bps(), 1_600);
     }
 }

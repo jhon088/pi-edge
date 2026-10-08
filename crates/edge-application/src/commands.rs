@@ -4,7 +4,10 @@
 //! records the command result and a replay returns that result instead of
 //! applying the command twice (explicit idempotency).
 
-use edge_catalog::{CatalogBarcode, CatalogProduct, ProductSelector, SnapshotCounts, TaxProfile};
+use edge_catalog::{
+    CatalogBarcode, CatalogProduct, PriceBook, PriceEntry, ProductSelector, SnapshotCounts,
+    TaxProfile,
+};
 use edge_domain::prelude::*;
 use uuid::Uuid;
 
@@ -65,6 +68,9 @@ pub struct BeginCatalogImportCommand {
     /// Few in number, so they travel with the header and let every chunk be
     /// validated against them immediately.
     pub tax_profiles: Vec<TaxProfile>,
+    /// Likewise: a handful of books, and every price entry in every chunk has
+    /// to name one of them.
+    pub price_books: Vec<PriceBook>,
 }
 
 /// One durable, idempotent slice of catalog content.
@@ -78,6 +84,9 @@ pub struct PutCatalogChunkCommand {
     /// Hash of this chunk's canonical content, computed by the client.
     pub chunk_hash: String,
     pub products: Vec<CatalogProduct>,
+    /// Prices for the products in this chunk, so a product and its prices
+    /// always land in the same transaction.
+    pub price_entries: Vec<PriceEntry>,
     pub barcodes: Vec<CatalogBarcode>,
 }
 

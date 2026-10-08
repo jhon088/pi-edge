@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
-use edge_application::testing::{CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory};
+use edge_application::testing::{
+    CatalogFixture, FixedClock, FixturePrice, FixtureProduct, SequentialIdFactory,
+};
 use edge_application::EdgeApplication;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
@@ -22,7 +24,12 @@ pub const FROZEN_AT: &str = "2026-10-08T15:00:00Z";
 
 /// Core with frozen time and sequential ids.
 pub fn golden_core() -> GoldenCore {
-    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(FROZEN_AT)
+    golden_core_at(FROZEN_AT)
+}
+
+/// Core frozen at an arbitrary instant, for pricing schedules.
+pub fn golden_core_at(instant: &str) -> GoldenCore {
+    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(instant)
         .unwrap()
         .with_timezone(&Utc);
     EdgeApplication::new(
@@ -30,6 +37,13 @@ pub fn golden_core() -> GoldenCore {
         FixedClock::frozen(instant),
         SequentialIdFactory::new(),
     )
+}
+
+/// When the scheduled price in the golden catalog takes over.
+pub const SCHEDULED_FROM: &str = "2026-10-15T00:00:00Z";
+
+fn scheduled_from() -> Timestamp {
+    Timestamp::parse_rfc3339(SCHEDULED_FROM).unwrap()
 }
 
 /// Import and activate a catalog, then open the register.
@@ -52,10 +66,12 @@ pub fn open_register_with(core: &GoldenCore, catalog: &CatalogFixture) {
     .unwrap();
 }
 
-/// Catalog used by the golden cases: one product per tax rate and price mode,
-/// plus prices chosen so the arithmetic cannot be exact.
+/// Catalog used by the golden cases: one product per tax rate, both price
+/// modes, prices chosen so the arithmetic cannot be exact, a store override and
+/// a scheduled change.
 pub fn golden_catalog(version: i64) -> CatalogFixture {
     CatalogFixture::new(version)
+        .with_store_book(STORE_BOOK, "STORE-DEMO", 0)
         .with(
             FixtureProduct::new("SKU-16", "Gravado 16%", 10_000)
                 .sku("SKU-16")
@@ -74,22 +90,24 @@ pub fn golden_catalog(version: i64) -> CatalogFixture {
                 .tax_profile("IVA0"),
         )
         .with(
-            FixtureProduct::new("SKU-INC-16", "Precio con IVA 16%", 11_600)
+            FixtureProduct::new("SKU-INC-16", "Precio con IVA 16%", 0)
                 .sku("SKU-INC-16")
                 .barcode(BARCODE_INCLUSIVE_16)
-                .tax_profile("IVA16-INC"),
+                .priced(FixturePrice::base(11_600).inclusive()),
         )
         .with(
-            FixtureProduct::new("SKU-INC-8", "Precio con IVA 8%", 10_800)
+            FixtureProduct::new("SKU-INC-8", "Precio con IVA 8%", 0)
                 .sku("SKU-INC-8")
                 .barcode(BARCODE_INCLUSIVE_8)
-                .tax_profile("IVA8-INC"),
+                .tax_profile("IVA8")
+                .priced(FixturePrice::base(10_800).inclusive()),
         )
         .with(
-            FixtureProduct::new("SKU-INC-0", "Precio sin impuesto", 9_999)
+            FixtureProduct::new("SKU-INC-0", "Precio sin impuesto", 0)
                 .sku("SKU-INC-0")
                 .barcode(BARCODE_INCLUSIVE_0)
-                .tax_profile("IVA0-INC"),
+                .tax_profile("IVA0")
+                .priced(FixturePrice::base(9_999).inclusive()),
         )
         .with(
             FixtureProduct::new("SKU-FRACTIONAL", "Granel 16%", 333)
@@ -97,12 +115,30 @@ pub fn golden_catalog(version: i64) -> CatalogFixture {
                 .barcode(BARCODE_FRACTIONAL),
         )
         .with(
-            FixtureProduct::new("SKU-ODD-INC", "Centavo impar con IVA", 99)
+            FixtureProduct::new("SKU-ODD-INC", "Centavo impar con IVA", 0)
                 .sku("SKU-ODD-INC")
                 .barcode(BARCODE_ODD_INCLUSIVE)
-                .tax_profile("IVA16-INC"),
+                .priced(FixturePrice::base(99).inclusive()),
+        )
+        // Same product, cheaper in this store's own book.
+        .with(
+            FixtureProduct::new("SKU-STORE", "Oferta de tienda", 10_000)
+                .sku("SKU-STORE")
+                .barcode(BARCODE_STORE_OVERRIDE)
+                .plus_price(FixturePrice::base(8_900).in_book(STORE_BOOK)),
+        )
+        // A price change that starts later.
+        .with(
+            FixtureProduct::new("SKU-SCHEDULED", "Precio programado", 0)
+                .sku("SKU-SCHEDULED")
+                .barcode(BARCODE_SCHEDULED)
+                .priced(FixturePrice::base(10_000).until(scheduled_from()))
+                .plus_price(FixturePrice::base(12_000).from(scheduled_from())),
         )
 }
+
+/// Price book scoped to the demo store.
+pub const STORE_BOOK: &str = "STORE-DEMO-BOOK";
 
 pub const BARCODE_16: &str = "7501000000016";
 pub const BARCODE_8: &str = "7501000000008";
@@ -112,6 +148,8 @@ pub const BARCODE_INCLUSIVE_8: &str = "7501000000108";
 pub const BARCODE_INCLUSIVE_0: &str = "7501000000100";
 pub const BARCODE_FRACTIONAL: &str = "7501000000333";
 pub const BARCODE_ODD_INCLUSIVE: &str = "7501000000099";
+pub const BARCODE_STORE_OVERRIDE: &str = "7501000000777";
+pub const BARCODE_SCHEDULED: &str = "7501000000888";
 
 /// Scan a barcode with a quantity in thousandths.
 pub fn scan(core: &GoldenCore, barcode: &str, quantity_thousandths: i64) {

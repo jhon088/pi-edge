@@ -51,6 +51,10 @@ export interface TransactionLine {
   description: string;
   quantity: string;
   unit_price: Money;
+  /** Whether `unit_price` already includes tax. */
+  price_mode: string;
+  /** Book the price came from. */
+  price_book_id: string | null;
   tax_amount: Money;
   line_total: Money;
 }
@@ -58,6 +62,8 @@ export interface TransactionLine {
 export interface Totals {
   subtotal: Money;
   discount_total: Money;
+  /** Net tax base: what a receipt prints above the tax line. */
+  net_total: Money;
   tax_total: Money;
   grand_total: Money;
 }
@@ -65,6 +71,9 @@ export interface Totals {
 export interface RetailTransaction {
   transaction_id: string;
   register_sequence: number;
+  /** Snapshot and instant this sale is priced against. */
+  catalog_version: number | null;
+  pricing_effective_at: string | null;
   status: string;
   currency: string;
   lines: TransactionLine[];
@@ -90,7 +99,9 @@ export interface EdgeState {
 
 export interface SnapshotCounts {
   tax_profiles: number;
+  price_books: number;
   products: number;
+  price_entries: number;
   barcodes: number;
 }
 
@@ -128,7 +139,16 @@ export interface TaxProfile {
   code: string;
   name: string;
   rate_bps: number;
+}
+
+/** The price the core picked, and the book it came from. */
+export interface ResolvedPrice {
+  price_book_id: string;
+  price_book_code: string;
+  unit_price: Money;
+  /** Whether `unit_price` already includes tax. */
   price_mode: string;
+  effective_at: string;
 }
 
 export interface CatalogProduct {
@@ -139,14 +159,19 @@ export interface CatalogProduct {
   active: boolean;
   sellable: boolean;
   tax_profile: string;
-  unit_price: Money;
 }
 
 export interface ProductLookup {
   snapshot_id: string;
   snapshot_version: number;
+  /** Instant the price was resolved at. */
+  effective_at: string;
   product: CatalogProduct;
   tax_profile: TaxProfile;
+  /** `null` when no price book applies at `effective_at`. */
+  price: ResolvedPrice | null;
+  /** Stable code explaining a missing price, e.g. `PRICE_NOT_FOUND`. */
+  price_issue: string | null;
 }
 
 export type CoreStatus = "STARTING" | "READY" | "DEGRADED" | "STOPPING";

@@ -16,7 +16,8 @@
 //! `IMPORTING`, which is exactly the state a client resumes from.
 
 use edge_catalog::{
-    CatalogError, CatalogSnapshot, CatalogSnapshotStatus, NewCatalogSnapshot, ProductSelector,
+    resolve_price, CatalogError, CatalogSnapshot, CatalogSnapshotStatus, NewCatalogSnapshot,
+    PricingContext, ProductSelector,
 };
 use edge_domain::prelude::*;
 use serde_json::json;
@@ -83,6 +84,34 @@ where
                     }
                     .into());
                 }
+                // Without a price book nothing can be sold, so a snapshot that
+                // declares none is rejected at the door rather than at the till.
+                if cmd.price_books.is_empty() {
+                    return Err(CatalogError::InvalidRecord {
+                        field: "price_books",
+                        reason: "a snapshot must declare at least one price book".to_owned(),
+                    }
+                    .into());
+                }
+                for book in &cmd.price_books {
+                    if book.currency != device.currency {
+                        return Err(CatalogError::CurrencyMismatch {
+                            expected: device.currency.code(),
+                            actual: book.currency.code(),
+                        }
+                        .into());
+                    }
+                }
+                if i64::try_from(cmd.price_books.len()).unwrap_or(i64::MAX)
+                    != cmd.expected.price_books
+                {
+                    return Err(CatalogError::CountMismatch {
+                        what: "price books",
+                        expected: cmd.expected.price_books,
+                        stored: i64::try_from(cmd.price_books.len()).unwrap_or(i64::MAX),
+                    }
+                    .into());
+                }
                 if cmd.expected.products <= 0 {
                     return Err(CatalogError::InvalidRecord {
                         field: "expected_products",
@@ -114,6 +143,7 @@ where
                 });
                 uow.insert_catalog_snapshot(&snapshot, now)?;
                 uow.insert_catalog_tax_profiles(snapshot.id(), &cmd.tax_profiles)?;
+                uow.insert_catalog_price_books(snapshot.id(), &cmd.price_books)?;
                 let progress = uow.catalog_import_progress(&snapshot)?;
                 Ok(CatalogImportStatus { snapshot, progress })
             })
@@ -171,8 +201,21 @@ where
                     .into());
                 }
             }
+            let books = uow.list_catalog_price_books(cmd.snapshot_id)?;
+            for entry in &cmd.price_entries {
+                if !books
+                    .iter()
+                    .any(|book| book.price_book_id == entry.price_book_id)
+                {
+                    return Err(CatalogError::UnknownPriceBook {
+                        price_book_id: entry.price_book_id.to_string(),
+                    }
+                    .into());
+                }
+            }
 
             uow.insert_catalog_products(cmd.snapshot_id, &cmd.products)?;
+            uow.insert_catalog_price_entries(cmd.snapshot_id, &cmd.price_entries)?;
             uow.insert_catalog_barcodes(cmd.snapshot_id, &cmd.barcodes)?;
             uow.record_catalog_chunk(
                 cmd.snapshot_id,
@@ -180,6 +223,7 @@ where
                     chunk_index: cmd.chunk_index,
                     chunk_hash: cmd.chunk_hash.clone(),
                     product_count: i64::try_from(cmd.products.len()).unwrap_or(i64::MAX),
+                    price_entry_count: i64::try_from(cmd.price_entries.len()).unwrap_or(i64::MAX),
                     barcode_count: i64::try_from(cmd.barcodes.len()).unwrap_or(i64::MAX),
                 },
                 now,
@@ -383,6 +427,7 @@ where
     /// Diagnostic lookup against the snapshot that would price a new sale, or
     /// against the one an open sale captured.
     pub fn lookup_product(&self, selector: ProductSelector) -> Result<ProductLookup, AppError> {
+        let now = self.clock.now();
         self.store().transact(move |uow| {
             let device = require_device(uow)?;
 
@@ -395,20 +440,25 @@ where
                         Some(session) => uow.find_active_transaction(session.id())?,
                         None => None,
                     };
-                    match active.and_then(|transaction| transaction.catalog()) {
+                    match active.and_then(|transaction| transaction.pricing()) {
                         Some(captured) => uow
                             .find_catalog_snapshot(captured.snapshot_id)?
-                            .filter(CatalogSnapshot::resolves_sales),
+                            .filter(CatalogSnapshot::resolves_sales)
+                            .map(|snapshot| (snapshot, captured.effective_at)),
                         None => None,
                     }
                 }
                 None => None,
             };
-            let snapshot = match snapshot {
-                Some(snapshot) => snapshot,
-                None => uow
-                    .find_active_catalog_snapshot(&device.store_id)?
-                    .ok_or(CatalogError::NoActiveSnapshot)?,
+            // An open sale's own instant, so the operator sees the price that
+            // sale would use; otherwise now.
+            let (snapshot, effective_at) = match snapshot {
+                Some(found) => found,
+                None => (
+                    uow.find_active_catalog_snapshot(&device.store_id)?
+                        .ok_or(CatalogError::NoActiveSnapshot)?,
+                    now,
+                ),
             };
 
             let product = uow
@@ -422,11 +472,30 @@ where
                     product_ref: product.product_ref.to_string(),
                     code: product.tax_profile.to_string(),
                 })?;
+            let context = PricingContext {
+                store_id: &device.store_id,
+                product_ref: &product.product_ref,
+                effective_at,
+                snapshot_id: snapshot.id(),
+                quantity: Quantity::from_units(1)
+                    .map_err(|e| AppError::Catalog(CatalogError::Money(e)))?,
+                currency: device.currency,
+            };
+            let candidates =
+                uow.price_candidates(snapshot.id(), &device.store_id, &product.product_ref)?;
+            let (price, price_issue) = match resolve_price(&candidates, &context) {
+                Ok(price) => (Some(price), None),
+                Err(error) => (None, Some(error.code().to_owned())),
+            };
+
             Ok(ProductLookup {
                 snapshot_id: snapshot.id(),
                 snapshot_version: snapshot.version(),
+                effective_at,
                 product,
                 tax_profile,
+                price,
+                price_issue,
             })
         })
     }

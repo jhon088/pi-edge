@@ -31,8 +31,8 @@ fn an_open_sale_keeps_the_prices_of_the_snapshot_it_captured() {
     let sale = core
         .start_transaction(StartTransactionCommand::default())
         .unwrap();
-    assert_eq!(sale.catalog().unwrap().snapshot_id, snapshot_a);
-    assert_eq!(sale.catalog().unwrap().version, 1);
+    assert_eq!(sale.pricing().unwrap().snapshot_id, snapshot_a);
+    assert_eq!(sale.pricing().unwrap().catalog_version, 1);
     core.add_item(scan(BARCODE, 1)).unwrap();
 
     // --- snapshot B: X costs 120.00, imported and activated mid-sale ------
@@ -46,7 +46,7 @@ fn an_open_sale_keeps_the_prices_of_the_snapshot_it_captured() {
 
     // --- the open sale is untouched ---------------------------------------
     let open_sale = core.get_active_transaction().unwrap().unwrap();
-    assert_eq!(open_sale.catalog().unwrap().snapshot_id, snapshot_a);
+    assert_eq!(open_sale.pricing().unwrap().snapshot_id, snapshot_a);
     assert_eq!(open_sale.state().lines[0].unit_price.minor(), 10_000);
 
     // ... and a line added now still resolves against snapshot A.
@@ -69,14 +69,14 @@ fn an_open_sale_keeps_the_prices_of_the_snapshot_it_captured() {
     let finalized = core
         .finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
-    assert_eq!(finalized.catalog().unwrap().snapshot_id, snapshot_a);
+    assert_eq!(finalized.pricing().unwrap().snapshot_id, snapshot_a);
 
     // --- the next sale uses the new catalog -------------------------------
     let next = core
         .start_transaction(StartTransactionCommand::default())
         .unwrap();
-    assert_eq!(next.catalog().unwrap().snapshot_id, snapshot_b);
-    assert_eq!(next.catalog().unwrap().version, 2);
+    assert_eq!(next.pricing().unwrap().snapshot_id, snapshot_b);
+    assert_eq!(next.pricing().unwrap().catalog_version, 2);
     let priced = core.add_item(scan(BARCODE, 1)).unwrap();
     assert_eq!(priced.state().lines[0].unit_price.minor(), 12_000);
 }

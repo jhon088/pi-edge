@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use edge_application::commands::*;
-use edge_application::testing::{CatalogFixture, FixtureProduct};
+use edge_application::testing::{CatalogFixture, FixturePrice, FixtureProduct};
 use edge_crash_recovery_tests::*;
 
 const BARCODE: &str = "7500000000777";
@@ -21,7 +21,7 @@ fn snapshot_product_resolution_and_totals_survive_a_restart() {
     let db = dir.path().join("pi-edge.db");
 
     // --- lifetime 1: catalog active, sale open with one line --------------
-    let (expected_state, expected_catalog, expected_status) = {
+    let (expected_state, expected_pricing, expected_status) = {
         let core = core_at(&db, 1);
         open_register(&core);
         catalog(2, 12_345).activate(&core).unwrap();
@@ -39,7 +39,7 @@ fn snapshot_product_resolution_and_totals_survive_a_restart() {
             .unwrap();
         (
             core.get_edge_state().unwrap(),
-            core.get_active_transaction().unwrap().unwrap().catalog(),
+            core.get_active_transaction().unwrap().unwrap().pricing(),
             core.get_catalog_status().unwrap(),
         )
     };
@@ -63,7 +63,7 @@ fn snapshot_product_resolution_and_totals_survive_a_restart() {
     );
 
     let transaction = recovered.active_transaction.unwrap();
-    assert_eq!(transaction.catalog(), expected_catalog);
+    assert_eq!(transaction.pricing(), expected_pricing);
     assert_eq!(transaction.state().lines[0].unit_price.minor(), 12_345);
     assert_eq!(transaction.state().lines[0].description, "Producto X");
     assert_eq!(transaction.state().totals.net_total.minor(), 24_690);
@@ -107,7 +107,7 @@ fn a_sale_keeps_its_snapshot_even_if_a_newer_one_is_activated_after_the_restart(
             quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
         })
         .unwrap();
-        sale.catalog().unwrap()
+        sale.pricing().unwrap()
     };
 
     // New process, new catalog activated while the sale is still open.
@@ -115,7 +115,7 @@ fn a_sale_keeps_its_snapshot_even_if_a_newer_one_is_activated_after_the_restart(
     catalog(3, 20_000).activate(&core).unwrap();
 
     let transaction = core.get_active_transaction().unwrap().unwrap();
-    assert_eq!(transaction.catalog().unwrap(), captured);
+    assert_eq!(transaction.pricing().unwrap(), captured);
     let continued = core
         .add_item(AddItemCommand {
             request_id: None,
@@ -130,4 +130,98 @@ fn a_sale_keeps_its_snapshot_even_if_a_newer_one_is_activated_after_the_restart(
         .lines
         .iter()
         .all(|line| line.unit_price.minor() == 10_000));
+}
+
+/// A price change scheduled for later must not move an open sale, even after
+/// the register has restarted on the other side of the boundary.
+#[test]
+fn a_scheduled_price_change_cannot_move_an_open_sale() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("pi-edge.db");
+    let boundary = edge_domain::prelude::Timestamp::parse_rfc3339("2026-10-10T00:00:00Z").unwrap();
+
+    let catalog = |version: i64| {
+        CatalogFixture::new(version).with(
+            FixtureProduct::new("SKU-X", "Producto X", 0)
+                .sku("SKU-X")
+                .barcode(BARCODE)
+                .priced(FixturePrice::base(10_000).until(boundary))
+                .plus_price(FixturePrice::base(12_000).from(boundary)),
+        )
+    };
+
+    // --- before the boundary: the sale opens at the old price -------------
+    let (sale_id, captured) = {
+        let core = core_at(&db, 1);
+        open_register(&core);
+        catalog(2).activate(&core).unwrap();
+        let sale = core
+            .start_transaction(StartTransactionCommand::default())
+            .unwrap();
+        let transaction = core
+            .add_item(AddItemCommand {
+                request_id: None,
+                selector: edge_catalog::ProductSelector::Barcode(
+                    edge_catalog::Barcode::new(BARCODE).unwrap(),
+                ),
+                quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+            })
+            .unwrap();
+        assert_eq!(transaction.state().lines[0].unit_price.minor(), 10_000);
+        (sale.id(), sale.pricing().unwrap())
+    };
+    assert!(captured.effective_at < boundary);
+
+    // --- a new runtime, two days later, same open sale --------------------
+    let core = core_at_instant(&db, 1_000, "2026-10-11T09:00:00Z");
+    let recovered = core.get_active_transaction().unwrap().unwrap();
+    assert_eq!(recovered.id(), sale_id);
+    // The pricing context came back exactly as captured.
+    assert_eq!(recovered.pricing().unwrap(), captured);
+
+    let continued = core
+        .add_item(AddItemCommand {
+            request_id: None,
+            selector: edge_catalog::ProductSelector::Barcode(
+                edge_catalog::Barcode::new(BARCODE).unwrap(),
+            ),
+            quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+        })
+        .unwrap();
+    assert!(
+        continued
+            .state()
+            .lines
+            .iter()
+            .all(|line| line.unit_price.minor() == 10_000),
+        "the open sale must keep the price it started with"
+    );
+    let totalized = core
+        .totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    assert_eq!(totalized.state().totals.net_total.minor(), 20_000);
+
+    // Close it out, then start a fresh sale: now the new price applies.
+    core.commit_cash_payment(CommitCashPaymentCommand {
+        request_id: None,
+        amount_minor: 23_200,
+    })
+    .unwrap();
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap();
+
+    let next = core
+        .start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    assert!(next.pricing().unwrap().effective_at > boundary);
+    let priced = core
+        .add_item(AddItemCommand {
+            request_id: None,
+            selector: edge_catalog::ProductSelector::Barcode(
+                edge_catalog::Barcode::new(BARCODE).unwrap(),
+            ),
+            quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+        })
+        .unwrap();
+    assert_eq!(priced.state().lines[0].unit_price.minor(), 12_000);
 }

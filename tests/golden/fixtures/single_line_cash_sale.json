@@ -10,6 +10,7 @@
   "currency": "MXN",
   "catalog_snapshot_id": "00000000-0000-0000-0000-000000000001",
   "catalog_version": 1,
+  "pricing_effective_at": "2026-10-08T15:00:00.000000Z",
   "lines": [
     {
       "line_id": "00000000-0000-0000-0000-00000000000a",
@@ -27,6 +28,7 @@
       },
       "tax_rate_bps": 1600,
       "price_mode": "TAX_EXCLUSIVE",
+      "price_book_id": "BASE",
       "extended_amount": {
         "minor": 10000,
         "currency": "MXN",

@@ -3,7 +3,9 @@
 //! These are plain application-level views. Wire formatting lives in
 //! `edge-protocol`.
 
-use edge_catalog::{CatalogProduct, CatalogSnapshot, ImportProgress, SnapshotCounts, TaxProfile};
+use edge_catalog::{
+    CatalogProduct, CatalogSnapshot, ImportProgress, ResolvedPrice, SnapshotCounts, TaxProfile,
+};
 use edge_domain::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +60,13 @@ pub struct CatalogImportStatus {
 pub struct ProductLookup {
     pub snapshot_id: CatalogSnapshotId,
     pub snapshot_version: i64,
+    /// Instant the price was resolved at.
+    pub effective_at: Timestamp,
     pub product: CatalogProduct,
     pub tax_profile: TaxProfile,
+    /// `None` when no price applies. A diagnostic lookup reports that instead
+    /// of failing, so an operator can see *why* a scan would be refused.
+    pub price: Option<ResolvedPrice>,
+    /// Stable code explaining a missing price, e.g. `PRICE_NOT_FOUND`.
+    pub price_issue: Option<String>,
 }

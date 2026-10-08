@@ -3,8 +3,12 @@
 //! Identity is `product_ref`: an opaque reference assigned upstream. PI.Edge
 //! never mints one. `external_ref` exists only to carry the source system's own
 //! code for traceability; it is metadata, never operational identity.
+//!
+//! A product does **not** own a price. What it costs depends on the store, the
+//! moment and the applicable price book, so prices live in
+//! [`crate::pricing`].
 
-use edge_domain::prelude::{Money, ProductRef};
+use edge_domain::prelude::ProductRef;
 use serde::{Deserialize, Serialize};
 
 use crate::error::CatalogError;
@@ -73,8 +77,6 @@ pub struct CatalogProduct {
     /// Active but non-sellable products exist (services, components).
     pub sellable: bool,
     pub tax_profile: TaxProfileCode,
-    /// Base price for this store, in the profile's price mode.
-    pub unit_price: Money,
 }
 
 /// Input shape for an imported product record, validated into
@@ -88,7 +90,6 @@ pub struct NewCatalogProduct {
     pub active: bool,
     pub sellable: bool,
     pub tax_profile: TaxProfileCode,
-    pub unit_price: Money,
 }
 
 impl CatalogProduct {
@@ -104,12 +105,6 @@ impl CatalogProduct {
             return Err(CatalogError::InvalidRecord {
                 field: "name",
                 reason: format!("exceeds {MAX_NAME_LEN} characters"),
-            });
-        }
-        if new.unit_price.is_negative() {
-            return Err(CatalogError::InvalidRecord {
-                field: "unit_price",
-                reason: "must not be negative".to_owned(),
             });
         }
         let sku = match new.sku {
@@ -140,7 +135,6 @@ impl CatalogProduct {
             active: new.active,
             sellable: new.sellable,
             tax_profile: new.tax_profile,
-            unit_price: new.unit_price,
         })
     }
 
@@ -200,13 +194,11 @@ impl ProductSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use edge_domain::prelude::Currency;
-
     fn profile() -> TaxProfileCode {
         TaxProfileCode::new("IVA16").unwrap()
     }
 
-    fn product(name: &str, price: i64) -> NewCatalogProduct {
+    fn product(name: &str) -> NewCatalogProduct {
         NewCatalogProduct {
             product_ref: ProductRef::new("P-1").unwrap(),
             external_ref: Some("  ERP-9  ".to_owned()),
@@ -215,7 +207,6 @@ mod tests {
             active: true,
             sellable: true,
             tax_profile: profile(),
-            unit_price: Money::from_minor(price, Currency::Mxn),
         }
     }
 
@@ -233,7 +224,7 @@ mod tests {
 
     #[test]
     fn trims_and_keeps_metadata() {
-        let imported = CatalogProduct::import(product("  Leche 1L ", 1_999)).unwrap();
+        let imported = CatalogProduct::import(product("  Leche 1L ")).unwrap();
         assert_eq!(imported.name, "Leche 1L");
         assert_eq!(imported.sku.as_deref(), Some("SKU-1"));
         assert_eq!(imported.external_ref.as_deref(), Some("ERP-9"));
@@ -241,30 +232,29 @@ mod tests {
 
     #[test]
     fn rejects_invalid_records() {
-        assert!(CatalogProduct::import(product("   ", 100)).is_err());
-        assert!(CatalogProduct::import(product("ok", -1)).is_err());
-        let mut long = product("ok", 1);
+        assert!(CatalogProduct::import(product("   ")).is_err());
+        let mut long = product("ok");
         long.name = "x".repeat(MAX_NAME_LEN + 1);
         assert!(CatalogProduct::import(long).is_err());
     }
 
     #[test]
     fn blocks_inactive_and_non_sellable_products() {
-        let mut inactive = product("ok", 100);
+        let mut inactive = product("ok");
         inactive.active = false;
         assert!(matches!(
             CatalogProduct::import(inactive).unwrap().is_saleable(),
             Err(CatalogError::ProductInactive { .. })
         ));
 
-        let mut not_sellable = product("ok", 100);
+        let mut not_sellable = product("ok");
         not_sellable.sellable = false;
         assert!(matches!(
             CatalogProduct::import(not_sellable).unwrap().is_saleable(),
             Err(CatalogError::ProductNotSellable { .. })
         ));
 
-        assert!(CatalogProduct::import(product("ok", 100))
+        assert!(CatalogProduct::import(product("ok"))
             .unwrap()
             .is_saleable()
             .is_ok());

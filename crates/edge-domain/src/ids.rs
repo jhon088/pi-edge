@@ -152,6 +152,11 @@ opaque_id!(
     /// Canonical catalog reference. PI.Edge never creates products.
     ProductRef
 );
+opaque_id!(
+    /// Reference to a price book, assigned upstream like every other piece of
+    /// master data.
+    PriceBookId
+);
 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]

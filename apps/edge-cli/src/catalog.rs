@@ -12,12 +12,14 @@
 use std::path::Path;
 
 use edge_catalog::{
-    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, TaxProfile,
+    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceBook, PriceEntry,
+    SnapshotContent, TaxProfile,
 };
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
-    CommitCatalogImportRequestV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
+    CommitCatalogImportRequestV1, PriceBookV1, PutCatalogChunkRequestV1, SnapshotCountsV1,
+    TaxProfileV1,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -42,6 +44,8 @@ pub struct CatalogFixture {
     #[serde(default)]
     pub effective_at: Option<String>,
     pub tax_profiles: Vec<TaxProfileV1>,
+    /// A snapshot must declare at least one price book.
+    pub price_books: Vec<PriceBookV1>,
     pub products: Vec<CatalogProductRecordV1>,
 }
 
@@ -49,6 +53,7 @@ pub struct CatalogFixture {
 struct PreparedRecord {
     wire: CatalogProductRecordV1,
     product: CatalogProduct,
+    prices: Vec<PriceEntry>,
     barcodes: Vec<CatalogBarcode>,
     /// Serialized size, used to fill a chunk by bytes.
     wire_bytes: usize,
@@ -88,6 +93,14 @@ pub fn import_catalog(
         .collect::<Result<_, _>>()
         .map_err(|error| CliError::Input(format!("invalid tax profile: {error}")))?;
 
+    let books: Vec<PriceBook> = fixture
+        .price_books
+        .iter()
+        .cloned()
+        .map(PriceBookV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(|error| CliError::Input(format!("invalid price book: {error}")))?;
+
     // Deterministic order, so a resumed import produces identical chunks.
     let mut records = prepare(fixture.products, currency)?;
     records.sort_by(|left, right| left.product.product_ref.cmp(&right.product.product_ref));
@@ -96,15 +109,27 @@ pub fn import_catalog(
         .iter()
         .map(|record| record.product.clone())
         .collect();
+    let all_prices: Vec<PriceEntry> = records
+        .iter()
+        .flat_map(|record| record.prices.clone())
+        .collect();
     let all_barcodes: Vec<CatalogBarcode> = records
         .iter()
         .flat_map(|record| record.barcodes.clone())
         .collect();
-    let declared_hash = hash_snapshot(&profiles, &all_products, &all_barcodes);
+    let declared_hash = hash_snapshot(SnapshotContent {
+        tax_profiles: &profiles,
+        price_books: &books,
+        products: &all_products,
+        price_entries: &all_prices,
+        barcodes: &all_barcodes,
+    });
 
     let expected = SnapshotCountsV1 {
         tax_profiles: i64::try_from(profiles.len()).unwrap_or(i64::MAX),
+        price_books: i64::try_from(books.len()).unwrap_or(i64::MAX),
         products: i64::try_from(all_products.len()).unwrap_or(i64::MAX),
+        price_entries: i64::try_from(all_prices.len()).unwrap_or(i64::MAX),
         barcodes: i64::try_from(all_barcodes.len()).unwrap_or(i64::MAX),
     };
 
@@ -119,6 +144,7 @@ pub fn import_catalog(
             effective_at: fixture.effective_at.clone(),
             expected,
             tax_profiles: fixture.tax_profiles.clone(),
+            price_books: fixture.price_books.clone(),
         },
         None,
     )?;
@@ -142,6 +168,10 @@ pub fn import_catalog(
         }
         let products: Vec<CatalogProduct> =
             chunk.iter().map(|record| record.product.clone()).collect();
+        let prices: Vec<PriceEntry> = chunk
+            .iter()
+            .flat_map(|record| record.prices.clone())
+            .collect();
         let barcodes: Vec<CatalogBarcode> = chunk
             .iter()
             .flat_map(|record| record.barcodes.clone())
@@ -149,7 +179,7 @@ pub fn import_catalog(
         client.put_catalog_chunk(PutCatalogChunkRequestV1 {
             snapshot_id: snapshot_id.clone(),
             chunk_index,
-            chunk_hash: hash_chunk(&products, &barcodes),
+            chunk_hash: hash_chunk(&products, &prices, &barcodes),
             products: chunk.iter().map(|record| record.wire.clone()).collect(),
         })?;
         chunks_sent += 1;
@@ -199,14 +229,15 @@ fn prepare(
             let wire_bytes = serde_json::to_vec(&wire)
                 .map(|bytes| bytes.len())
                 .map_err(|error| CliError::Serialization(error.to_string()))?;
-            let (product, barcodes) = wire
+            let parsed = wire
                 .clone()
                 .into_domain(currency)
                 .map_err(|error| CliError::Input(format!("invalid product record: {error}")))?;
             Ok(PreparedRecord {
                 wire,
-                product,
-                barcodes,
+                product: parsed.product,
+                prices: parsed.prices,
+                barcodes: parsed.barcodes,
                 wire_bytes,
             })
         })
@@ -246,8 +277,14 @@ mod tests {
             active: true,
             sellable: true,
             tax_profile: "IVA16".to_owned(),
-            unit_price_minor: 100,
             barcodes: vec![format!("bar-{reference}")],
+            prices: vec![edge_protocol::PriceRecordV1 {
+                price_book: "BASE".to_owned(),
+                amount_minor: 100,
+                price_mode: "TAX_EXCLUSIVE".to_owned(),
+                valid_from: None,
+                valid_until: None,
+            }],
         }
     }
 

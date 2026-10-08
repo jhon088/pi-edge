@@ -26,6 +26,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0002_catalog",
         sql: include_str!("../migrations/0002_catalog.sql"),
     },
+    Migration {
+        version: 3,
+        name: "0003_price_books",
+        sql: include_str!("../migrations/0003_price_books.sql"),
+    },
 ];
 
 /// Schema version this binary expects.

@@ -85,6 +85,7 @@ impl From<&TransactionLine> for TransactionLineV1 {
             unit_price: MoneyV1::from(&line.unit_price),
             tax_rate_bps: line.tax_rate.bps(),
             price_mode: line.price_mode.as_str().to_owned(),
+            price_book_id: line.price_book_id.as_ref().map(ToString::to_string),
             extended_amount: MoneyV1::from(&line.extended_amount),
             discount_amount: MoneyV1::from(&line.discount_amount),
             taxable_amount: MoneyV1::from(&line.taxable_amount),
@@ -132,8 +133,11 @@ impl RetailTransactionV1 {
             register_sequence: state.register_sequence,
             status: state.status.as_str().to_owned(),
             currency: state.currency.code().to_owned(),
-            catalog_snapshot_id: state.catalog.map(|catalog| catalog.snapshot_id.to_string()),
-            catalog_version: state.catalog.map(|catalog| catalog.version),
+            catalog_snapshot_id: state.pricing.map(|pricing| pricing.snapshot_id.to_string()),
+            catalog_version: state.pricing.map(|pricing| pricing.catalog_version),
+            pricing_effective_at: state
+                .pricing
+                .map(|pricing| pricing.effective_at.to_rfc3339()),
             lines: state.lines.iter().map(TransactionLineV1::from).collect(),
             totals: TotalsV1::from(&state.totals),
             payments: state.payments.iter().map(PaymentV1::from).collect(),
@@ -302,8 +306,11 @@ impl From<&ProductLookup> for ProductLookupV1 {
         Self {
             snapshot_id: lookup.snapshot_id.to_string(),
             snapshot_version: lookup.snapshot_version,
+            effective_at: lookup.effective_at.to_rfc3339(),
             product: CatalogProductV1::from(&lookup.product),
             tax_profile: TaxProfileV1::from(&lookup.tax_profile),
+            price: lookup.price.as_ref().map(ResolvedPriceV1::from),
+            price_issue: lookup.price_issue.clone(),
         }
     }
 }
@@ -331,6 +338,11 @@ impl BeginCatalogImportRequestV1 {
             .into_iter()
             .map(TaxProfileV1::into_domain)
             .collect::<Result<Vec<_>, _>>()?;
+        let price_books = self
+            .price_books
+            .into_iter()
+            .map(PriceBookV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(BeginCatalogImportCommand {
             request_id,
             version: self.version,
@@ -338,12 +350,9 @@ impl BeginCatalogImportRequestV1 {
             declared_content_hash: self.content_hash,
             generated_at,
             effective_at,
-            expected: edge_catalog::SnapshotCounts {
-                tax_profiles: self.expected.tax_profiles,
-                products: self.expected.products,
-                barcodes: self.expected.barcodes,
-            },
+            expected: edge_catalog::SnapshotCounts::from(self.expected),
             tax_profiles,
+            price_books,
         })
     }
 }
@@ -358,17 +367,20 @@ impl PutCatalogChunkRequestV1 {
         }
         let snapshot_id = parse_snapshot_id(&self.snapshot_id)?;
         let mut products = Vec::with_capacity(self.products.len());
+        let mut price_entries = Vec::new();
         let mut barcodes = Vec::new();
         for record in self.products {
-            let (product, mut codes) = record.into_domain(currency)?;
-            products.push(product);
-            barcodes.append(&mut codes);
+            let mut record = record.into_domain(currency)?;
+            products.push(record.product);
+            price_entries.append(&mut record.prices);
+            barcodes.append(&mut record.barcodes);
         }
         Ok(PutCatalogChunkCommand {
             snapshot_id,
             chunk_index: self.chunk_index,
             chunk_hash: self.chunk_hash,
             products,
+            price_entries,
             barcodes,
         })
     }

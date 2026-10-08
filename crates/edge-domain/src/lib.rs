@@ -29,7 +29,7 @@ pub mod prelude {
     pub use crate::error::DomainError;
     pub use crate::ids::{
         BusinessDayId, CatalogSnapshotId, EventId, IdError, LineId, OperatorId, PaymentId,
-        ProductRef, RegisterId, SessionId, StoreId, TenantId, TransactionId,
+        PriceBookId, ProductRef, RegisterId, SessionId, StoreId, TenantId, TransactionId,
     };
     pub use crate::journal::{JournalEvent, JournalEventType};
     pub use crate::money::{
@@ -42,8 +42,8 @@ pub mod prelude {
     };
     pub use crate::time::{TimeError, Timestamp};
     pub use crate::transaction::{
-        CatalogRef, NewLineInput, NewRetailTransaction, RetailTransaction, RetailTransactionState,
-        Totals, TransactionLine, TransactionStatus,
+        NewLineInput, NewRetailTransaction, PricingCapture, RetailTransaction,
+        RetailTransactionState, Totals, TransactionLine, TransactionStatus,
     };
 }
 

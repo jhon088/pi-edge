@@ -11,10 +11,12 @@
 use edge_application::ports::{CatalogUnitOfWork, StoredChunk};
 use edge_application::AppError;
 use edge_catalog::content::ContentHasher;
+use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::snapshot::CatalogSnapshotState;
 use edge_catalog::{
     Barcode, CatalogBarcode, CatalogError, CatalogProduct, CatalogSnapshot, CatalogSnapshotStatus,
-    ImportProgress, ProductSelector, SnapshotCounts, TaxProfile, TaxProfileCode,
+    ImportProgress, PriceBook, PriceCandidate, PriceEntry, ProductSelector, SnapshotCounts,
+    TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
 use rusqlite::{params, OptionalExtension, Row};
@@ -24,10 +26,17 @@ use crate::sqlite::{money, parse_currency, parse_id, parse_opt_ts, parse_ts, Sql
 
 const SNAPSHOT_COLUMNS: &str = "snapshot_id, tenant_id, store_id, version, status, \
      declared_content_hash, content_hash, generated_at, effective_at, expected_tax_profiles, \
-     expected_products, expected_barcodes, imported_at, committed_at, activated_at, superseded_at";
+     expected_price_books, expected_products, expected_price_entries, expected_barcodes, \
+     imported_at, committed_at, activated_at, superseded_at";
 
 const PRODUCT_COLUMNS: &str = "product_ref, external_ref, sku, name, active, sellable, \
-     tax_profile_code, unit_price_minor, currency";
+     tax_profile_code";
+
+const PRICE_BOOK_COLUMNS: &str =
+    "price_book_id, code, name, currency, scope, scope_store_id, priority, active";
+
+const PRICE_ENTRY_COLUMNS: &str =
+    "price_book_id, product_ref, amount_minor, currency, price_mode, valid_from, valid_until";
 
 impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
     fn find_catalog_snapshot(
@@ -118,10 +127,11 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                 "INSERT INTO catalog_snapshots
                      (snapshot_id, tenant_id, store_id, version, status, declared_content_hash,
                       content_hash, generated_at, effective_at, expected_tax_profiles,
-                      expected_products, expected_barcodes, imported_at, committed_at,
-                      activated_at, superseded_at, created_at, updated_at)
+                      expected_price_books, expected_products, expected_price_entries,
+                      expected_barcodes, imported_at, committed_at, activated_at, superseded_at,
+                      created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?17)",
+                         ?17, ?18, ?19, ?19)",
                 params![
                     state.snapshot_id.to_string(),
                     state.tenant_id.as_str(),
@@ -133,7 +143,9 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.generated_at.to_rfc3339(),
                     state.effective_at.map(|ts| ts.to_rfc3339()),
                     state.expected.tax_profiles,
+                    state.expected.price_books,
                     state.expected.products,
+                    state.expected.price_entries,
                     state.expected.barcodes,
                     state.imported_at.to_rfc3339(),
                     state.committed_at.map(|ts| ts.to_rfc3339()),
@@ -206,15 +218,13 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         for profile in profiles {
             self.tx
                 .execute(
-                    "INSERT INTO catalog_tax_profiles
-                         (snapshot_id, code, name, rate_bps, price_mode)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO catalog_tax_profiles (snapshot_id, code, name, rate_bps)
+                     VALUES (?1, ?2, ?3, ?4)",
                     params![
                         snapshot_id.to_string(),
                         profile.code.as_str(),
                         profile.name,
                         profile.rate.bps(),
-                        profile.price_mode.as_str(),
                     ],
                 )
                 .map_err(|error| {
@@ -238,7 +248,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         let mut statement = self
             .tx
             .prepare(
-                "SELECT code, name, rate_bps, price_mode FROM catalog_tax_profiles
+                "SELECT code, name, rate_bps FROM catalog_tax_profiles
                  WHERE snapshot_id = ?1
                  ORDER BY code ASC",
             )
@@ -259,7 +269,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         let raw = self
             .tx
             .query_row(
-                "SELECT code, name, rate_bps, price_mode FROM catalog_tax_profiles
+                "SELECT code, name, rate_bps FROM catalog_tax_profiles
                  WHERE snapshot_id = ?1 AND code = ?2",
                 params![snapshot_id.to_string(), code.as_str()],
                 RawTaxProfile::from_row,
@@ -276,7 +286,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
     ) -> Result<Option<StoredChunk>, AppError> {
         self.tx
             .query_row(
-                "SELECT chunk_index, chunk_hash, product_count, barcode_count
+                "SELECT chunk_index, chunk_hash, product_count, price_entry_count, barcode_count
                  FROM catalog_import_chunks
                  WHERE snapshot_id = ?1 AND chunk_index = ?2",
                 params![snapshot_id.to_string(), chunk_index],
@@ -285,7 +295,8 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                         chunk_index: row.get(0)?,
                         chunk_hash: row.get(1)?,
                         product_count: row.get(2)?,
-                        barcode_count: row.get(3)?,
+                        price_entry_count: row.get(3)?,
+                        barcode_count: row.get(4)?,
                     })
                 },
             )
@@ -302,14 +313,15 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         self.tx
             .execute(
                 "INSERT INTO catalog_import_chunks
-                     (snapshot_id, chunk_index, chunk_hash, product_count, barcode_count,
-                      received_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                     (snapshot_id, chunk_index, chunk_hash, product_count, price_entry_count,
+                      barcode_count, received_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     snapshot_id.to_string(),
                     chunk.chunk_index,
                     chunk.chunk_hash,
                     chunk.product_count,
+                    chunk.price_entry_count,
                     chunk.barcode_count,
                     now.to_rfc3339(),
                 ],
@@ -336,8 +348,8 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                 .execute(
                     "INSERT INTO catalog_products
                          (snapshot_id, product_ref, external_ref, sku, name, active, sellable,
-                          tax_profile_code, unit_price_minor, currency)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                          tax_profile_code)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         snapshot_id.to_string(),
                         product.product_ref.as_str(),
@@ -347,8 +359,6 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                         i64::from(product.active),
                         i64::from(product.sellable),
                         product.tax_profile.as_str(),
-                        product.unit_price.minor(),
-                        product.unit_price.currency().code(),
                     ],
                 )
                 .map_err(|error| {
@@ -403,18 +413,175 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         Ok(())
     }
 
+    fn insert_catalog_price_books(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        books: &[PriceBook],
+    ) -> Result<(), AppError> {
+        for book in books {
+            self.tx
+                .execute(
+                    "INSERT INTO price_books
+                         (snapshot_id, price_book_id, code, name, currency, scope,
+                          scope_store_id, priority, active)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        snapshot_id.to_string(),
+                        book.price_book_id.as_str(),
+                        book.code,
+                        book.name,
+                        book.currency.code(),
+                        book.scope.as_str(),
+                        book.scope.store_id().map(StoreId::as_str),
+                        book.priority,
+                        i64::from(book.active),
+                    ],
+                )
+                .map_err(|error| {
+                    if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::InvalidRecord {
+                            field: "price_book_id",
+                            reason: format!("`{}` is declared twice", book.price_book_id),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_price_books(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<PriceBook>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(&format!(
+                "SELECT {PRICE_BOOK_COLUMNS} FROM price_books
+                 WHERE snapshot_id = ?1
+                 ORDER BY price_book_id ASC"
+            ))
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id.to_string()], RawPriceBook::from_row)
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        rows.into_iter().map(RawPriceBook::into_domain).collect()
+    }
+
+    fn insert_catalog_price_entries(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        entries: &[PriceEntry],
+    ) -> Result<(), AppError> {
+        for entry in entries {
+            self.tx
+                .execute(
+                    "INSERT INTO price_entries
+                         (snapshot_id, price_book_id, product_ref, amount_minor, currency,
+                          price_mode, valid_from, valid_until)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        snapshot_id.to_string(),
+                        entry.price_book_id.as_str(),
+                        entry.product_ref.as_str(),
+                        entry.amount.minor(),
+                        entry.amount.currency().code(),
+                        entry.price_mode.as_str(),
+                        entry.valid_from.map(|ts| ts.to_rfc3339()),
+                        entry.valid_until.map(|ts| ts.to_rfc3339()),
+                    ],
+                )
+                .map_err(|error| {
+                    if is_foreign_key_violation(&error) {
+                        // Either the book or the product is not in this
+                        // snapshot: the chunk is internally inconsistent.
+                        AppError::Catalog(CatalogError::UnknownPriceBook {
+                            price_book_id: entry.price_book_id.to_string(),
+                        })
+                    } else if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicatePriceEntry {
+                            price_book_id: entry.price_book_id.to_string(),
+                            product_ref: entry.product_ref.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    fn price_candidates(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        store_id: &StoreId,
+        product_ref: &ProductRef,
+    ) -> Result<Vec<PriceCandidate>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(&format!(
+                "SELECT {}, {}
+                 FROM price_entries e
+                 JOIN price_books b
+                   ON b.snapshot_id = e.snapshot_id AND b.price_book_id = e.price_book_id
+                 WHERE e.snapshot_id = ?1
+                   AND e.product_ref = ?2
+                   AND b.active = 1
+                   AND (b.scope = 'TENANT' OR b.scope_store_id = ?3)
+                 ORDER BY b.price_book_id ASC, IFNULL(e.valid_from, '') ASC",
+                PRICE_BOOK_COLUMNS
+                    .split(", ")
+                    .map(|column| format!("b.{column}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                PRICE_ENTRY_COLUMNS
+                    .split(", ")
+                    .map(|column| format!("e.{column}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(
+                params![
+                    snapshot_id.to_string(),
+                    product_ref.as_str(),
+                    store_id.as_str()
+                ],
+                |row| {
+                    Ok((
+                        RawPriceBook::from_row(row)?,
+                        RawPriceEntry::from_offset(row, 8)?,
+                    ))
+                },
+            )
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        rows.into_iter()
+            .map(|(book, entry)| {
+                Ok(PriceCandidate {
+                    book: book.into_domain()?,
+                    entry: entry.into_domain()?,
+                })
+            })
+            .collect()
+    }
+
     fn catalog_stored_counts(
         &mut self,
         snapshot_id: CatalogSnapshotId,
     ) -> Result<SnapshotCounts, AppError> {
         let id = snapshot_id.to_string();
-        let tax_profiles = self.count("catalog_tax_profiles", &id)?;
-        let products = self.count("catalog_products", &id)?;
-        let barcodes = self.count("catalog_barcodes", &id)?;
         Ok(SnapshotCounts {
-            tax_profiles,
-            products,
-            barcodes,
+            tax_profiles: self.count("catalog_tax_profiles", &id)?,
+            price_books: self.count("price_books", &id)?,
+            products: self.count("catalog_products", &id)?,
+            price_entries: self.count("price_entries", &id)?,
+            barcodes: self.count("catalog_barcodes", &id)?,
         })
     }
 
@@ -517,6 +684,11 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             hasher.tax_profile(&profile);
         }
 
+        hasher.begin_price_books();
+        for book in self.list_catalog_price_books(snapshot_id)? {
+            hasher.price_book(&book);
+        }
+
         hasher.begin_products();
         {
             let mut statement = self
@@ -533,6 +705,25 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                     .map_err(sqlite_err)?
                     .into_domain()?;
                 hasher.product(&product);
+            }
+        }
+
+        hasher.begin_price_entries();
+        {
+            let mut statement = self
+                .tx
+                .prepare(&format!(
+                    "SELECT {PRICE_ENTRY_COLUMNS} FROM price_entries
+                     WHERE snapshot_id = ?1
+                     ORDER BY price_book_id ASC, product_ref ASC, IFNULL(valid_from, '') ASC"
+                ))
+                .map_err(sqlite_err)?;
+            let mut rows = statement.query(params![id]).map_err(sqlite_err)?;
+            while let Some(row) = rows.next().map_err(sqlite_err)? {
+                let entry = RawPriceEntry::from_row(row)
+                    .map_err(sqlite_err)?
+                    .into_domain()?;
+                hasher.price_entry(&entry);
             }
         }
 
@@ -604,7 +795,9 @@ struct RawSnapshot {
     generated_at: String,
     effective_at: Option<String>,
     expected_tax_profiles: i64,
+    expected_price_books: i64,
     expected_products: i64,
+    expected_price_entries: i64,
     expected_barcodes: i64,
     imported_at: String,
     committed_at: Option<String>,
@@ -625,12 +818,14 @@ impl RawSnapshot {
             generated_at: row.get(7)?,
             effective_at: row.get(8)?,
             expected_tax_profiles: row.get(9)?,
-            expected_products: row.get(10)?,
-            expected_barcodes: row.get(11)?,
-            imported_at: row.get(12)?,
-            committed_at: row.get(13)?,
-            activated_at: row.get(14)?,
-            superseded_at: row.get(15)?,
+            expected_price_books: row.get(10)?,
+            expected_products: row.get(11)?,
+            expected_price_entries: row.get(12)?,
+            expected_barcodes: row.get(13)?,
+            imported_at: row.get(14)?,
+            committed_at: row.get(15)?,
+            activated_at: row.get(16)?,
+            superseded_at: row.get(17)?,
         })
     }
 
@@ -647,7 +842,9 @@ impl RawSnapshot {
             effective_at: parse_opt_ts(self.effective_at)?,
             expected: SnapshotCounts {
                 tax_profiles: self.expected_tax_profiles,
+                price_books: self.expected_price_books,
                 products: self.expected_products,
+                price_entries: self.expected_price_entries,
                 barcodes: self.expected_barcodes,
             },
             imported_at: parse_ts(&self.imported_at)?,
@@ -662,7 +859,6 @@ struct RawTaxProfile {
     code: String,
     name: String,
     rate_bps: i64,
-    price_mode: String,
 }
 
 impl RawTaxProfile {
@@ -671,7 +867,6 @@ impl RawTaxProfile {
             code: row.get(0)?,
             name: row.get(1)?,
             rate_bps: row.get(2)?,
-            price_mode: row.get(3)?,
         })
     }
 
@@ -686,9 +881,105 @@ impl RawTaxProfile {
             TaxProfileCode::new(self.code).map_err(AppError::Catalog)?,
             self.name,
             TaxRate::from_bps(bps).map_err(|e| AppError::Catalog(CatalogError::Money(e)))?,
-            PriceMode::parse(&self.price_mode)
-                .map_err(|e| AppError::Catalog(CatalogError::Money(e)))?,
         )
+        .map_err(AppError::Catalog)
+    }
+}
+
+struct RawPriceBook {
+    price_book_id: String,
+    code: String,
+    name: String,
+    currency: String,
+    scope: String,
+    scope_store_id: Option<String>,
+    priority: i64,
+    active: i64,
+}
+
+impl RawPriceBook {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            price_book_id: row.get(0)?,
+            code: row.get(1)?,
+            name: row.get(2)?,
+            currency: row.get(3)?,
+            scope: row.get(4)?,
+            scope_store_id: row.get(5)?,
+            priority: row.get(6)?,
+            active: row.get(7)?,
+        })
+    }
+
+    fn into_domain(self) -> Result<PriceBook, AppError> {
+        let scope = match (self.scope.as_str(), self.scope_store_id) {
+            ("TENANT", _) => PriceBookScope::Tenant,
+            ("STORE", Some(store_id)) => PriceBookScope::Store {
+                store_id: parse_id(&store_id)?,
+            },
+            (other, _) => {
+                return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                    field: "price_book_scope",
+                    reason: format!("unknown or incomplete scope `{other}`"),
+                }))
+            }
+        };
+        PriceBook::import(NewPriceBook {
+            price_book_id: parse_id(&self.price_book_id)?,
+            code: self.code,
+            name: self.name,
+            currency: parse_currency(&self.currency)?,
+            scope,
+            priority: i32::try_from(self.priority).map_err(|_| {
+                AppError::Catalog(CatalogError::InvalidRecord {
+                    field: "price_book_priority",
+                    reason: "out of range".to_owned(),
+                })
+            })?,
+            active: self.active != 0,
+        })
+        .map_err(AppError::Catalog)
+    }
+}
+
+struct RawPriceEntry {
+    price_book_id: String,
+    product_ref: String,
+    amount_minor: i64,
+    currency: String,
+    price_mode: String,
+    valid_from: Option<String>,
+    valid_until: Option<String>,
+}
+
+impl RawPriceEntry {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Self::from_offset(row, 0)
+    }
+
+    fn from_offset(row: &Row<'_>, offset: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            price_book_id: row.get(offset)?,
+            product_ref: row.get(offset + 1)?,
+            amount_minor: row.get(offset + 2)?,
+            currency: row.get(offset + 3)?,
+            price_mode: row.get(offset + 4)?,
+            valid_from: row.get(offset + 5)?,
+            valid_until: row.get(offset + 6)?,
+        })
+    }
+
+    fn into_domain(self) -> Result<PriceEntry, AppError> {
+        let currency = parse_currency(&self.currency)?;
+        PriceEntry::import(NewPriceEntry {
+            price_book_id: parse_id(&self.price_book_id)?,
+            product_ref: parse_id(&self.product_ref)?,
+            amount: money(self.amount_minor, currency),
+            price_mode: PriceMode::parse(&self.price_mode)
+                .map_err(|e| AppError::Catalog(CatalogError::Money(e)))?,
+            valid_from: parse_opt_ts(self.valid_from)?,
+            valid_until: parse_opt_ts(self.valid_until)?,
+        })
         .map_err(AppError::Catalog)
     }
 }
@@ -701,8 +992,6 @@ struct RawProduct {
     active: i64,
     sellable: i64,
     tax_profile_code: String,
-    unit_price_minor: i64,
-    currency: String,
 }
 
 impl RawProduct {
@@ -715,13 +1004,10 @@ impl RawProduct {
             active: row.get(4)?,
             sellable: row.get(5)?,
             tax_profile_code: row.get(6)?,
-            unit_price_minor: row.get(7)?,
-            currency: row.get(8)?,
         })
     }
 
     fn into_domain(self) -> Result<CatalogProduct, AppError> {
-        let currency = parse_currency(&self.currency)?;
         Ok(CatalogProduct {
             product_ref: parse_id(&self.product_ref)?,
             external_ref: self.external_ref,
@@ -730,7 +1016,6 @@ impl RawProduct {
             active: self.active != 0,
             sellable: self.sellable != 0,
             tax_profile: TaxProfileCode::new(self.tax_profile_code).map_err(AppError::Catalog)?,
-            unit_price: money(self.unit_price_minor, currency),
         })
     }
 }

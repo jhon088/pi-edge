@@ -61,6 +61,8 @@ pub struct TransactionLineV1 {
     pub tax_rate_bps: u32,
     /// Whether `unit_price` already includes tax.
     pub price_mode: String,
+    /// Price book the unit price came from.
+    pub price_book_id: Option<String>,
     /// `unit_price * quantity`, in the quoted price mode.
     pub extended_amount: MoneyV1,
     pub discount_amount: MoneyV1,
@@ -105,6 +107,8 @@ pub struct RetailTransactionV1 {
     /// Snapshot that priced this sale, captured when it started.
     pub catalog_snapshot_id: Option<String>,
     pub catalog_version: Option<i64>,
+    /// Instant every line of this sale is priced at.
+    pub pricing_effective_at: Option<String>,
     pub lines: Vec<TransactionLineV1>,
     pub totals: TotalsV1,
     pub payments: Vec<PaymentV1>,
@@ -252,7 +256,9 @@ pub struct AddItemRequestV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SnapshotCountsV1 {
     pub tax_profiles: i64,
+    pub price_books: i64,
     pub products: i64,
+    pub price_entries: i64,
     pub barcodes: i64,
 }
 
@@ -261,7 +267,47 @@ pub struct TaxProfileV1 {
     pub code: String,
     pub name: String,
     pub rate_bps: u32,
+}
+
+/// Where a price book applies: tenant-wide, or one store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceBookV1 {
+    pub price_book_id: String,
+    pub code: String,
+    pub name: String,
+    pub currency: String,
+    /// `TENANT` or `STORE`.
+    pub scope: String,
+    /// Set exactly when `scope` is `STORE`.
+    #[serde(default)]
+    pub store_id: Option<String>,
+    /// Tiebreaker within a scope: higher wins.
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default = "default_true")]
+    pub active: bool,
+}
+
+/// One price, optionally scheduled. `valid_from` is inclusive and
+/// `valid_until` exclusive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceEntryV1 {
+    pub price_book_id: String,
+    pub product_ref: String,
+    pub amount: MoneyV1,
     pub price_mode: String,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+}
+
+/// The price the core picked, and the book it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedPriceV1 {
+    pub price_book_id: String,
+    pub price_book_code: String,
+    pub unit_price: MoneyV1,
+    pub price_mode: String,
+    pub effective_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,7 +320,6 @@ pub struct CatalogProductV1 {
     pub active: bool,
     pub sellable: bool,
     pub tax_profile: String,
-    pub unit_price: MoneyV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,8 +379,14 @@ pub struct CatalogImportStatusV1 {
 pub struct ProductLookupV1 {
     pub snapshot_id: String,
     pub snapshot_version: i64,
+    /// Instant the price was resolved at.
+    pub effective_at: String,
     pub product: CatalogProductV1,
     pub tax_profile: TaxProfileV1,
+    /// `null` when no price applies at `effective_at`.
+    pub price: Option<ResolvedPriceV1>,
+    /// Stable code explaining a missing price.
+    pub price_issue: Option<String>,
 }
 
 // ------------------------------------------------- catalog import requests
@@ -355,10 +406,28 @@ pub struct BeginCatalogImportRequestV1 {
     pub effective_at: Option<String>,
     pub expected: SnapshotCountsV1,
     pub tax_profiles: Vec<TaxProfileV1>,
+    /// A snapshot must declare at least one price book.
+    pub price_books: Vec<PriceBookV1>,
 }
 
-/// One product record. Its barcodes travel with it, which is what keeps a
-/// product and its codes inside the same chunk and the same transaction.
+/// One price for the product that carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceRecordV1 {
+    /// Book this price belongs to. Must be declared in the import header.
+    pub price_book: String,
+    pub amount_minor: i64,
+    pub price_mode: String,
+    /// Inclusive lower bound.
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    /// Exclusive upper bound.
+    #[serde(default)]
+    pub valid_until: Option<String>,
+}
+
+/// One product record. Its barcodes and its prices travel with it, which is
+/// what keeps a product, its codes and its prices inside the same chunk and
+/// the same transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogProductRecordV1 {
     pub product_ref: String,
@@ -372,9 +441,11 @@ pub struct CatalogProductRecordV1 {
     #[serde(default = "default_true")]
     pub sellable: bool,
     pub tax_profile: String,
-    pub unit_price_minor: i64,
     #[serde(default)]
     pub barcodes: Vec<String>,
+    /// Prices for this product. A product with none cannot be sold.
+    #[serde(default)]
+    pub prices: Vec<PriceRecordV1>,
 }
 
 fn default_true() -> bool {

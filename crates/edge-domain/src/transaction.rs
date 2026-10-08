@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::DomainError;
 use crate::ids::{
-    BusinessDayId, CatalogSnapshotId, LineId, OperatorId, PaymentId, ProductRef, RegisterId,
-    SessionId, StoreId, TransactionId,
+    BusinessDayId, CatalogSnapshotId, LineId, OperatorId, PaymentId, PriceBookId, ProductRef,
+    RegisterId, SessionId, StoreId, TransactionId,
 };
 use crate::money::{Currency, Money, MoneyError, PriceMode, Quantity, TaxRate};
 use crate::payment::Payment;
@@ -99,6 +99,9 @@ pub struct TransactionLine {
     pub tax_rate: TaxRate,
     /// Whether `unit_price` already includes tax.
     pub price_mode: PriceMode,
+    /// Price book the unit price came from. `None` only for lines priced
+    /// before price books existed.
+    pub price_book_id: Option<PriceBookId>,
     /// `unit_price * quantity`, before discount, still in the quoted mode.
     pub extended_amount: Money,
     pub discount_amount: Money,
@@ -122,6 +125,7 @@ pub struct NewLineInput {
     pub unit_price: Money,
     pub tax_rate: TaxRate,
     pub price_mode: PriceMode,
+    pub price_book_id: Option<PriceBookId>,
     pub discount_amount: Option<Money>,
 }
 
@@ -167,6 +171,7 @@ impl TransactionLine {
             unit_price: input.unit_price,
             tax_rate: input.tax_rate,
             price_mode: input.price_mode,
+            price_book_id: input.price_book_id,
             extended_amount: extended,
             discount_amount: discount,
             taxable_amount: taxable,
@@ -228,14 +233,18 @@ impl Totals {
     }
 }
 
-/// The catalog snapshot a sale was priced against.
+/// The pricing context a sale was opened with.
 ///
-/// Captured when the sale starts and never changed afterwards, so activating a
-/// new snapshot mid-sale cannot move a price (see ADR 013).
+/// Captured when the sale starts and never changed afterwards. The snapshot
+/// pins *which* catalog prices the sale, and `effective_at` pins *when*, so
+/// neither activating a new snapshot nor a scheduled price change can move a
+/// price mid-sale (see ADR 013, ADR 014).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CatalogRef {
+pub struct PricingCapture {
     pub snapshot_id: CatalogSnapshotId,
-    pub version: i64,
+    pub catalog_version: i64,
+    /// Instant every line of this sale is priced at.
+    pub effective_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,7 +260,7 @@ pub struct RetailTransactionState {
     pub status: TransactionStatus,
     pub currency: Currency,
     /// `None` only for sales created before the catalog existed.
-    pub catalog: Option<CatalogRef>,
+    pub pricing: Option<PricingCapture>,
     pub lines: Vec<TransactionLine>,
     pub totals: Totals,
     pub payments: Vec<Payment>,
@@ -271,7 +280,7 @@ pub struct NewRetailTransaction {
     pub operator_id: OperatorId,
     pub register_sequence: i64,
     pub currency: Currency,
-    pub catalog: Option<CatalogRef>,
+    pub pricing: Option<PricingCapture>,
     pub created_at: Timestamp,
 }
 
@@ -291,7 +300,7 @@ impl RetailTransaction {
             register_sequence: new.register_sequence,
             status: TransactionStatus::Open,
             currency: new.currency,
-            catalog: new.catalog,
+            pricing: new.pricing,
             lines: Vec::new(),
             totals: Totals::zero(new.currency),
             payments: Vec::new(),
@@ -327,9 +336,9 @@ impl RetailTransaction {
         self.0.status.is_active()
     }
 
-    /// The snapshot this sale must keep resolving against.
-    pub fn catalog(&self) -> Option<CatalogRef> {
-        self.0.catalog
+    /// The snapshot and instant this sale must keep resolving against.
+    pub fn pricing(&self) -> Option<PricingCapture> {
+        self.0.pricing
     }
 
     fn touch(&mut self, now: Timestamp) {
@@ -539,9 +548,10 @@ mod tests {
             operator_id: OperatorId::new("CASHIER-001").unwrap(),
             register_sequence: 1,
             currency: MXN,
-            catalog: Some(CatalogRef {
+            pricing: Some(PricingCapture {
                 snapshot_id: CatalogSnapshotId::from_uuid(Uuid::from_u128(900)),
-                version: 1,
+                catalog_version: 1,
+                effective_at: ts(0),
             }),
             created_at: ts(0),
         })
@@ -558,6 +568,7 @@ mod tests {
             unit_price: money(price_minor),
             tax_rate: TaxRate::from_bps(tax_bps).unwrap(),
             price_mode: PriceMode::TaxExclusive,
+            price_book_id: None,
             discount_amount: None,
         }
     }
@@ -657,11 +668,12 @@ mod tests {
     }
 
     #[test]
-    fn captures_the_catalog_snapshot_at_start() {
+    fn captures_the_pricing_context_at_start() {
         let tx = sale();
-        let catalog = tx.catalog().expect("a sale must know its snapshot");
-        assert_eq!(catalog.version, 1);
-        assert_eq!(tx.state().catalog, Some(catalog));
+        let pricing = tx.pricing().expect("a sale must know how it is priced");
+        assert_eq!(pricing.catalog_version, 1);
+        assert_eq!(pricing.effective_at, ts(0));
+        assert_eq!(tx.state().pricing, Some(pricing));
     }
 
     #[test]

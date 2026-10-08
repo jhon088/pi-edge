@@ -8,7 +8,7 @@ use edge_application::AppError;
 use edge_catalog::{Barcode, CatalogError, Currency, ProductSelector};
 use edge_domain::prelude::*;
 use edge_integration_tests::*;
-use edge_protocol::CatalogProductRecordV1;
+use edge_protocol::{CatalogProductRecordV1, PriceRecordV1};
 
 fn selector(barcode: &str) -> ProductSelector {
     ProductSelector::Barcode(Barcode::new(barcode).unwrap())
@@ -172,15 +172,21 @@ fn refuses_a_record_without_a_usable_price_or_name() {
         active: true,
         sellable: true,
         tax_profile: "IVA16".to_owned(),
-        unit_price_minor: -1,
         barcodes: vec!["7500000000222".to_owned()],
+        prices: vec![PriceRecordV1 {
+            price_book: "BASE".to_owned(),
+            amount_minor: -1,
+            price_mode: "TAX_EXCLUSIVE".to_owned(),
+            valid_from: None,
+            valid_until: None,
+        }],
     };
     let error = base.clone().into_domain(Currency::Mxn).unwrap_err();
     assert_eq!(error.code(), "CATALOG_INVALID_RECORD");
 
     let nameless = CatalogProductRecordV1 {
         name: "   ".to_owned(),
-        unit_price_minor: 100,
+        prices: Vec::new(),
         ..base.clone()
     };
     assert_eq!(
@@ -190,8 +196,8 @@ fn refuses_a_record_without_a_usable_price_or_name() {
 
     let unnamed_product = CatalogProductRecordV1 {
         product_ref: "  ".to_owned(),
-        unit_price_minor: 100,
-        ..base
+        prices: Vec::new(),
+        ..base.clone()
     };
     assert_eq!(
         unnamed_product
@@ -199,6 +205,22 @@ fn refuses_a_record_without_a_usable_price_or_name() {
             .unwrap_err()
             .code(),
         "INVALID_ARGUMENT"
+    );
+
+    // An inverted validity window is caught here too.
+    let inverted = CatalogProductRecordV1 {
+        prices: vec![PriceRecordV1 {
+            price_book: "BASE".to_owned(),
+            amount_minor: 100,
+            price_mode: "TAX_EXCLUSIVE".to_owned(),
+            valid_from: Some("2026-11-02T00:00:00Z".to_owned()),
+            valid_until: Some("2026-11-01T00:00:00Z".to_owned()),
+        }],
+        ..base
+    };
+    assert_eq!(
+        inverted.into_domain(Currency::Mxn).unwrap_err().code(),
+        "CATALOG_INVALID_VALIDITY"
     );
 }
 
@@ -283,8 +305,11 @@ fn looks_up_a_product_without_touching_a_sale() {
 
     let lookup = core.lookup_product(selector(DEMO_BARCODE)).unwrap();
     assert_eq!(lookup.product.product_ref.as_str(), "SKU-001");
-    assert_eq!(lookup.product.unit_price.minor(), 10_000);
+    let price = lookup.price.as_ref().expect("the demo product has a price");
+    assert_eq!(price.unit_price.minor(), 10_000);
+    assert_eq!(price.price_book_code, "BASE");
     assert_eq!(lookup.tax_profile.rate.bps(), 1_600);
+    assert!(lookup.price_issue.is_none());
     assert_eq!(lookup.snapshot_version, 1);
     assert!(core.get_active_transaction().unwrap().is_none());
 

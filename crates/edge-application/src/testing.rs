@@ -67,12 +67,14 @@ impl IdFactory for SequentialIdFactory {
 
 // ----------------------------------------------------------------- catalog
 
+use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::product::NewCatalogProduct;
 use edge_catalog::{
-    hash_chunk, hash_snapshot, Barcode, CatalogBarcode, CatalogProduct, Currency, Money, PriceMode,
-    ProductRef, TaxProfile, TaxProfileCode, TaxRate,
+    hash_chunk, hash_snapshot, Barcode, CatalogBarcode, CatalogProduct, Currency, Money, PriceBook,
+    PriceEntry, PriceMode, ProductRef, SnapshotContent, StoreId, TaxProfile, TaxProfileCode,
+    TaxRate,
 };
-use edge_domain::prelude::CatalogSnapshotId;
+use edge_domain::prelude::{CatalogSnapshotId, PriceBookId};
 
 use crate::commands::{
     ActivateCatalogSnapshotCommand, BeginCatalogImportCommand, CommitCatalogImportCommand,
@@ -83,31 +85,78 @@ use crate::ports::{EdgeStore, IdFactory as IdFactoryPort};
 use crate::queries::CatalogSnapshotView;
 use crate::service::EdgeApplication;
 
-/// One product in a test snapshot.
+/// Barcode of the default demo product.
+pub const DEMO_BARCODE: &str = "7501000000001";
+/// Id of the tenant-wide base price book every fixture starts with.
+pub const BASE_BOOK: &str = "BASE";
+
+/// One price for a fixture product.
+#[derive(Debug, Clone)]
+pub struct FixturePrice {
+    pub book: &'static str,
+    pub amount_minor: i64,
+    pub price_mode: PriceMode,
+    pub valid_from: Option<Timestamp>,
+    pub valid_until: Option<Timestamp>,
+}
+
+impl FixturePrice {
+    pub fn base(amount_minor: i64) -> Self {
+        Self {
+            book: BASE_BOOK,
+            amount_minor,
+            price_mode: PriceMode::TaxExclusive,
+            valid_from: None,
+            valid_until: None,
+        }
+    }
+
+    pub fn in_book(mut self, book: &'static str) -> Self {
+        self.book = book;
+        self
+    }
+
+    pub fn inclusive(mut self) -> Self {
+        self.price_mode = PriceMode::TaxInclusive;
+        self
+    }
+
+    pub fn from(mut self, valid_from: Timestamp) -> Self {
+        self.valid_from = Some(valid_from);
+        self
+    }
+
+    pub fn until(mut self, valid_until: Timestamp) -> Self {
+        self.valid_until = Some(valid_until);
+        self
+    }
+}
+
+/// One product in a test snapshot, with the prices that travel with it.
 #[derive(Debug, Clone)]
 pub struct FixtureProduct {
     pub product_ref: &'static str,
     pub name: &'static str,
     pub sku: Option<&'static str>,
     pub barcodes: Vec<&'static str>,
-    pub price_minor: i64,
     pub tax_profile: &'static str,
     pub active: bool,
     pub sellable: bool,
+    pub prices: Vec<FixturePrice>,
 }
 
 impl FixtureProduct {
-    /// A sellable product at 16% tax-exclusive.
+    /// A sellable product at 16% tax, priced in the base book, tax exclusive.
     pub fn new(product_ref: &'static str, name: &'static str, price_minor: i64) -> Self {
         Self {
             product_ref,
             name,
             sku: None,
             barcodes: Vec::new(),
-            price_minor,
             tax_profile: "IVA16",
             active: true,
             sellable: true,
+            prices: vec![FixturePrice::base(price_minor)],
         }
     }
 
@@ -135,6 +184,24 @@ impl FixtureProduct {
         self.sellable = false;
         self
     }
+
+    /// Replace the default price.
+    pub fn priced(mut self, price: FixturePrice) -> Self {
+        self.prices = vec![price];
+        self
+    }
+
+    /// Add another price, in another book or another validity window.
+    pub fn plus_price(mut self, price: FixturePrice) -> Self {
+        self.prices.push(price);
+        self
+    }
+
+    /// A product the catalog knows but nobody priced.
+    pub fn unpriced(mut self) -> Self {
+        self.prices.clear();
+        self
+    }
 }
 
 /// Builds and imports catalog snapshots through the real use cases, so tests
@@ -145,23 +212,38 @@ pub struct CatalogFixture {
     pub currency: Currency,
     pub generated_at: Timestamp,
     pub profiles: Vec<TaxProfile>,
+    pub books: Vec<PriceBook>,
     pub products: Vec<FixtureProduct>,
 }
 
+#[allow(clippy::expect_used)]
+fn profile(code: &str, bps: u32) -> TaxProfile {
+    TaxProfile::new(
+        TaxProfileCode::new(code).expect("valid code"),
+        format!("profile {code}"),
+        TaxRate::from_bps(bps).expect("valid rate"),
+    )
+    .expect("valid profile")
+}
+
+#[allow(clippy::expect_used)]
+fn book(id: &str, scope: PriceBookScope, priority: i32) -> PriceBook {
+    PriceBook::import(NewPriceBook {
+        price_book_id: PriceBookId::new(id).expect("valid id"),
+        code: id.to_owned(),
+        name: format!("book {id}"),
+        currency: Currency::Mxn,
+        scope,
+        priority,
+        active: true,
+    })
+    .expect("valid book")
+}
+
 impl CatalogFixture {
-    /// A snapshot pre-loaded with the Mexican rates we care about, in both
-    /// price modes.
+    /// A snapshot pre-loaded with the Mexican rates we care about and a
+    /// tenant-wide base price book.
     pub fn new(version: i64) -> Self {
-        let profile = |code: &str, bps: u32, mode: PriceMode| {
-            #[allow(clippy::expect_used)]
-            TaxProfile::new(
-                TaxProfileCode::new(code).expect("valid code"),
-                format!("profile {code}"),
-                TaxRate::from_bps(bps).expect("valid rate"),
-                mode,
-            )
-            .expect("valid profile")
-        };
         Self {
             version,
             currency: Currency::Mxn,
@@ -169,19 +251,17 @@ impl CatalogFixture {
             generated_at: Timestamp::parse_rfc3339("2026-10-01T00:00:00Z")
                 .expect("valid timestamp"),
             profiles: vec![
-                profile("IVA16", 1_600, PriceMode::TaxExclusive),
-                profile("IVA8", 800, PriceMode::TaxExclusive),
-                profile("IVA0", 0, PriceMode::TaxExclusive),
-                profile("IVA16-INC", 1_600, PriceMode::TaxInclusive),
-                profile("IVA8-INC", 800, PriceMode::TaxInclusive),
-                profile("IVA0-INC", 0, PriceMode::TaxInclusive),
+                profile("IVA16", 1_600),
+                profile("IVA8", 800),
+                profile("IVA0", 0),
             ],
+            books: vec![book(BASE_BOOK, PriceBookScope::Tenant, 0)],
             products: Vec::new(),
         }
     }
 
     /// The default single-product catalog used by the sale tests: 100.00 MXN
-    /// at 16%, tax exclusive.
+    /// at 16%, tax exclusive, from the base book.
     pub fn demo(version: i64) -> Self {
         Self::new(version).with(
             FixtureProduct::new("SKU-001", "Producto prueba", 10_000)
@@ -195,34 +275,86 @@ impl CatalogFixture {
         self
     }
 
-    fn records(&self) -> (Vec<CatalogProduct>, Vec<CatalogBarcode>) {
+    /// Add a price book scoped to one store.
+    pub fn with_store_book(mut self, id: &'static str, store_id: &str, priority: i32) -> Self {
+        #[allow(clippy::expect_used)]
+        let store_id = StoreId::new(store_id).expect("valid store id");
+        self.books
+            .push(book(id, PriceBookScope::Store { store_id }, priority));
+        self
+    }
+
+    /// Add a tenant-wide price book with an explicit priority.
+    pub fn with_tenant_book(mut self, id: &'static str, priority: i32) -> Self {
+        self.books.push(book(id, PriceBookScope::Tenant, priority));
+        self
+    }
+
+    /// Replace a book with an inactive copy of itself.
+    pub fn deactivate_book(mut self, id: &str) -> Self {
+        for existing in &mut self.books {
+            if existing.price_book_id.as_str() == id {
+                existing.active = false;
+            }
+        }
+        self
+    }
+
+    #[allow(clippy::expect_used)]
+    fn records(&self) -> (Vec<CatalogProduct>, Vec<PriceEntry>, Vec<CatalogBarcode>) {
         let mut products = Vec::new();
+        let mut prices = Vec::new();
         let mut barcodes = Vec::new();
         for fixture in &self.products {
-            #[allow(clippy::expect_used)]
             let product_ref = ProductRef::new(fixture.product_ref).expect("valid product ref");
-            #[allow(clippy::expect_used)]
-            let product = CatalogProduct::import(NewCatalogProduct {
-                product_ref: product_ref.clone(),
-                external_ref: None,
-                sku: fixture.sku.map(str::to_owned),
-                name: fixture.name.to_owned(),
-                active: fixture.active,
-                sellable: fixture.sellable,
-                tax_profile: TaxProfileCode::new(fixture.tax_profile).expect("valid code"),
-                unit_price: Money::from_minor(fixture.price_minor, self.currency),
-            })
-            .expect("valid product");
+            products.push(
+                CatalogProduct::import(NewCatalogProduct {
+                    product_ref: product_ref.clone(),
+                    external_ref: None,
+                    sku: fixture.sku.map(str::to_owned),
+                    name: fixture.name.to_owned(),
+                    active: fixture.active,
+                    sellable: fixture.sellable,
+                    tax_profile: TaxProfileCode::new(fixture.tax_profile).expect("valid code"),
+                })
+                .expect("valid product"),
+            );
+            for price in &fixture.prices {
+                prices.push(
+                    PriceEntry::import(NewPriceEntry {
+                        price_book_id: PriceBookId::new(price.book).expect("valid book id"),
+                        product_ref: product_ref.clone(),
+                        amount: Money::from_minor(price.amount_minor, self.currency),
+                        price_mode: price.price_mode,
+                        valid_from: price.valid_from,
+                        valid_until: price.valid_until,
+                    })
+                    .expect("valid price"),
+                );
+            }
             for code in &fixture.barcodes {
-                #[allow(clippy::expect_used)]
                 barcodes.push(CatalogBarcode {
                     barcode: Barcode::new(*code).expect("valid barcode"),
                     product_ref: product_ref.clone(),
                 });
             }
-            products.push(product);
         }
-        (products, barcodes)
+        (products, prices, barcodes)
+    }
+
+    fn counts(
+        &self,
+        products: usize,
+        prices: usize,
+        barcodes: usize,
+    ) -> edge_catalog::SnapshotCounts {
+        edge_catalog::SnapshotCounts {
+            tax_profiles: i64::try_from(self.profiles.len()).unwrap_or(i64::MAX),
+            price_books: i64::try_from(self.books.len()).unwrap_or(i64::MAX),
+            products: i64::try_from(products).unwrap_or(i64::MAX),
+            price_entries: i64::try_from(prices).unwrap_or(i64::MAX),
+            barcodes: i64::try_from(barcodes).unwrap_or(i64::MAX),
+        }
     }
 
     /// Import the snapshot and leave it `PENDING`.
@@ -235,20 +367,23 @@ impl CatalogFixture {
         C: Clock,
         I: IdFactoryPort,
     {
-        let (products, barcodes) = self.records();
+        let (products, price_entries, barcodes) = self.records();
         let opened = app.begin_catalog_import(BeginCatalogImportCommand {
             request_id: None,
             version: self.version,
             currency: self.currency,
-            declared_content_hash: hash_snapshot(&self.profiles, &products, &barcodes),
+            declared_content_hash: hash_snapshot(SnapshotContent {
+                tax_profiles: &self.profiles,
+                price_books: &self.books,
+                products: &products,
+                price_entries: &price_entries,
+                barcodes: &barcodes,
+            }),
             generated_at: self.generated_at,
             effective_at: None,
-            expected: edge_catalog::SnapshotCounts {
-                tax_profiles: i64::try_from(self.profiles.len()).unwrap_or(i64::MAX),
-                products: i64::try_from(products.len()).unwrap_or(i64::MAX),
-                barcodes: i64::try_from(barcodes.len()).unwrap_or(i64::MAX),
-            },
+            expected: self.counts(products.len(), price_entries.len(), barcodes.len()),
             tax_profiles: self.profiles.clone(),
+            price_books: self.books.clone(),
         })?;
         let snapshot_id = opened.snapshot.id();
         // Identical content that is already committed needs no chunks.
@@ -256,8 +391,9 @@ impl CatalogFixture {
             app.put_catalog_chunk(PutCatalogChunkCommand {
                 snapshot_id,
                 chunk_index: 0,
-                chunk_hash: hash_chunk(&products, &barcodes),
+                chunk_hash: hash_chunk(&products, &price_entries, &barcodes),
                 products,
+                price_entries,
                 barcodes,
             })?;
         }
@@ -287,6 +423,3 @@ impl CatalogFixture {
         Ok(snapshot_id)
     }
 }
-
-/// Barcode of the default demo product.
-pub const DEMO_BARCODE: &str = "7501000000001";

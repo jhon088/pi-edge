@@ -48,6 +48,16 @@ pub const PRODUCT_INACTIVE: &str = "PRODUCT_INACTIVE";
 pub const PRODUCT_NOT_SELLABLE: &str = "PRODUCT_NOT_SELLABLE";
 /// The register has no active catalog, so it cannot start a sale.
 pub const NO_ACTIVE_CATALOG: &str = "NO_ACTIVE_CATALOG";
+/// No price book gives this product a price at the resolution instant.
+pub const PRICE_NOT_FOUND: &str = "PRICE_NOT_FOUND";
+/// Two or more prices apply with equal specificity: the core refuses to guess.
+pub const AMBIGUOUS_PRICE: &str = "AMBIGUOUS_PRICE";
+/// A price entry names a book the snapshot does not declare.
+pub const CATALOG_UNKNOWN_PRICE_BOOK: &str = "CATALOG_UNKNOWN_PRICE_BOOK";
+/// Two prices in one book start at the same instant for one product.
+pub const CATALOG_DUPLICATE_PRICE_ENTRY: &str = "CATALOG_DUPLICATE_PRICE_ENTRY";
+/// `valid_until` is not after `valid_from`.
+pub const CATALOG_INVALID_VALIDITY: &str = "CATALOG_INVALID_VALIDITY";
 /// A chunk index was resent with different content.
 pub const CATALOG_CHUNK_CONFLICT: &str = "CATALOG_CHUNK_CONFLICT";
 /// A chunk is missing, so the import cannot be committed.

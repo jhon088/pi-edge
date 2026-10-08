@@ -6,14 +6,16 @@
       "store_id": "STORE-DEMO",
       "version": 1,
       "status": "ACTIVE",
-      "declared_content_hash": "sha256:10596a7fdbf60ecf2e31664a5dc056dcf86b371fc534e8c89b48040c592a7e7e",
-      "content_hash": "sha256:10596a7fdbf60ecf2e31664a5dc056dcf86b371fc534e8c89b48040c592a7e7e",
+      "declared_content_hash": "sha256:04d6059028d6412dc3157af75374bd139bc4434c1cdbe5a3b3871c5e50bc3e37",
+      "content_hash": "sha256:04d6059028d6412dc3157af75374bd139bc4434c1cdbe5a3b3871c5e50bc3e37",
       "generated_at": "2026-10-01T00:00:00.000000Z",
       "effective_at": null,
       "expected": {
-        "tax_profiles": 6,
-        "products": 8,
-        "barcodes": 8
+        "tax_profiles": 3,
+        "price_books": 2,
+        "products": 10,
+        "price_entries": 12,
+        "barcodes": 10
       },
       "imported_at": "2026-10-08T15:00:00.000000Z",
       "committed_at": "2026-10-08T15:00:00.000000Z",
@@ -21,9 +23,11 @@
       "superseded_at": null
     },
     "stored": {
-      "tax_profiles": 6,
-      "products": 8,
-      "barcodes": 8
+      "tax_profiles": 3,
+      "price_books": 2,
+      "products": 10,
+      "price_entries": 12,
+      "barcodes": 10
     }
   },
   "pending": [],

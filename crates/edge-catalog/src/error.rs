@@ -34,6 +34,37 @@ pub enum CatalogError {
         actual: &'static str,
     },
 
+    #[error("no price for product {product_ref} at store {store_id} effective {effective_at}")]
+    PriceNotFound {
+        product_ref: String,
+        store_id: String,
+        effective_at: String,
+    },
+    #[error(
+        "price for {product_ref} is ambiguous: price books [{price_books}] all apply at \
+         scope {scope} priority {priority}"
+    )]
+    AmbiguousPrice {
+        product_ref: String,
+        scope: &'static str,
+        priority: i32,
+        price_books: String,
+    },
+    #[error("price entry references unknown price book `{price_book_id}`")]
+    UnknownPriceBook { price_book_id: String },
+    #[error("price book `{price_book_id}` has two prices for {product_ref} starting at the same instant")]
+    DuplicatePriceEntry {
+        price_book_id: String,
+        product_ref: String,
+    },
+    #[error(
+        "invalid validity window: valid_until {valid_until} is not after valid_from {valid_from}"
+    )]
+    InvalidValidity {
+        valid_from: String,
+        valid_until: String,
+    },
+
     #[error("chunk {index} was already stored with different content")]
     ChunkConflict { index: i64 },
     #[error("chunk {index} is missing")]
@@ -83,6 +114,11 @@ impl CatalogError {
             CatalogError::DuplicateProduct { .. } => "CATALOG_DUPLICATE_PRODUCT",
             CatalogError::InvalidRecord { .. } => "CATALOG_INVALID_RECORD",
             CatalogError::CurrencyMismatch { .. } => "CATALOG_CURRENCY_MISMATCH",
+            CatalogError::PriceNotFound { .. } => "PRICE_NOT_FOUND",
+            CatalogError::AmbiguousPrice { .. } => "AMBIGUOUS_PRICE",
+            CatalogError::UnknownPriceBook { .. } => "CATALOG_UNKNOWN_PRICE_BOOK",
+            CatalogError::DuplicatePriceEntry { .. } => "CATALOG_DUPLICATE_PRICE_ENTRY",
+            CatalogError::InvalidValidity { .. } => "CATALOG_INVALID_VALIDITY",
             CatalogError::ChunkConflict { .. } => "CATALOG_CHUNK_CONFLICT",
             CatalogError::MissingChunk { .. } => "CATALOG_IMPORT_INCOMPLETE",
             CatalogError::CountMismatch { .. } => "CATALOG_COUNT_MISMATCH",

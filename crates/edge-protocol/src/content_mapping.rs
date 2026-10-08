@@ -5,10 +5,12 @@
 //! application layer involved, so a *producer* of snapshots can build and hash
 //! exactly what PI.Edge will verify.
 
+use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::product::NewCatalogProduct;
 use edge_catalog::{
     Barcode, CatalogBarcode, CatalogError, CatalogProduct, CatalogSnapshot, ImportProgress,
-    ProductSelector, SnapshotCounts, TaxProfile, TaxProfileCode,
+    PriceBook, PriceEntry, ProductSelector, ResolvedPrice, SnapshotCounts, TaxProfile,
+    TaxProfileCode,
 };
 use edge_domain::prelude::*;
 
@@ -63,9 +65,127 @@ impl From<SnapshotCounts> for SnapshotCountsV1 {
     fn from(counts: SnapshotCounts) -> Self {
         Self {
             tax_profiles: counts.tax_profiles,
+            price_books: counts.price_books,
             products: counts.products,
+            price_entries: counts.price_entries,
             barcodes: counts.barcodes,
         }
+    }
+}
+
+impl From<SnapshotCountsV1> for SnapshotCounts {
+    fn from(counts: SnapshotCountsV1) -> Self {
+        Self {
+            tax_profiles: counts.tax_profiles,
+            price_books: counts.price_books,
+            products: counts.products,
+            price_entries: counts.price_entries,
+            barcodes: counts.barcodes,
+        }
+    }
+}
+
+impl From<&PriceBook> for PriceBookV1 {
+    fn from(book: &PriceBook) -> Self {
+        Self {
+            price_book_id: book.price_book_id.to_string(),
+            code: book.code.clone(),
+            name: book.name.clone(),
+            currency: book.currency.code().to_owned(),
+            scope: book.scope.as_str().to_owned(),
+            store_id: book.scope.store_id().map(ToString::to_string),
+            priority: book.priority,
+            active: book.active,
+        }
+    }
+}
+
+impl PriceBookV1 {
+    pub fn into_domain(self) -> Result<PriceBook, CatalogError> {
+        let scope = match (self.scope.as_str(), self.store_id) {
+            ("TENANT", None) => PriceBookScope::Tenant,
+            ("TENANT", Some(_)) => {
+                return Err(CatalogError::InvalidRecord {
+                    field: "price_book_scope",
+                    reason: "a tenant book must not name a store".to_owned(),
+                })
+            }
+            ("STORE", Some(store_id)) => PriceBookScope::Store {
+                store_id: StoreId::new(store_id)?,
+            },
+            ("STORE", None) => {
+                return Err(CatalogError::InvalidRecord {
+                    field: "price_book_scope",
+                    reason: "a store book must name its store".to_owned(),
+                })
+            }
+            (other, _) => {
+                return Err(CatalogError::InvalidRecord {
+                    field: "price_book_scope",
+                    reason: format!("unknown scope `{other}`"),
+                })
+            }
+        };
+        PriceBook::import(NewPriceBook {
+            price_book_id: PriceBookId::new(self.price_book_id)?,
+            code: self.code,
+            name: self.name,
+            currency: Currency::from_code(&self.currency)?,
+            scope,
+            priority: self.priority,
+            active: self.active,
+        })
+    }
+}
+
+impl From<&PriceEntry> for PriceEntryV1 {
+    fn from(entry: &PriceEntry) -> Self {
+        Self {
+            price_book_id: entry.price_book_id.to_string(),
+            product_ref: entry.product_ref.to_string(),
+            amount: MoneyV1::from(&entry.amount),
+            price_mode: entry.price_mode.as_str().to_owned(),
+            valid_from: entry.valid_from.map(|ts| ts.to_rfc3339()),
+            valid_until: entry.valid_until.map(|ts| ts.to_rfc3339()),
+        }
+    }
+}
+
+impl From<&ResolvedPrice> for ResolvedPriceV1 {
+    fn from(price: &ResolvedPrice) -> Self {
+        Self {
+            price_book_id: price.price_book_id.to_string(),
+            price_book_code: price.price_book_code.clone(),
+            unit_price: MoneyV1::from(&price.unit_price),
+            price_mode: price.price_mode.as_str().to_owned(),
+            effective_at: price.effective_at.to_rfc3339(),
+        }
+    }
+}
+
+impl PriceRecordV1 {
+    /// Validate one price for a product.
+    pub fn into_domain(
+        self,
+        product_ref: &ProductRef,
+        currency: Currency,
+    ) -> Result<PriceEntry, CatalogError> {
+        let valid_from = match self.valid_from.as_deref() {
+            Some(value) => Some(parse_timestamp(value, "valid_from")?),
+            None => None,
+        };
+        let valid_until = match self.valid_until.as_deref() {
+            Some(value) => Some(parse_timestamp(value, "valid_until")?),
+            None => None,
+        };
+        PriceEntry::import(NewPriceEntry {
+            price_book_id: PriceBookId::new(self.price_book)?,
+            product_ref: product_ref.clone(),
+            amount: Money::from_minor(self.amount_minor, currency),
+            price_mode: PriceMode::parse(&self.price_mode)?,
+            valid_from,
+            valid_until,
+        })
     }
 }
 
@@ -75,7 +195,6 @@ impl From<&TaxProfile> for TaxProfileV1 {
             code: profile.code.as_str().to_owned(),
             name: profile.name.clone(),
             rate_bps: profile.rate.bps(),
-            price_mode: profile.price_mode.as_str().to_owned(),
         }
     }
 }
@@ -90,7 +209,6 @@ impl From<&CatalogProduct> for CatalogProductV1 {
             active: product.active,
             sellable: product.sellable,
             tax_profile: product.tax_profile.to_string(),
-            unit_price: MoneyV1::from(&product.unit_price),
         }
     }
 }
@@ -137,7 +255,6 @@ impl TaxProfileV1 {
             TaxProfileCode::new(self.code)?,
             self.name,
             TaxRate::from_bps(self.rate_bps)?,
-            PriceMode::parse(&self.price_mode)?,
         )
     }
 }
@@ -147,10 +264,7 @@ impl CatalogProductRecordV1 {
     ///
     /// Currency comes from the device: a snapshot belongs to one store, and the
     /// store's currency is not a per-record choice.
-    pub fn into_domain(
-        self,
-        currency: Currency,
-    ) -> Result<(CatalogProduct, Vec<CatalogBarcode>), CatalogError> {
+    pub fn into_domain(self, currency: Currency) -> Result<ProductRecord, CatalogError> {
         let product_ref = ProductRef::new(self.product_ref)?;
         let product = CatalogProduct::import(NewCatalogProduct {
             product_ref: product_ref.clone(),
@@ -160,7 +274,6 @@ impl CatalogProductRecordV1 {
             active: self.active,
             sellable: self.sellable,
             tax_profile: TaxProfileCode::new(self.tax_profile)?,
-            unit_price: Money::from_minor(self.unit_price_minor, currency),
         })?;
         let barcodes = self
             .barcodes
@@ -172,7 +285,16 @@ impl CatalogProductRecordV1 {
                 })
             })
             .collect::<Result<Vec<_>, CatalogError>>()?;
-        Ok((product, barcodes))
+        let prices = self
+            .prices
+            .into_iter()
+            .map(|price| price.into_domain(&product_ref, currency))
+            .collect::<Result<Vec<_>, CatalogError>>()?;
+        Ok(ProductRecord {
+            product,
+            prices,
+            barcodes,
+        })
     }
 }
 
@@ -191,4 +313,13 @@ impl CatalogSnapshotRequestV1 {
     pub fn snapshot_id(&self) -> Result<CatalogSnapshotId, CatalogError> {
         parse_snapshot_id(&self.snapshot_id)
     }
+}
+
+/// One validated product record: the product itself plus the prices and codes
+/// that travel with it.
+#[derive(Debug, Clone)]
+pub struct ProductRecord {
+    pub product: CatalogProduct,
+    pub prices: Vec<PriceEntry>,
+    pub barcodes: Vec<CatalogBarcode>,
 }

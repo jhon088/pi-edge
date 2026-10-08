@@ -95,7 +95,9 @@ fn imports_a_large_snapshot_in_many_chunks() {
     let lookup = client
         .lookup_product(ProductSelectorV1::Sku("SKU-00123".to_owned()))
         .unwrap();
-    assert_eq!(lookup.product.unit_price.minor, 1_123);
+    let price = lookup.price.as_ref().expect("a price must resolve");
+    assert_eq!(price.unit_price.minor, 1_123);
+    assert_eq!(price.price_book_code, "BASE");
 }
 
 #[test]
@@ -249,7 +251,7 @@ fn a_malformed_record_is_refused_without_disturbing_earlier_chunks() {
 
     // A negative price is not a price.
     let mut broken = spec.products[10..].to_vec();
-    broken[3].unit_price_minor = -1;
+    broken[3].prices[0].amount_minor = -1;
     let mut request = spec.chunk(&snapshot_id, 1, &spec.products[10..]);
     request.products = broken.clone();
     let error = client

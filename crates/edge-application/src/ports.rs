@@ -4,8 +4,8 @@
 //! application never depends on an adapter crate.
 
 use edge_catalog::{
-    CatalogBarcode, CatalogProduct, CatalogSnapshot, ImportProgress, ProductSelector,
-    SnapshotCounts, TaxProfile, TaxProfileCode,
+    CatalogBarcode, CatalogProduct, CatalogSnapshot, ImportProgress, PriceBook, PriceCandidate,
+    PriceEntry, ProductSelector, SnapshotCounts, TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ pub struct StoredChunk {
     pub chunk_index: i64,
     pub chunk_hash: String,
     pub product_count: i64,
+    pub price_entry_count: i64,
     pub barcode_count: i64,
 }
 
@@ -119,6 +120,31 @@ pub trait CatalogUnitOfWork {
         snapshot_id: CatalogSnapshotId,
         barcodes: &[CatalogBarcode],
     ) -> Result<(), AppError>;
+
+    fn insert_catalog_price_books(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        books: &[PriceBook],
+    ) -> Result<(), AppError>;
+    fn list_catalog_price_books(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<PriceBook>, AppError>;
+    fn insert_catalog_price_entries(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        entries: &[PriceEntry],
+    ) -> Result<(), AppError>;
+
+    /// Every price that *could* apply to a product at a store: entries of
+    /// active books whose scope covers the store. Validity and ranking are the
+    /// domain's job, so the whole rule lives in one place.
+    fn price_candidates(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        store_id: &StoreId,
+        product_ref: &ProductRef,
+    ) -> Result<Vec<PriceCandidate>, AppError>;
 
     fn catalog_stored_counts(
         &mut self,

@@ -69,7 +69,9 @@ impl CatalogSnapshotStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SnapshotCounts {
     pub tax_profiles: i64,
+    pub price_books: i64,
     pub products: i64,
+    pub price_entries: i64,
     pub barcodes: i64,
 }
 
@@ -226,7 +228,13 @@ impl CatalogSnapshot {
         let expected = self.0.expected;
         for (what, expected, stored) in [
             ("tax profiles", expected.tax_profiles, stored.tax_profiles),
+            ("price books", expected.price_books, stored.price_books),
             ("products", expected.products, stored.products),
+            (
+                "price entries",
+                expected.price_entries,
+                stored.price_entries,
+            ),
             ("barcodes", expected.barcodes, stored.barcodes),
         ] {
             if expected != stored {
@@ -318,7 +326,9 @@ mod tests {
             effective_at: None,
             expected: SnapshotCounts {
                 tax_profiles: 1,
+                price_books: 1,
                 products: 2,
+                price_entries: 2,
                 barcodes: 3,
             },
             imported_at: ts(1),
@@ -372,7 +382,9 @@ mod tests {
         let mut snapshot = snapshot();
         let stored = SnapshotCounts {
             tax_profiles: 1,
+            price_books: 1,
             products: 2,
+            price_entries: 2,
             barcodes: 3,
         };
         assert!(snapshot.verify_counts(stored).is_ok());

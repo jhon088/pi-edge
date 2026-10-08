@@ -33,6 +33,19 @@ pub fn core_at(path: &Path, id_offset: u64) -> TestCore {
     )
 }
 
+/// Same, with the clock frozen at an arbitrary instant: a later "lifetime"
+/// that believes it is running on another day.
+pub fn core_at_instant(path: &Path, id_offset: u64, instant: &str) -> TestCore {
+    let instant = DateTime::parse_from_rfc3339(instant)
+        .unwrap()
+        .with_timezone(&Utc);
+    EdgeApplication::new(
+        SqliteEdgeStore::open(path).unwrap(),
+        FixedClock::frozen(instant),
+        SequentialIdFactory::starting_at(id_offset),
+    )
+}
+
 pub fn open_register(core: &TestCore) {
     core.init_device(InitDeviceCommand {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),

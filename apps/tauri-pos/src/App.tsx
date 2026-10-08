@@ -179,6 +179,14 @@ export default function App() {
                 value={String(catalog.active.stored.products)}
               />
               <Field
+                label="Price books"
+                value={String(catalog.active.stored.price_books)}
+              />
+              <Field
+                label="Prices"
+                value={String(catalog.active.stored.price_entries)}
+              />
+              <Field
                 label="Barcodes"
                 value={String(catalog.active.stored.barcodes)}
               />
@@ -308,17 +316,26 @@ function BarcodeLookup({ enabled }: { enabled: boolean }) {
         <div className="row">
           <Field label="Product" value={result.product.name} />
           <Field label="Reference" value={result.product.product_ref} mono />
-          <Field label="Unit price" value={result.product.unit_price.formatted} />
+          <Field
+            label="Unit price"
+            value={
+              result.price
+                ? `${result.price.unit_price.formatted} (${result.price.price_mode})`
+                : (result.price_issue ?? "no price")
+            }
+          />
+          <Field
+            label="Price book"
+            value={result.price?.price_book_code ?? "—"}
+          />
           <Field
             label="Tax"
             value={`${result.tax_profile.code} (${
               result.tax_profile.rate_bps / 100
-            }%, ${result.tax_profile.price_mode})`}
+            }%)`}
           />
-          <Field
-            label="Snapshot"
-            value={`v${result.snapshot_version}`}
-          />
+          <Field label="Snapshot" value={`v${result.snapshot_version}`} />
+          <Field label="Priced at" value={result.effective_at} />
         </div>
       ) : null}
       {error ? (
@@ -327,7 +344,8 @@ function BarcodeLookup({ enabled }: { enabled: boolean }) {
         </p>
       ) : null}
       <p className="muted">
-        Price and tax come from the core. React computes nothing.
+        The core resolves the price book, the price and the tax. React computes
+        nothing.
       </p>
     </>
   );
@@ -376,6 +394,7 @@ function ActiveTransaction({
             <th>Description</th>
             <th className="num">Qty</th>
             <th className="num">Unit</th>
+            <th>Book</th>
             <th className="num">Tax</th>
             <th className="num">Total</th>
           </tr>
@@ -388,13 +407,14 @@ function ActiveTransaction({
               <td>{line.description}</td>
               <td className="num">{line.quantity}</td>
               <td className="num">{line.unit_price.formatted}</td>
+              <td className="mono">{line.price_book_id ?? "—"}</td>
               <td className="num">{line.tax_amount.formatted}</td>
               <td className="num">{line.line_total.formatted}</td>
             </tr>
           ))}
           {transaction.lines.length === 0 ? (
             <tr>
-              <td colSpan={7} className="muted">
+              <td colSpan={8} className="muted">
                 No lines yet.
               </td>
             </tr>
@@ -403,6 +423,7 @@ function ActiveTransaction({
       </table>
       <div className="row totals">
         <Field label="Subtotal" value={transaction.totals.subtotal.formatted} />
+        <Field label="Net" value={transaction.totals.net_total.formatted} />
         <Field label="Tax" value={transaction.totals.tax_total.formatted} />
         <Field label="Grand total" value={transaction.totals.grand_total.formatted} />
         <Field label="Paid" value={transaction.paid_total.formatted} />
