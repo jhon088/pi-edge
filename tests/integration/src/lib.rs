@@ -21,6 +21,10 @@ use edge_refunds::{
     RefundAuthority, RefundAuthorizationContext, RefundFiscalStatus, RefundLineRequest,
 };
 use edge_storage::SqliteEdgeStore;
+use std::sync::Arc;
+
+use edge_application::hardware_service::Hardware;
+use edge_hardware::{ScanEvent, SimulatorDrawer, SimulatorPrinter};
 
 pub use edge_payments::TenderType as Tender;
 
@@ -36,10 +40,15 @@ pub fn start_instant() -> DateTime<Utc> {
 }
 
 pub fn core_with_store(store: SqliteEdgeStore) -> TestCore {
-    EdgeApplication::new(
+    // Simulators are asked for **explicitly**, here and everywhere: a test
+    // that uses fake hardware says so, and a core with nothing configured
+    // answers `HARDWARE_NOT_CONFIGURED` (ADR 038).
+    EdgeApplication::with_hardware(
         store,
         FixedClock::new(start_instant(), 1_000),
         SequentialIdFactory::new(),
+        SimulatorPaymentProvider::approving(),
+        Hardware::simulated(),
     )
 }
 
@@ -169,11 +178,12 @@ pub fn pay_cash(core: &TestCore, amount_minor: i64) -> RetailTransaction {
 /// Core whose card provider follows a script, for the paths a real terminal
 /// would produce: a refusal, and a call whose result is lost.
 pub fn scripted_core(script: SimulatorScript) -> ScriptedCore {
-    EdgeApplication::with_payment_provider(
+    EdgeApplication::with_hardware(
         SqliteEdgeStore::open_in_memory().unwrap(),
         FixedClock::new(start_instant(), 1_000),
         SequentialIdFactory::new(),
         SimulatorPaymentProvider::new(script),
+        Hardware::simulated(),
     )
 }
 
@@ -401,6 +411,88 @@ pub fn mark_invoiced(core: &TestCore, transaction_id: TransactionId) {
     .unwrap();
 }
 
+// -------------------------------------------------------------- hardware
+
+/// A core plus the simulators it drives.
+///
+/// The test keeps its own handle on each simulator rather than downcasting the
+/// port: a trait does not grow an `as_any` so a test can look inside it
+/// (CLAUDE.md).
+#[derive(Debug)]
+pub struct HardwareFixture {
+    pub core: TestCore,
+    pub printer: Arc<SimulatorPrinter>,
+    pub drawer: Arc<SimulatorDrawer>,
+}
+
+impl HardwareFixture {
+    /// Everything working. A simulator, asked for explicitly (ADR 038).
+    pub fn working() -> Self {
+        Self::new(SimulatorPrinter::working(), SimulatorDrawer::working())
+    }
+
+    /// A core with **no hardware configured**, which is what a misconfigured
+    /// production runtime gets.
+    pub fn unconfigured() -> TestCore {
+        EdgeApplication::with_hardware(
+            SqliteEdgeStore::open_in_memory().unwrap(),
+            FixedClock::new(start_instant(), 1_000),
+            SequentialIdFactory::new(),
+            SimulatorPaymentProvider::approving(),
+            Hardware::unconfigured(),
+        )
+    }
+
+    pub fn new(printer: SimulatorPrinter, drawer: SimulatorDrawer) -> Self {
+        let printer = Arc::new(printer);
+        let drawer = Arc::new(drawer);
+        let core = EdgeApplication::with_hardware(
+            SqliteEdgeStore::open_in_memory().unwrap(),
+            FixedClock::new(start_instant(), 1_000),
+            SequentialIdFactory::new(),
+            SimulatorPaymentProvider::approving(),
+            Hardware::new(Arc::clone(&printer) as _, Arc::clone(&drawer) as _, 48),
+        );
+        Self {
+            core,
+            printer,
+            drawer,
+        }
+    }
+
+    /// A till ready to sell, with stock.
+    pub fn open_till(&self) -> &TestCore {
+        open_register_with_float(&self.core, 100_000);
+        bootstrap_stock(&self.core, &[("SKU-001", 10)]);
+        &self.core
+    }
+
+    pub fn opens(&self) -> usize {
+        self.drawer.open_count()
+    }
+
+    pub fn jobs(&self) -> usize {
+        self.printer.job_count()
+    }
+}
+
+/// A completed scan, as a host's parser would produce it.
+pub fn scan_of(barcode: &str) -> SubmitScanCommand {
+    scan_with(uuid::Uuid::new_v4(), barcode)
+}
+
+/// A scan with a chosen event id, for the replay cases.
+pub fn scan_with(event_id: uuid::Uuid, barcode: &str) -> SubmitScanCommand {
+    SubmitScanCommand {
+        scan: ScanEvent {
+            event_id,
+            barcode: barcode.to_owned(),
+            occurred_at: Timestamp::from_datetime(start_instant()),
+            device_id: "scanner".to_owned(),
+        },
+    }
+}
+
 /// A supervisor identity, distinct from the demo cashier.
 pub fn supervisor() -> OperatorId {
     OperatorId::new("SUPERVISOR-01").unwrap()
@@ -409,9 +501,11 @@ pub fn supervisor() -> OperatorId {
 /// A lifetime that believes it is two days later, for business-day identity.
 pub fn core_two_days_later(path: &std::path::Path) -> TestCore {
     let instant = start_instant() + chrono::Duration::days(2);
-    EdgeApplication::new(
+    EdgeApplication::with_hardware(
         SqliteEdgeStore::open(path).unwrap(),
         FixedClock::new(instant, 1_000),
         SequentialIdFactory::starting_at(5_000),
+        SimulatorPaymentProvider::approving(),
+        Hardware::simulated(),
     )
 }

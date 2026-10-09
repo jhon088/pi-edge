@@ -1,8 +1,9 @@
 # ADR 005 — Hardware lives behind ports and adapters
 
 Status: accepted · 2026-10-08
-Amended in milestone 7: the decision stands, the crate does not. See
-*Amendment* at the end.
+Amended in milestone 7: the decision stands, the crate does not.
+Amended in milestone 10: the ports arrived, with adapters. See the two
+*Amendment* sections at the end.
 
 ## Context
 
@@ -59,3 +60,28 @@ it does. The real shape of `PrinterPort` will be decided by the first printer
 we actually talk to, and writing it beforehand guarantees it is wrong in ways
 nobody can see yet. The boundary is recorded here and in `CLAUDE.md`, and the
 port arrives with the adapter.
+
+## Amendment (milestone 10)
+
+The ports arrived, with adapters, in `crates/edge-hardware`:
+`PrinterPort` and `CashDrawerPort`, an ESC/POS renderer and TCP transport, an
+ESC/POS drawer kick, the structural iMin bridge, and simulators (ADR 035).
+
+Three details of the original decision were refined by the first real device:
+
+* **"The printer receives an already-rendered `ReceiptDocument`"** is now: the
+  application expresses a canonical `PrintDocument`, and the **adapter** renders
+  the physical protocol. Rendering ESC/POS in the core would have put a vendor
+  protocol in the core, which is what this ADR was avoiding (ADR 039).
+* **"The scanner is modelled as a pull-based queue (`try_next_scan`)"** did not
+  survive contact with the device. A keyboard-wedge scanner has no handle to
+  poll: it types into the focused window. There is no `ScannerPort` at all —
+  the host captures, a deterministic parser decides, and the result travels as
+  an event (ADR 036).
+* **`CustomerDisplayPort` and `PaymentTerminalPort` are still absent.** Both
+  were in the deleted crate, neither has an adapter, and writing them again
+  would repeat exactly the mistake milestone 7 corrected.
+
+What is unchanged, and was the point: hardware failure is never a domain
+failure. A sale is `FINALIZED` on the strength of its payments and its committed
+transaction, and paper and solenoids come afterwards (ADR 037).

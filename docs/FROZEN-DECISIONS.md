@@ -315,6 +315,84 @@ for payment states that do not exist yet.
 * **M11 Sync must publish refunds.** No outbox event was added in M9, because
   there is no consumer and the frozen rule is no events without one.
 
+## Hardware (milestone 10)
+
+* **Hardware failure is never a domain failure.** A sale is `FINALIZED` on the
+  strength of its payments and its committed transaction. A printer that jams, a
+  drawer that stays shut and a device that times out change no money, no stock
+  and no sale — they are recorded and reported. (ADR 005, ADR 037)
+* **A port arrives with its adapter.** `edge-hardware` holds `PrinterPort` and
+  `CashDrawerPort` because both have adapters and consumers. There is no
+  `CustomerDisplayPort` and no `PaymentTerminalPort`. (ADR 035)
+* **There is no `ScannerPort`**: a scanner is input, not a capability the core
+  invokes. (ADR 035, ADR 036)
+* **Hardware is injected as trait objects**, not as type parameters on
+  `EdgeApplication`. These are bounded I/O calls outside every transaction.
+  (ADR 035)
+* **A device is touched outside every database transaction**, in three steps:
+  claim, call, record. The claim comes first, so a process that dies mid-action
+  leaves evidence that it may already have happened. (ADR 020, ADR 037)
+* **Configured is not available.** A device nobody has probed is `UNKNOWN`, and
+  a restart returns every device to `UNKNOWN`. What survives is what a device
+  *did* (`last_success_at`, rebuilt from the action log), never a claim that it
+  works. A timeout is `DEGRADED`, not `UNAVAILABLE`: "we asked and we do not
+  know" is a different fact. (ADR 035)
+* **An automatic physical action happens once per commercial cause**, keyed by
+  that cause (`payment_id`, `refund_payment_id`, `transaction_id`) in
+  `hardware_actions`. A **diagnostic** request is unkeyed and opens the drawer
+  or prints every time it is asked — an operator pressing a button is not a
+  replay. (ADR 037)
+* **Drawer rules, frozen**: a cash sale opens it once; a cash refund opens it
+  once; a card sale and a card refund do not; a diagnostic opens it every time;
+  **a reprint never opens it**; a replayed payment or refund opens it once.
+  (ADR 037)
+* **A reprint prints and changes nothing else** — no cash, no stock, no drawer,
+  no change to the sale. The source of a reprint is the sale, never a stored
+  job. (ADR 037, ADR 039)
+* **Nothing retries a physical action automatically.** A printer retry is a
+  human decision; a drawer is never retried in a loop; a scanner has nothing to
+  retry. (ADR 037)
+* **The scan parser lives once, in Rust**, in `edge-hardware`, and is tested
+  without a device. The host that owns the window captures keystrokes and
+  decides nothing: no buffer rule, no timeout, no terminator list, no product
+  resolution. (ADR 036)
+* **A scan's identity is the event, not the barcode.** Two scans of the same
+  product are two units; one event delivered twice is one unit. Deduplicating by
+  barcode would be a bug. (ADR 036)
+* **A scan needs an editable sale.** With none open it answers
+  `SCAN_NO_ACTIVE_TRANSACTION`; PI.Edge never opens a sale on its own. A scanned
+  barcode then takes the ordinary `AddItem` path — same snapshot, same
+  promotions, same basket freeze, and no hardware-specific product lookup.
+  (ADR 036)
+* **The application expresses a canonical `PrintDocument`; the adapter renders
+  the physical protocol.** `edge-hardware::escpos` is the only module that may
+  contain an escape sequence. No HTML, no browser printing, no template engine.
+  (ADR 039, amending ADR 005)
+* **The protocol carries intent, never capability.** No hardware payload has a
+  field for a host, a port, an address, a driver, raw bytes or a method name, and
+  a contract test asserts it. Configuration is read once in the composition
+  root and is unreachable from downstream. (ADR 039)
+* **A driver is chosen explicitly and never falls back.** `imin` configured with
+  no bridge answers `HARDWARE_NOT_CONFIGURED`; it does not substitute an ESC/POS
+  pulse, even when a printer is configured. No configured device implies
+  another. (ADR 038)
+* **Hardware simulators are explicit development and test adapters. Missing
+  hardware configuration never selects a simulator implicitly.** An absent
+  driver variable, or `none`, selects the unconfigured adapter, which answers
+  `HARDWARE_NOT_CONFIGURED` to everything and reports
+  `driver=unconfigured`. A misconfigured runtime must report that it is
+  misconfigured rather than report healthy fake hardware — so `AVAILABLE` on a
+  `simulator` nobody asked for can never happen. Test harnesses and demos ask
+  for simulators explicitly. (ADR 038)
+* **`EscPosKickDrawer` working does not close the iMin gate.** They are
+  different devices on different wires. Physical validation of the iMin drawer
+  from PI.Edge is a Swan gate that has **not** been run; the only iMin baseline
+  is the previous POS. (ADR 038)
+* **A `PrintDocument` is not a receipt.** M10 proves the transport, the
+  rendering and the failure semantics. `RECEIPT_COMPLETED` exists in the
+  transaction aggregate and is still driven by nothing, deliberately: the
+  receipt lifecycle is its own milestone. (ADR 039)
+
 ## Engineering rules (frozen in milestone 7)
 
 The organisation and quality rules in **`CLAUDE.md`** at the repository root are

@@ -6,6 +6,7 @@
 use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
+use edge_hardware::HardwareError;
 use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
 use edge_refunds::RefundError;
@@ -29,6 +30,16 @@ pub enum AppError {
 
     #[error(transparent)]
     Refund(#[from] RefundError),
+
+    /// A device failed. Never a domain failure: the money and the goods are
+    /// already where the ledger says they are (ADR 005, ADR 037).
+    #[error(transparent)]
+    Hardware(#[from] HardwareError),
+
+    /// A scan arrived with no sale to add it to. PI.Edge does not open one on
+    /// its own (ADR 036).
+    #[error("a scan needs an active sale; none is open")]
+    ScanWithoutTransaction,
 
     #[error("the session cannot close yet: {}", blockers.join(", "))]
     SessionCloseBlocked { blockers: Vec<String> },
@@ -119,6 +130,9 @@ impl AppError {
             AppError::Inventory(error) => error.code(),
             // The refund context publishes its own codes.
             AppError::Refund(error) => error.code(),
+            // The hardware context publishes its own codes.
+            AppError::Hardware(error) => error.code(),
+            AppError::ScanWithoutTransaction => "SCAN_NO_ACTIVE_TRANSACTION",
             AppError::SessionCloseBlocked { .. } => "SESSION_CLOSE_BLOCKED",
             AppError::BusinessDayCloseBlocked { .. } => "BUSINESS_DAY_CLOSE_BLOCKED",
             AppError::Storage(_) => "STORAGE_FAILURE",

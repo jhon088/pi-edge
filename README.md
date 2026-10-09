@@ -37,6 +37,7 @@ the active sale, the journal and the outbox live in the daemon.
 | `crates/edge-cash` | the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Pure Rust |
 | `crates/edge-inventory` | the append-only stock ledger, its movement types and directions, and the derived on-hand fold. Pure Rust |
 | `crates/edge-refunds` | the refund document, its lines, the refundable arithmetic over a closed sale, the financial refund lifecycle and the fiscal consequence. Pure Rust |
+| `crates/edge-hardware` | the device model, the deterministic scan parser, `PrinterPort`, `CashDrawerPort`, the ESC/POS renderer and transport, and simulators. The only crate that may contain an escape sequence |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
 | `crates/edge-ipc` | the only crate that knows what a socket or a pipe is: `EdgeTransport`, JSON Lines framing, local credentials |
@@ -45,7 +46,76 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 9 (refund engine V1)
+## Status — milestone 10 (hardware runtime V1)
+
+Done: real devices, with the core still knowing nothing about any of them.
+
+```text
+application ─> PrinterPort ────┬─> EscPosTcpPrinter ─> TCP ─> 80mm printer
+                               └─> SimulatorPrinter
+            ─> CashDrawerPort ─┬─> EscPosKickDrawer ─> DK pulse ─> drawer
+                               ├─> IminDrawer ─> Android host ─> Kotlin ─> SDK
+                               └─> SimulatorDrawer
+
+host keystrokes ─> ScanBuffer ─> ScanEvent ─> SUBMIT_SCAN ─> AddItem
+```
+
+The rule the whole milestone is arranged around, from ADR 005: **hardware
+failure is never a domain failure.**
+
+* **A device is touched outside every database transaction**, in three steps —
+  claim, call, record. The claim comes first, so a process that dies mid-action
+  leaves evidence that it may already have happened (ADR 037).
+* **An automatic action happens once per commercial cause**, keyed by the
+  payment, the refund payment or the sale. A **diagnostic** request is unkeyed
+  and works every time it is asked: an operator pressing a button is not a
+  replay.
+* **Drawer rules, frozen and tested**: cash sale opens it once · cash refund
+  opens it once · card sale and card refund do not · diagnostic opens it every
+  time · **reprint never opens it** · a replayed payment opens it once, across a
+  restart too.
+* **A reprint prints and changes nothing else** — no cash, no stock, no drawer,
+  no change to the sale. Asking for the *first* receipt twice answers
+  `HARDWARE_ACTION_ALREADY_COMPLETED`, because a second copy is a reprint and
+  has to say so.
+* **A printer that jams, times out or breaks leaves the sale finalized**, the
+  stock moved and the drawer ledger right. Tested for all three failure modes.
+* **Configured is not available.** A device nobody probed is `UNKNOWN`, and a
+  restart returns every device to `UNKNOWN`. What survives is what a device
+  *did* — `last_success_at`, rebuilt from the action log — never a claim that it
+  works. A timeout is `DEGRADED`, not `UNAVAILABLE` (ADR 035).
+* **The scan parser lives once, in Rust.** React forwards keystrokes and decides
+  nothing: CRLF is one scan, human typing is never a scan, a partial buffer is
+  discarded, modifiers do not interrupt. Two scans of a product are two units;
+  one event delivered twice is one (ADR 036).
+* **A scan needs a sale.** With none open it answers
+  `SCAN_NO_ACTIVE_TRANSACTION` — PI.Edge never opens one on its own — and
+  otherwise takes the ordinary `AddItem` path, with no hardware-specific product
+  lookup.
+* **The application expresses a canonical `PrintDocument`; the adapter renders
+  ESC/POS.** The protocol carries intent and never capability: no hardware
+  payload has a field for a host, a port, a driver, raw bytes or a method name,
+  and a contract test asserts it (ADR 039).
+* **A driver is chosen explicitly and never falls back.** `imin` with no bridge
+  answers `HARDWARE_NOT_CONFIGURED` rather than quietly sending an ESC/POS
+  pulse to a different drawer — and **nothing selects a simulator implicitly**:
+  with no configuration a device reports `unconfigured`, not `AVAILABLE`
+  (ADR 038).
+
+```bash
+edge-cli hardware-status
+edge-cli printer-test
+edge-cli drawer-open
+edge-cli print-transaction --transaction <id> [--reprint]
+edge-cli scan --barcode 7501000000011        # diagnostic: the real path is the scanner
+```
+
+**Nothing here is physically validated yet.** The software gates are green with
+simulators and against unreachable real addresses; the printer, the drawer kick
+and the iMin drawer each need the device. The matrix and the Swan session plan
+are in [`docs/HARDWARE-VALIDATION.md`](docs/HARDWARE-VALIDATION.md).
+
+## Previously — milestone 9 (refund engine V1)
 
 Done: giving money and goods back is a **document of its own**, not a
 correction of the sale:
@@ -363,6 +433,8 @@ cargo run -p edge-cli -- start-payment --tender CARD --amount 70000
 cargo run -p edge-cli -- payments
 cargo run -p edge-cli -- finalize-sale
 cargo run -p edge-cli -- get-state
+cargo run -p edge-cli -- hardware-status
+cargo run -p edge-cli -- print-transaction --transaction <id>
 cargo run -p edge-cli -- cash-position
 cargo run -p edge-cli -- inventory-position --product P-LECHE-1L   # fewer units
 cargo run -p edge-cli -- request-close-session
@@ -383,6 +455,9 @@ Extras: `remove-item --line N`, `change-qty --line N --qty N`,
 `refund-eligibility`, `refund-create`, `refund-accept`, `refund-pay`,
 `refund-reconcile`, `refund-show`, `refunds --transaction <id>`,
 `PI_EDGE_REFUND_AUTHORITY=dev-accept-local` to enable refunds in development,
+`hardware-status`, `printer-test`, `drawer-open`,
+`print-transaction --transaction <id> [--reprint]`, `scan --barcode <code>`,
+`PI_EDGE_PRINTER` / `PI_EDGE_DRAWER` / `PI_EDGE_PAPER_WIDTH` to pick drivers,
 `init-demo --block-negative-inventory` for a till that refuses to oversell,
 `--format json`, `--db <path>` (or `PI_EDGE_DB`), `--request-id <uuid>` for
 idempotent retries, `PI_EDGE_LOG=info` for structured logs on stderr.
@@ -674,6 +749,39 @@ PI.COMMERCE Server validates the original sale. Until it exists,
 `PI_EDGE_REFUND_AUTHORITY=dev-accept-local` turns on a development stand-in that
 marks what it produces; with no switch, refunds are refused.
 
+## Hardware
+
+```text
+PI_EDGE_PRINTER=escpos_tcp:<host>[:<port>] | simulator[:outcome] | none
+PI_EDGE_DRAWER=escpos_kick[:<host>[:<port>]] | imin | simulator[:outcome] | none
+PI_EDGE_PAPER_WIDTH=48
+```
+
+Configuration is read **once, in the composition root**, and nothing downstream
+can reach it: a use case, the protocol and every client are incapable of naming
+a host, a port or a driver. An unrecognised value refuses to start.
+
+**A simulator is opt-in.** An absent variable, or `none`, gives a device that
+answers `HARDWARE_NOT_CONFIGURED` to everything and reports
+`driver=unconfigured` — never a simulator. A runtime that was misconfigured
+says so instead of reporting `AVAILABLE` on fake hardware nobody asked for
+(ADR 038). Simulators stay first-class for tests, demos and development; they
+are simply named.
+
+**Two drawer topologies, and they are not interchangeable.** A drawer on the
+printer's DK port opens with an ESC/POS pulse; a drawer inside an iMin terminal
+opens through the vendor SDK. Selecting `imin` where no Android bridge exists
+answers `HARDWARE_NOT_CONFIGURED` — it does not fall back to the pulse, because
+an operator who believes a device works and is wrong is worse off than one who
+gets a refusal (ADR 038).
+
+**Where the scanner is captured, and why.** A USB HID scanner in keyboard-wedge
+mode types into whatever window has focus, so capture has to happen in the host
+that owns the window — no daemon can portably read keystrokes aimed elsewhere.
+The *rule* for what counts as a scan lives in `edge-hardware`, used from the
+Tauri host's Rust side, so React holds no buffer, no timeout and no barcode
+logic at all (ADR 036).
+
 ## Runtime layout
 
 Derived from the database path, so one database means one runtime:
@@ -741,7 +849,11 @@ arithmetic are denied outside tests.
 | `tests/crash-recovery/tests/refund_recovery.rs` | a created refund still holding its quantities; a crash before `COMMIT` leaving no refund, no reservation, no returned goods; goods returned once across a restart; a cash refund emptying the drawer once; a fiscal consequence still pending; and an unresolved card refund resolving through the **same** attempt after a restart, never a second refund |
 | `apps/edge-daemon/tests/refunds.rs` | the refund surface over real IPC: **no authority configured means no refund**, the eligibility view a UI renders, a whole refund end to end, a card refund whose answer was lost, **a till being unable to invoice a sale or ask for a credit note**, malformed payloads as `INVALID_ARGUMENT`, and the CLI driving a refund in a separate process |
 | `crates/edge-storage` migration tests | the rebuilt ledgers accepting `CASH_REFUND` and `REFUND_RETURN` with their directions and one-per-cause uniqueness, still append-only; the refund invariants (`gross = net + tax`, one live refund per sale, the fiscal pairing); refund attempts append-only with unique correlation ids |
-| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, and that the create-refund payload cannot assert authority or a fiscal state |
+| `crates/edge-hardware` unit tests | the scan parser (Enter/CR/LF/CRLF, partial buffers, human typing, modifiers, too short, too long, the same barcode twice), the ESC/POS renderer (determinism, mode resets, cut, double size, non-ASCII folding, the DK pulse bytes, column padding), unreachable and unresolvable addresses, the simulators' counters, and the iMin driver refusing without substituting another |
+| `tests/integration/tests/hardware.rs` | hardware on real SQLite: one scan one product, two scans two units, one event one unit, no-sale and unknown-barcode refusals, the basket freeze applying to a scan, drawer on cash sale / mixed tender / cash refund, **not** on card sale, card refund or reprint, diagnostic opening every time, replay opening once, a down drawer and a down printer changing no money or stock, a timeout leaving the device `DEGRADED`, reprint changing nothing, the second automatic receipt refused, and the status view disclosing no address |
+| `tests/crash-recovery/tests/hardware_recovery.rs` | a replayed payment and a replayed cash refund opening the drawer once **across a restart** (the simulator's counter resets, so only durable state can prevent it); a failed action still retryable; devices back to `UNKNOWN` after a restart while `last_success_at` survives; a crash before the claim commits leaving no opening; a reprint after a restart still moving nothing |
+| `apps/edge-daemon/tests/hardware.rs` | the hardware surface over real IPC: the status view never disclosing the configured host or port, the `imin` driver reported as `imin` and refusing without substituting another, a scan becoming one item, a malformed scan as `INVALID_ARGUMENT`, a down printer changing nothing commercial, the two diagnostic operations carrying no payload at all, and the CLI driving it from another process |
+| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, that the create-refund payload cannot assert authority or a fiscal state, and that **no hardware payload can name a host, a port, a driver or carry bytes** |
 
 ## Non-negotiable boundaries
 
@@ -773,9 +885,13 @@ arithmetic are denied outside tests.
 * All durable transactional state belongs to the core.
 * Exactly one runtime per installation, enforced by an OS lock taken before the
   database is opened.
-* Hardware will always sit behind ports injected at the composition root. The
-  port traits arrive with the first adapter, not before: a crate of traits
-  nothing implements is an abstraction waiting for a boundary, not a boundary.
+* Hardware sits behind ports injected at the composition root, and each port
+  arrived *with* its adapter. A failing device never changes a sale, a cent or a
+  unit of stock.
+* `edge-hardware::escpos` is the only module in the repository that may contain
+  an escape sequence. No client can name a host, a port, a driver or a byte.
+* A physical side effect is never part of a commercial transaction, and an
+  automatic one happens once per commercial cause.
 * Public ids are UUIDs; server-owned ids (tenant, store, register, operator,
   product, price book, promotion) are opaque strings PI.Edge never mints.
 * No Flutter, no Dart, no Odoo, no ERP logic, no local microservices.

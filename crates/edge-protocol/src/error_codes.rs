@@ -212,6 +212,28 @@ pub const REFUND_NOT_FOUND: &str = "REFUND_NOT_FOUND";
 /// No sale with that id.
 pub const TRANSACTION_NOT_FOUND: &str = "TRANSACTION_NOT_FOUND";
 
+// Hardware codes, produced by the hardware context. Five, deliberately: a
+// client branches on what it can do about a failure, not on which brand failed
+// (ADR 035).
+
+/// The device is configured and could not be reached.
+pub const HARDWARE_UNAVAILABLE: &str = "HARDWARE_UNAVAILABLE";
+/// The device was reached and did not answer in time. **Unresolved**: for a
+/// printer the paper may still have come out, so nothing is retried on its own
+/// (ADR 037).
+pub const HARDWARE_TIMEOUT: &str = "HARDWARE_TIMEOUT";
+/// The transport failed while talking to the device.
+pub const HARDWARE_IO_ERROR: &str = "HARDWARE_IO_ERROR";
+/// No driver configured, or the configured driver has no bridge in this build.
+/// Never a silent fallback to another driver (ADR 038).
+pub const HARDWARE_NOT_CONFIGURED: &str = "HARDWARE_NOT_CONFIGURED";
+/// This physical action already happened for the same cause. A drawer must not
+/// open twice because a command was replayed (ADR 037).
+pub const HARDWARE_ACTION_ALREADY_COMPLETED: &str = "HARDWARE_ACTION_ALREADY_COMPLETED";
+/// A scan arrived with no sale to add it to. PI.Edge does not open one on its
+/// own (ADR 036).
+pub const SCAN_NO_ACTIVE_TRANSACTION: &str = "SCAN_NO_ACTIVE_TRANSACTION";
+
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";
 /// A request arrived before a successful handshake.

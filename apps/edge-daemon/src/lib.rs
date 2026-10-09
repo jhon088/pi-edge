@@ -20,6 +20,7 @@
 pub mod connection;
 pub mod dispatch;
 pub mod error;
+pub mod hardware_config;
 pub mod refund_authority;
 pub mod state;
 
@@ -100,11 +101,16 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
     // for development and for the end-to-end demo; reading it here, in the
     // composition root, keeps the domain free of environment lookups.
     let provider = payment_provider()?;
-    let core = Arc::new(EdgeApplication::with_payment_provider(
+    // Which devices this installation has. Read here and nowhere else: a host
+    // or a port must never be reachable from a use case or a protocol payload
+    // (ADR 039).
+    let hardware = hardware_config::from_env().map_err(DaemonError::Configuration)?;
+    let core = Arc::new(EdgeApplication::with_hardware(
         store,
         SystemClock,
         UuidFactory,
         provider,
+        hardware,
     ));
     // How refunds get authority over an original sale. Off unless explicitly
     // switched on, so the production rule is the default (ADR 030).

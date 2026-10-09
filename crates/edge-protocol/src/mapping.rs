@@ -13,19 +13,21 @@ use edge_application::commands::{
     CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand, CreateRefundCommand,
     DeclareClosingCashCommand, ForceCloseBusinessDayCommand, ImportInventoryBootstrapCommand,
     InitDeviceCommand, InventoryInCommand, InventoryOutCommand, OpenRegisterSessionCommand,
-    PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand,
-    RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand,
+    PrintTransactionCommand, PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand,
+    ReopenSessionCommand, RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand,
+    SubmitScanCommand,
 };
 use edge_application::ports::{DeviceProfile, InventoryBootstrapState};
 use edge_application::queries::{
     CashPositionView, CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState,
-    InventoryPositionView, PendingOutbox, ProductLookup, RefundEligibilityView, RefundView,
-    SessionCloseResult,
+    HardwareStatusView, InventoryPositionView, PendingOutbox, ProductLookup, RefundEligibilityView,
+    RefundView, SessionCloseResult,
 };
 use edge_application::{AppError, PaymentOutcome};
 use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
 use edge_catalog::CatalogError;
 use edge_domain::prelude::*;
+use edge_hardware::{HardwareDeviceStatus, ScanEvent};
 use edge_inventory::{BootstrapItem, InventoryMovement};
 use edge_payments::{PaymentAttempt, PaymentError, PaymentView, Settlement, TenderType};
 use edge_refunds::{
@@ -1062,4 +1064,61 @@ fn thousandths(value: i64) -> String {
     let fraction = (value % 1_000).unsigned_abs();
     let sign = if value < 0 && units == 0 { "-" } else { "" };
     format!("{sign}{units}.{fraction:03}")
+}
+
+// -------------------------------------------------------------------- hardware
+
+impl From<&HardwareDeviceStatus> for HardwareDeviceV1 {
+    fn from(status: &HardwareDeviceStatus) -> Self {
+        Self {
+            kind: status.kind.as_str().to_owned(),
+            device_id: status.device_id.clone(),
+            driver: status.driver.clone(),
+            state: status.state.as_str().to_owned(),
+            last_checked_at: status.last_checked_at.map(|ts| ts.to_rfc3339()),
+            last_success_at: status.last_success_at.map(|ts| ts.to_rfc3339()),
+            last_error_code: status.last_error_code.clone(),
+            last_error_message: status.last_error_message.clone(),
+        }
+    }
+}
+
+impl From<&HardwareStatusView> for HardwareStatusV1 {
+    fn from(view: &HardwareStatusView) -> Self {
+        Self {
+            scanner: HardwareDeviceV1::from(&view.scanner),
+            printer: HardwareDeviceV1::from(&view.printer),
+            drawer: HardwareDeviceV1::from(&view.drawer),
+        }
+    }
+}
+
+impl SubmitScanRequestV1 {
+    /// A scan is validated at the boundary like every other payload: the event
+    /// id has to be an id and the barcode has to be a barcode.
+    pub fn into_command(self, now: Timestamp) -> Result<SubmitScanCommand, DomainError> {
+        let event_id = Uuid::parse_str(&self.event_id)
+            .map_err(|_| DomainError::Id(IdError::InvalidUuid(self.event_id.clone())))?;
+        Ok(SubmitScanCommand {
+            scan: ScanEvent {
+                event_id,
+                barcode: self.barcode,
+                occurred_at: now,
+                device_id: self.device_id.unwrap_or_else(|| "scanner".to_owned()),
+            },
+        })
+    }
+}
+
+impl PrintTransactionRequestV1 {
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<PrintTransactionCommand, DomainError> {
+        Ok(PrintTransactionCommand {
+            request_id,
+            transaction_id: self.transaction_id.parse()?,
+            reprint: self.reprint,
+        })
+    }
 }

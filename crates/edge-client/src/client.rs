@@ -7,13 +7,14 @@ use edge_protocol::{
     CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
     CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1,
     CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
-    ForceCloseBusinessDayRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
-    InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1,
-    InventoryQueryV1, JournalEventV1, OpenRegisterSessionRequestV1, PaymentRequestV1,
-    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
-    RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1,
-    ReopenSessionRequestV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
-    SessionCloseResultV1, StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
+    ForceCloseBusinessDayRequestV1, HardwareStatusV1, ImportInventoryBootstrapRequestV1,
+    InitDeviceRequestV1, InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1,
+    InventoryPositionV1, InventoryQueryV1, JournalEventV1, OpenRegisterSessionRequestV1,
+    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, PrintTransactionRequestV1, ProductLookupV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, RefundEligibilityV1, RefundRequestV1, RefundV1,
+    RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RetailTransactionV1,
+    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
+    SubmitScanRequestV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -111,6 +112,26 @@ pub trait EdgeClient: Debug + Send + Sync {
         &self,
         request_id: Option<Uuid>,
     ) -> Result<RetailTransactionV1, ClientError>;
+    // -------------------------------------------------------------- hardware
+
+    /// What each device is and what we know about it. Probes; prints nothing
+    /// and opens nothing.
+    fn hardware_status(&self) -> Result<HardwareStatusV1, ClientError>;
+    /// A completed scan becomes an item on the active sale.
+    fn submit_scan(&self, request: SubmitScanRequestV1)
+        -> Result<RetailTransactionV1, ClientError>;
+    /// A diagnostic page. Touches no commercial data.
+    fn print_test_page(&self, request_id: Option<Uuid>) -> Result<HardwareStatusV1, ClientError>;
+    /// Print a finalized sale, or print it again. A reprint changes nothing.
+    fn print_transaction(
+        &self,
+        request: PrintTransactionRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<HardwareStatusV1, ClientError>;
+    /// Open the drawer because an operator asked. Audited, and it opens every
+    /// time it is asked.
+    fn open_drawer(&self, request_id: Option<Uuid>) -> Result<HardwareStatusV1, ClientError>;
+
     // --------------------------------------------------------------- refunds
 
     /// What a sale can still give back. The core computes every figure.

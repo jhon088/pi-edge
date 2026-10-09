@@ -13,6 +13,10 @@ use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_refunds::{RefundAuthority, RefundAuthorizationContext, RefundLineRequest};
 use edge_storage::SqliteEdgeStore;
+use std::sync::Arc;
+
+use edge_application::hardware_service::Hardware;
+use edge_hardware::{SimulatorDrawer, SimulatorPrinter};
 
 pub use edge_payments::TenderType as Tender;
 
@@ -31,10 +35,13 @@ fn start_instant() -> DateTime<Utc> {
 ///
 /// `id_offset` keeps generated ids distinct across "process lifetimes".
 pub fn core_at(path: &Path, id_offset: u64) -> TestCore {
-    EdgeApplication::new(
+    // Simulators are asked for explicitly (ADR 038).
+    EdgeApplication::with_hardware(
         SqliteEdgeStore::open(path).unwrap(),
         FixedClock::new(start_instant(), 1_000),
         SequentialIdFactory::starting_at(id_offset),
+        SimulatorPaymentProvider::approving(),
+        Hardware::simulated(),
     )
 }
 
@@ -44,10 +51,12 @@ pub fn core_at_instant(path: &Path, id_offset: u64, instant: &str) -> TestCore {
     let instant = DateTime::parse_from_rfc3339(instant)
         .unwrap()
         .with_timezone(&Utc);
-    EdgeApplication::new(
+    EdgeApplication::with_hardware(
         SqliteEdgeStore::open(path).unwrap(),
         FixedClock::frozen(instant),
         SequentialIdFactory::starting_at(id_offset),
+        SimulatorPaymentProvider::approving(),
+        Hardware::simulated(),
     )
 }
 
@@ -165,6 +174,59 @@ pub fn card_sale(core: &ScriptedCore) -> TransactionId {
         .id()
 }
 
+// -------------------------------------------------------------- hardware
+
+/// A completed scan, as a host's parser would produce it.
+pub fn scan_of(barcode: &str) -> SubmitScanCommand {
+    SubmitScanCommand {
+        scan: edge_hardware::ScanEvent {
+            event_id: uuid::Uuid::new_v4(),
+            barcode: barcode.to_owned(),
+            occurred_at: Timestamp::from_datetime(start_instant()),
+            device_id: "scanner".to_owned(),
+        },
+    }
+}
+
+/// A core over a database file, with simulators whose counters the test keeps.
+///
+/// Two lifetimes over one database get *fresh* simulators, which is the point:
+/// a drawer's open count cannot survive a process, so whatever stops a second
+/// opening has to be durable (ADR 037).
+#[derive(Debug)]
+pub struct HardwareLifetime {
+    pub core: TestCore,
+    pub printer: Arc<SimulatorPrinter>,
+    pub drawer: Arc<SimulatorDrawer>,
+}
+
+impl HardwareLifetime {
+    pub fn open(path: &Path, id_offset: u64) -> Self {
+        Self::with(path, id_offset, SimulatorDrawer::working())
+    }
+
+    pub fn with(path: &Path, id_offset: u64, drawer: SimulatorDrawer) -> Self {
+        let printer = Arc::new(SimulatorPrinter::working());
+        let drawer = Arc::new(drawer);
+        let core = EdgeApplication::with_hardware(
+            SqliteEdgeStore::open(path).unwrap(),
+            FixedClock::new(start_instant(), 1_000),
+            SequentialIdFactory::starting_at(id_offset),
+            SimulatorPaymentProvider::approving(),
+            Hardware::new(Arc::clone(&printer) as _, Arc::clone(&drawer) as _, 48),
+        );
+        Self {
+            core,
+            printer,
+            drawer,
+        }
+    }
+
+    pub fn opens(&self) -> usize {
+        self.drawer.open_count()
+    }
+}
+
 // --------------------------------------------------------------- refunds
 
 /// The authority a refund needs, as the composition root would resolve it.
@@ -237,11 +299,12 @@ pub type ScriptedCore =
 /// A lifetime whose card provider follows a script, so a lost provider call is
 /// reproducible rather than a matter of timing.
 pub fn scripted_core_at(path: &Path, id_offset: u64, script: SimulatorScript) -> ScriptedCore {
-    EdgeApplication::with_payment_provider(
+    EdgeApplication::with_hardware(
         SqliteEdgeStore::open(path).unwrap(),
         FixedClock::new(start_instant(), 1_000),
         SequentialIdFactory::starting_at(id_offset),
         SimulatorPaymentProvider::new(script),
+        Hardware::simulated(),
     )
 }
 

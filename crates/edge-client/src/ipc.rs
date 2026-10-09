@@ -10,14 +10,15 @@ use edge_protocol::{
     CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotRequestV1,
     CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
     CoreInfoV1, CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
-    ForceCloseBusinessDayRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
-    InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1,
-    InventoryQueryV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
-    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1,
-    PutCatalogChunkRequestV1, RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1,
-    RemoveItemRequestV1, ReopenSessionRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
-    RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
-    StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
+    ForceCloseBusinessDayRequestV1, HardwareStatusV1, ImportInventoryBootstrapRequestV1,
+    InitDeviceRequestV1, InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1,
+    InventoryPositionV1, InventoryQueryV1, JournalEventV1, LimitRequestV1,
+    OpenRegisterSessionRequestV1, OperationV1, PaymentRequestV1, PaymentResultV1, PendingOutboxV1,
+    PrintTransactionRequestV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1,
+    ReopenSessionRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
+    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
+    SubmitScanRequestV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -386,6 +387,53 @@ impl EdgeClient for IpcEdgeClient {
             self.call(OperationV1::FinalizeTransaction, request_id)?,
             ResultV1::Transaction,
             "TRANSACTION"
+        )
+    }
+
+    fn hardware_status(&self) -> Result<HardwareStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetHardwareStatus, None)?,
+            ResultV1::HardwareStatus,
+            "HARDWARE_STATUS"
+        )
+    }
+
+    fn submit_scan(
+        &self,
+        request: SubmitScanRequestV1,
+    ) -> Result<RetailTransactionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::SubmitScan(request), None)?,
+            ResultV1::Transaction,
+            "TRANSACTION"
+        )
+    }
+
+    fn print_test_page(&self, request_id: Option<Uuid>) -> Result<HardwareStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::PrintTestPage, request_id)?,
+            ResultV1::HardwareStatus,
+            "HARDWARE_STATUS"
+        )
+    }
+
+    fn print_transaction(
+        &self,
+        request: PrintTransactionRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<HardwareStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::PrintTransaction(request), request_id)?,
+            ResultV1::HardwareStatus,
+            "HARDWARE_STATUS"
+        )
+    }
+
+    fn open_drawer(&self, request_id: Option<Uuid>) -> Result<HardwareStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::OpenDrawerDiagnostic, request_id)?,
+            ResultV1::HardwareStatus,
+            "HARDWARE_STATUS"
         )
     }
 

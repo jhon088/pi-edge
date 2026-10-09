@@ -176,8 +176,23 @@ where
             })
         })?;
 
-        // ---- the provider call, with no transaction open ------------------
+        // ---- the physical side effect, with no transaction open ----------
+        // A committed cash payment means money is going into the drawer, so
+        // the drawer opens — keyed by the payment, so a replay cannot open it
+        // twice, and swallowing a failure because the money has already moved
+        // (ADR 037).
         let view = self.load_payment(handle.payment_id)?;
+        if view.payment.status == PaymentStatus::Committed
+            && view.payment.tender_type == TenderType::Cash
+        {
+            self.open_drawer_for(
+                edge_hardware::DrawerOpenReason::CashSale,
+                view.payment.payment_id.to_string(),
+                now,
+            );
+        }
+
+        // ---- the provider call, with no transaction open ------------------
         if let Some(attempt) = pending_attempt(&view) {
             let request = ProviderRequest {
                 correlation_id: attempt.correlation_id,

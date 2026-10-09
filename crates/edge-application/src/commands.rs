@@ -9,6 +9,7 @@ use edge_catalog::{
     SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
+use edge_hardware::ScanEvent;
 use edge_inventory::BootstrapItem;
 use edge_payments::TenderType;
 use edge_refunds::{RefundAuthorizationContext, RefundFiscalStatus, RefundLineRequest};
@@ -162,6 +163,37 @@ pub struct MarkTransactionInvoicedCommand {
     pub transaction_id: TransactionId,
     /// Canonical, opaque reference assigned upstream.
     pub invoice_ref: String,
+}
+
+// ---------------------------------------------------------------- hardware
+
+/// A physical scan, ready to become an item.
+///
+/// The host captured the keystrokes and `edge-hardware`'s parser decided a scan
+/// completed; this is the result crossing into the application (ADR 036).
+#[derive(Debug, Clone)]
+pub struct SubmitScanCommand {
+    pub scan: ScanEvent,
+}
+
+/// Print a finalized sale.
+#[derive(Debug, Clone)]
+pub struct PrintTransactionCommand {
+    pub request_id: Option<Uuid>,
+    pub transaction_id: TransactionId,
+    /// A reprint puts paper out and changes nothing else — no cash, no stock,
+    /// no drawer, no sale (ADR 037).
+    pub reprint: bool,
+}
+
+/// Open the drawer because an operator asked, from the diagnostic surface.
+///
+/// Unlike a drawer opening caused by a payment, this is not keyed to any
+/// commercial fact: it opens every time it is asked, and every opening is
+/// audited (ADR 037).
+#[derive(Debug, Clone)]
+pub struct OpenDrawerCommand {
+    pub request_id: Option<Uuid>,
 }
 
 /// Open an import and declare what is coming.

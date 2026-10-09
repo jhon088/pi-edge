@@ -23,6 +23,7 @@ use crate::context::{
     require_open_business_day, require_single_open_session, EventContext,
 };
 use crate::error::AppError;
+use crate::hardware_service::Hardware;
 use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
 use crate::queries::{EdgeState, PendingOutbox};
 use crate::CORE_VERSION;
@@ -38,6 +39,14 @@ pub struct EdgeApplication<S, C, I, P = SimulatorPaymentProvider> {
     pub(crate) clock: C,
     pub(crate) ids: I,
     pub(crate) payments: P,
+    /// The devices this installation drives.
+    ///
+    /// Trait objects rather than three more type parameters: these are
+    /// bounded I/O calls made outside every database transaction, so dynamic
+    /// dispatch costs nothing measurable, and three more generics would ripple
+    /// through every harness of every earlier milestone for no benefit
+    /// (ADR 035).
+    pub(crate) hardware: Hardware,
 }
 
 impl<S, C, I> EdgeApplication<S, C, I, SimulatorPaymentProvider>
@@ -61,13 +70,35 @@ where
     I: IdFactory,
     P: PaymentProviderPort,
 {
+    /// Core with **no hardware configured**. A composition root that drives
+    /// devices passes them in through [`EdgeApplication::with_hardware`]; one
+    /// that does not gets adapters which answer `HARDWARE_NOT_CONFIGURED`,
+    /// never simulators (ADR 038).
     pub fn with_payment_provider(store: S, clock: C, ids: I, payments: P) -> Self {
+        Self::with_hardware(store, clock, ids, payments, Hardware::unconfigured())
+    }
+
+    /// Core with the devices the composition root configured.
+    pub fn with_hardware(store: S, clock: C, ids: I, payments: P, hardware: Hardware) -> Self {
         Self {
             store,
             clock,
             ids,
             payments,
+            hardware,
         }
+    }
+
+    /// The devices this core drives, for diagnostics and for tests that assert
+    /// on a simulator's counters.
+    pub fn hardware(&self) -> &Hardware {
+        &self.hardware
+    }
+
+    /// The core's clock, for an adapter that has to stamp an input event it
+    /// received. The domain still never reads a clock itself.
+    pub fn clock_now(&self) -> Timestamp {
+        self.clock.now()
     }
 
     /// The provider this core settles provider-backed tenders through.

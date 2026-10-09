@@ -14,6 +14,7 @@ pub mod commands;
 /// construction and the single-terminal context rule.
 pub(crate) mod context;
 pub mod error;
+pub mod hardware_service;
 pub mod inventory_service;
 pub mod payment_service;
 pub mod ports;

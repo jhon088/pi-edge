@@ -10,6 +10,7 @@ use edge_catalog::{
     PriceEntry, ProductSelector, Promotion, SnapshotCounts, TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
+use edge_hardware::{HardwareDeviceKind, HardwareError};
 use edge_inventory::{InventoryMovement, InventoryPosition, MovementType};
 use edge_payments::{Payment, PaymentAttempt, PaymentView};
 use edge_refunds::{
@@ -403,8 +404,98 @@ pub struct RefundedTenderTotals {
     pub reserved: Money,
 }
 
+/// The hardware action log.
+///
+/// Append-only: an action is evidence that something physical was attempted,
+/// so there is no delete and a trigger in migration 0009 enforces it. An
+/// action is *resolved* in place — recording what the device answered is not
+/// rewriting what was attempted (ADR 037).
+pub trait HardwareUnitOfWork {
+    /// Claim an automatic action before the device is touched.
+    ///
+    /// Answers `None` when this cause already has a pending or completed
+    /// action, which is what stops a replayed command from opening the drawer
+    /// twice. A *failed* action does not block a retry.
+    fn claim_hardware_action(&mut self, action: &HardwareAction) -> Result<Option<Uuid>, AppError>;
+    /// Record what the device answered.
+    fn resolve_hardware_action(
+        &mut self,
+        action_id: Uuid,
+        outcome: Result<(), &HardwareError>,
+        now: Timestamp,
+    ) -> Result<(), AppError>;
+    /// The most recent action of one device, for the diagnostic view.
+    fn latest_hardware_action(
+        &mut self,
+        device_kind: HardwareDeviceKind,
+    ) -> Result<Option<HardwareAction>, AppError>;
+    /// When this device last did something successfully. Survives a restart,
+    /// which is why `last_success_at` can be shown after one (ADR 035).
+    fn last_hardware_success(
+        &mut self,
+        device_kind: HardwareDeviceKind,
+    ) -> Result<Option<Timestamp>, AppError>;
+}
+
+/// One attempted physical action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareAction {
+    pub action_id: Uuid,
+    pub kind: HardwareActionKind,
+    pub device_kind: HardwareDeviceKind,
+    /// A `DrawerOpenReason` or a `PrintKind`, as its wire string.
+    pub reason: String,
+    /// The commercial fact that justified it. `None` for an explicit
+    /// diagnostic request, which may legitimately repeat.
+    pub source_ref: Option<String>,
+    pub status: HardwareActionStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub requested_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareActionKind {
+    DrawerOpen,
+    Print,
+}
+
+impl HardwareActionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            HardwareActionKind::DrawerOpen => "DRAWER_OPEN",
+            HardwareActionKind::Print => "PRINT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareActionStatus {
+    /// Claimed, and the device not yet answered. Counts as taken: a process
+    /// that died here may already have opened the drawer.
+    Pending,
+    Completed,
+    Failed,
+}
+
+impl HardwareActionStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            HardwareActionStatus::Pending => "PENDING",
+            HardwareActionStatus::Completed => "COMPLETED",
+            HardwareActionStatus::Failed => "FAILED",
+        }
+    }
+}
+
 pub trait UnitOfWork:
-    CatalogUnitOfWork + PaymentUnitOfWork + CashUnitOfWork + InventoryUnitOfWork + RefundUnitOfWork
+    CatalogUnitOfWork
+    + PaymentUnitOfWork
+    + CashUnitOfWork
+    + InventoryUnitOfWork
+    + RefundUnitOfWork
+    + HardwareUnitOfWork
 {
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;
     fn put_device_profile(

@@ -15,6 +15,7 @@
 mod cash;
 mod catalog;
 pub mod error;
+mod hardware;
 mod inventory;
 pub mod lock;
 pub mod migrations;

@@ -1,0 +1,23 @@
+[package]
+name = "edge-hardware"
+description = "Hardware for PI.Edge: the device model, the deterministic scan parser, the printer and cash-drawer ports, the ESC/POS renderer and transport, and simulators. Knows nothing about SQLite, IPC, Tauri, Android or the POS domain."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Pure Rust plus one std TCP socket in the ESC/POS adapter. No SQLite, no
+# application layer, no Tauri, no Android SDK, no catalog, no money.
+[dependencies]
+edge-domain = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+# Only the tests build a timeline; the parser itself takes time as a parameter.
+chrono = { workspace = true }
+
+[lints]
+workspace = true

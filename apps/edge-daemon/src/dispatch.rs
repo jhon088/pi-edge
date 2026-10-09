@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use edge_application::commands::{
     AbortCatalogImportCommand, AcceptRefundCommand, ActivateCatalogSnapshotCommand,
-    CloseBusinessDayCommand, FinalizeTransactionCommand, OpenBusinessDayCommand,
+    CloseBusinessDayCommand, FinalizeTransactionCommand, OpenBusinessDayCommand, OpenDrawerCommand,
     ReconcileRefundCommand, RequestSessionCloseCommand, StartRefundPaymentCommand,
     StartTransactionCommand, TotalizeTransactionCommand,
 };
@@ -23,11 +23,12 @@ use edge_domain::prelude::{DomainError, RetailTransaction};
 use edge_payments::{PaymentError, SimulatorPaymentProvider};
 use edge_protocol::{
     error_codes, BusinessDayV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
-    CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, InventoryBootstrapV1,
-    InventoryMovementV1, InventoryPositionV1, JournalEventV1, OperationV1, PaymentResultV1,
-    PendingOutboxV1, ProductLookupV1, RefundEligibilityV1, RefundV1, RegisterSessionV1,
-    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1,
-    SessionCloseRequirementsV1, SessionCloseResultV1, TransactionPaymentsV1, PROTOCOL_VERSION,
+    CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, HardwareStatusV1,
+    InventoryBootstrapV1, InventoryMovementV1, InventoryPositionV1, JournalEventV1, OperationV1,
+    PaymentResultV1, PendingOutboxV1, ProductLookupV1, RefundEligibilityV1, RefundV1,
+    RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
+    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, TransactionPaymentsV1,
+    PROTOCOL_VERSION,
 };
 use edge_refunds::RefundError;
 use edge_storage::SqliteEdgeStore;
@@ -319,6 +320,49 @@ impl Dispatcher {
                     })
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
+            }
+            OperationV1::GetHardwareStatus => {
+                let view = self
+                    .core
+                    .get_hardware_status()
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
+            }
+            OperationV1::SubmitScan(payload) => {
+                // The host's parser already decided a scan completed; the core
+                // resolves the barcode through the ordinary catalog path
+                // (ADR 036).
+                let command = payload
+                    .into_command(self.core.clock_now())
+                    .map_err(domain_error)?;
+                let transaction = self
+                    .core
+                    .submit_scan(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Transaction(dto(&transaction)?))
+            }
+            OperationV1::PrintTestPage => {
+                let view = self.core.print_test_page().map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
+            }
+            OperationV1::PrintTransaction(payload) => {
+                let command = payload
+                    .into_command(Some(request_id))
+                    .map_err(domain_error)?;
+                let view = self
+                    .core
+                    .print_transaction(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
+            }
+            OperationV1::OpenDrawerDiagnostic => {
+                let view = self
+                    .core
+                    .open_drawer_diagnostic(OpenDrawerCommand {
+                        request_id: Some(request_id),
+                    })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
             }
             OperationV1::GetRefundEligibility(payload) => {
                 let transaction_id = payload.transaction_id().map_err(payment_error)?;

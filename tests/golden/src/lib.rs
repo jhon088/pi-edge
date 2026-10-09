@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
+use edge_application::hardware_service::Hardware;
 use edge_application::ports::InventoryBootstrapState;
 use edge_application::queries::{InventoryPositionView, RefundView};
 use edge_application::testing::{
@@ -419,11 +420,12 @@ pub fn scripted_golden_core(script: SimulatorScript) -> ScriptedGoldenCore {
     let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(FROZEN_AT)
         .unwrap()
         .with_timezone(&Utc);
-    EdgeApplication::with_payment_provider(
+    EdgeApplication::with_hardware(
         SqliteEdgeStore::open_in_memory().unwrap(),
         FixedClock::frozen(instant),
         SequentialIdFactory::new(),
         SimulatorPaymentProvider::new(script),
+        Hardware::simulated(),
     )
 }
 

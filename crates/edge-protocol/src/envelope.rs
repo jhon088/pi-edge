@@ -112,6 +112,11 @@ pub enum OperationV1 {
     GetPayment(PaymentRequestV1),
     GetTransactionPayments(TransactionRequestV1),
     FinalizeTransaction,
+    GetHardwareStatus,
+    SubmitScan(SubmitScanRequestV1),
+    PrintTestPage,
+    PrintTransaction(PrintTransactionRequestV1),
+    OpenDrawerDiagnostic,
     GetRefundEligibility(TransactionRequestV1),
     CreateRefund(CreateRefundRequestV1),
     AcceptRefund(RefundRequestV1),
@@ -170,6 +175,11 @@ impl OperationV1 {
             OperationV1::GetPayment(_) => "GET_PAYMENT",
             OperationV1::GetTransactionPayments(_) => "GET_TRANSACTION_PAYMENTS",
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
+            OperationV1::GetHardwareStatus => "GET_HARDWARE_STATUS",
+            OperationV1::SubmitScan(_) => "SUBMIT_SCAN",
+            OperationV1::PrintTestPage => "PRINT_TEST_PAGE",
+            OperationV1::PrintTransaction(_) => "PRINT_TRANSACTION",
+            OperationV1::OpenDrawerDiagnostic => "OPEN_DRAWER_DIAGNOSTIC",
             OperationV1::GetRefundEligibility(_) => "GET_REFUND_ELIGIBILITY",
             OperationV1::CreateRefund(_) => "CREATE_REFUND",
             OperationV1::AcceptRefund(_) => "ACCEPT_REFUND",
@@ -217,6 +227,10 @@ impl OperationV1 {
                 | OperationV1::ReconcilePayment(_)
                 | OperationV1::ReversePayment(_)
                 | OperationV1::FinalizeTransaction
+                | OperationV1::SubmitScan(_)
+                | OperationV1::PrintTestPage
+                | OperationV1::PrintTransaction(_)
+                | OperationV1::OpenDrawerDiagnostic
                 | OperationV1::CreateRefund(_)
                 | OperationV1::AcceptRefund(_)
                 | OperationV1::StartRefundPayment(_)
@@ -333,6 +347,7 @@ pub enum ResultV1 {
     RefundEligibility(RefundEligibilityV1),
     Refund(RefundV1),
     Refunds(Vec<RefundV1>),
+    HardwareStatus(HardwareStatusV1),
 }
 
 impl ResultV1 {
@@ -364,6 +379,7 @@ impl ResultV1 {
             ResultV1::RefundEligibility(_) => "REFUND_ELIGIBILITY",
             ResultV1::Refund(_) => "REFUND",
             ResultV1::Refunds(_) => "REFUNDS",
+            ResultV1::HardwareStatus(_) => "HARDWARE_STATUS",
         }
     }
 }

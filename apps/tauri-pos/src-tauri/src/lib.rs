@@ -16,14 +16,19 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
+use edge_domain::prelude::Timestamp;
 use edge_protocol::{
-    CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, InventoryPositionV1,
-    InventoryQueryV1, ProductLookupV1, ProductSelectorV1, RefundEligibilityV1, RefundV1,
-    TransactionPaymentsV1, TransactionRequestV1,
+    CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, HardwareStatusV1,
+    InventoryPositionV1, InventoryQueryV1, ProductLookupV1, ProductSelectorV1, RefundEligibilityV1,
+    RefundV1, RetailTransactionV1, SubmitScanRequestV1, TransactionPaymentsV1,
+    TransactionRequestV1,
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
+
+mod scanner;
 
 /// Event name the webview listens on.
 const STATE_CHANGED_EVENT: &str = "edge://state-changed";
@@ -62,12 +67,16 @@ pub struct ConnectionStatusDto {
     pub can_issue_commands: bool,
 }
 
-/// Managed state: one client and the background event listener.
+/// Managed state: one client, the background event listener, and the
+/// keyboard-wedge scan buffer.
 #[derive(Debug)]
 pub struct EdgeBridge {
     client: Arc<IpcEdgeClient>,
     listener: Mutex<Option<EventListener>>,
     database: PathBuf,
+    /// Per-window scan state. The *rule* for what a scan is lives in
+    /// `edge-hardware`; this only holds the buffer (ADR 036).
+    scanner: scanner::ScannerCapture,
 }
 
 impl EdgeBridge {
@@ -79,6 +88,7 @@ impl EdgeBridge {
             client: Arc::new(client),
             listener: Mutex::new(None),
             database,
+            scanner: scanner::ScannerCapture::default(),
         })
     }
 
@@ -204,6 +214,65 @@ fn transaction_refunds(
         .map_err(BridgeError::from)
 }
 
+/// What each device is and what the runtime knows about it.
+///
+/// A diagnostic read. The window shows a state, a last success and a last
+/// error; it never learns a host, a port or a driver's internals (ADR 035).
+#[tauri::command]
+fn hardware_status(bridge: tauri::State<'_, EdgeBridge>) -> Result<HardwareStatusV1, BridgeError> {
+    bridge.client.hardware_status().map_err(BridgeError::from)
+}
+
+/// Print a diagnostic page. Safe by construction: it touches no commercial
+/// data and the payload carries no bytes and no address (ADR 039).
+#[tauri::command]
+fn print_test_page(bridge: tauri::State<'_, EdgeBridge>) -> Result<HardwareStatusV1, BridgeError> {
+    bridge
+        .client
+        .print_test_page(Some(Uuid::new_v4()))
+        .map_err(BridgeError::from)
+}
+
+/// Open the drawer because the operator asked, from the diagnostic surface.
+#[tauri::command]
+fn open_drawer(bridge: tauri::State<'_, EdgeBridge>) -> Result<HardwareStatusV1, BridgeError> {
+    bridge
+        .client
+        .open_drawer(Some(Uuid::new_v4()))
+        .map_err(BridgeError::from)
+}
+
+/// One keystroke from a keyboard-wedge scanner.
+///
+/// The webview forwards every key it sees; the parser in `edge-hardware`
+/// decides when a scan completed, and only then does anything reach the core.
+/// Returns the sale when an item was added, and `None` while a barcode is
+/// still being read — so React learns nothing it could act on until the core
+/// has already acted (ADR 036).
+#[tauri::command]
+fn scanner_key(
+    bridge: tauri::State<'_, EdgeBridge>,
+    key: String,
+) -> Result<Option<RetailTransactionV1>, BridgeError> {
+    // The host stamps the keystroke; the parser compares gaps, never a wall
+    // clock of its own.
+    let now = Timestamp::from_datetime(chrono::Utc::now());
+    let Some(barcode) = bridge.scanner.push(&key, now) else {
+        return Ok(None);
+    };
+    bridge
+        .client
+        .submit_scan(SubmitScanRequestV1 {
+            // A fresh id per physical scan: two scans of one product are two
+            // units, and a resend of *this* scan is one.
+            event_id: Uuid::new_v4().to_string(),
+            barcode,
+            device_id: None,
+        })
+        .map(Some)
+        .map_err(BridgeError::from)
+}
+
 #[tauri::command]
 fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDto {
     let status = bridge.client.connection();
@@ -253,6 +322,10 @@ pub fn run() {
             inventory_position,
             refund_eligibility,
             transaction_refunds,
+            hardware_status,
+            print_test_page,
+            open_drawer,
+            scanner_key,
             connection_status
         ])
         .run(tauri::generate_context!());

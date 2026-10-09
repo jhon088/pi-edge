@@ -226,6 +226,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-payments",
  "edge-refunds",
@@ -294,6 +295,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-payments",
  "edge-refunds",
@@ -313,6 +315,7 @@ dependencies = [
  "edge-catalog",
  "edge-client",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-ipc",
  "edge-payments",
@@ -348,12 +351,24 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-payments",
  "edge-protocol",
  "edge-refunds",
  "edge-storage",
  "serde_json",
+]
+
+[[package]]
+name = "edge-hardware"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "edge-domain",
+ "serde",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -365,6 +380,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-payments",
  "edge-protocol",
@@ -418,6 +434,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-payments",
  "edge-refunds",
@@ -445,6 +462,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-hardware",
  "edge-inventory",
  "edge-payments",
  "edge-refunds",

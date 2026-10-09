@@ -20,6 +20,7 @@ edge-application = { workspace = true }
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
+edge-hardware = { workspace = true }
 edge-inventory = { workspace = true }
 edge-refunds = { workspace = true }
 edge-ipc = { workspace = true }

@@ -403,7 +403,29 @@ where
             })
         })?;
 
-        // ---- the provider call, with no transaction open ------------------
+        // ---- the physical side effects, with no transaction open ---------
+        // Cash left the drawer, so the drawer opens: keyed by the refund
+        // payment, so a replay cannot open it twice, and a failure leaves the
+        // refund exactly as settled as it was (ADR 037).
+        let cash_payments = self.store().transact(move |uow| {
+            Ok(uow
+                .list_refund_payments(cmd.refund_id)?
+                .into_iter()
+                .filter(|view| {
+                    view.payment.tender_type == TenderType::Cash
+                        && view.payment.status == RefundPaymentStatus::Refunded
+                })
+                .map(|view| view.payment.refund_payment_id)
+                .collect::<Vec<_>>())
+        })?;
+        for refund_payment_id in cash_payments {
+            self.open_drawer_for(
+                edge_hardware::DrawerOpenReason::CashRefund,
+                refund_payment_id.to_string(),
+                now,
+            );
+        }
+
         self.push_pending_refunds(cmd.refund_id, now)
     }
 

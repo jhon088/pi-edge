@@ -916,6 +916,61 @@ pub struct RefundRequestV1 {
     pub refund_id: String,
 }
 
+// ------------------------------------------------------------------- hardware
+
+/// One device's health.
+///
+/// Carries no host, port, serial number or driver internals beyond the driver's
+/// name: a diagnostic view must not become a way to read the installation's
+/// configuration (ADR 035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareDeviceV1 {
+    /// `SCANNER`, `PRINTER` or `CASH_DRAWER`.
+    pub kind: String,
+    /// Opaque. One device per kind in V1, but the contract does not say so.
+    pub device_id: String,
+    /// Which driver is configured, by name only.
+    pub driver: Option<String>,
+    /// `AVAILABLE`, `UNAVAILABLE`, `DEGRADED` or `UNKNOWN`. A device nobody has
+    /// probed in this process lifetime is `UNKNOWN`, never `AVAILABLE`.
+    pub state: String,
+    pub last_checked_at: Option<String>,
+    /// Survives a restart: it is rebuilt from the hardware action log.
+    pub last_success_at: Option<String>,
+    pub last_error_code: Option<String>,
+    /// Human detail. Never a stack trace, never a payload, never a host.
+    pub last_error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareStatusV1 {
+    pub scanner: HardwareDeviceV1,
+    pub printer: HardwareDeviceV1,
+    pub drawer: HardwareDeviceV1,
+}
+
+/// A completed scan, as the host's parser produced it.
+///
+/// `event_id` identifies *this keypress sequence*, not the barcode: two scans
+/// of the same product are two events and two units (ADR 036).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubmitScanRequestV1 {
+    pub event_id: String,
+    pub barcode: String,
+    /// Which scanner, opaque. Optional: one is the common case.
+    #[serde(default)]
+    pub device_id: Option<String>,
+}
+
+/// Print a finalized sale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrintTransactionRequestV1 {
+    pub transaction_id: String,
+    /// A reprint puts paper out and changes nothing else (ADR 037).
+    #[serde(default)]
+    pub reprint: bool,
+}
+
 // ------------------------------------------------------------ cash management
 
 /// One drawer movement. Append-only: there is no update DTO (ADR 021).

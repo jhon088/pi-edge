@@ -8,6 +8,7 @@ use edge_catalog::{
     CatalogProduct, CatalogSnapshot, ImportProgress, ResolvedPrice, SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
+use edge_hardware::HardwareDeviceStatus;
 use edge_inventory::{InventoryMovement, InventoryPosition};
 use edge_refunds::{FiscalState, LineRefundable, Refund, RefundPaymentView, TenderRefundable};
 use serde::{Deserialize, Serialize};
@@ -160,4 +161,17 @@ pub struct RefundView {
     pub inventory_returned: bool,
     /// Whether the only way forward is reconciling a refund attempt.
     pub requires_reconciliation: bool,
+}
+
+// ----------------------------------------------------------------- hardware
+
+/// What each device is and what we know about it.
+///
+/// Carries no host, port, serial or driver internals: a diagnostic view must
+/// not become a way to read the installation's configuration (ADR 035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareStatusView {
+    pub scanner: HardwareDeviceStatus,
+    pub printer: HardwareDeviceStatus,
+    pub drawer: HardwareDeviceStatus,
 }

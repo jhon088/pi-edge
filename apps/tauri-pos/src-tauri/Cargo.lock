@@ -323,8 +323,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -708,6 +710,27 @@ dependencies = [
  "edge-protocol",
  "thiserror 2.0.21",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "edge-domain"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "edge-hardware"
+version = "0.1.0"
+dependencies = [
+ "edge-domain",
+ "serde",
+ "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -3237,13 +3260,17 @@ dependencies = [
 name = "tauri-pos"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "edge-client",
+ "edge-domain",
+ "edge-hardware",
  "edge-protocol",
  "serde",
  "tauri",
  "tauri-build",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

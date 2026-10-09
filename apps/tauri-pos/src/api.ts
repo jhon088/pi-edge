@@ -16,8 +16,10 @@ import type {
   ConnectionStatus,
   CoreInfo,
   EdgeState,
+  HardwareStatus,
   InventoryPosition,
   ProductLookup,
+  RetailTransaction,
   Refund,
   RefundEligibility,
   StateChangedEvent,
@@ -115,6 +117,36 @@ export function fetchTransactionRefunds(
   transactionId: string,
 ): Promise<Refund[]> {
   return invoke<Refund[]>("transaction_refunds", { transactionId });
+}
+
+/**
+ * What each device is and what the runtime knows about it.
+ *
+ * Read-only, and probing is the core's job: this never learns an address.
+ */
+export function fetchHardwareStatus(): Promise<HardwareStatus> {
+  return invoke<HardwareStatus>("hardware_status");
+}
+
+/** Print a diagnostic page. Carries no bytes and no address. */
+export function printTestPage(): Promise<HardwareStatus> {
+  return invoke<HardwareStatus>("print_test_page");
+}
+
+/** Open the drawer because the operator asked. Audited by the core. */
+export function openDrawer(): Promise<HardwareStatus> {
+  return invoke<HardwareStatus>("open_drawer");
+}
+
+/**
+ * Forward one keystroke from a keyboard-wedge scanner.
+ *
+ * The parser lives in Rust: this only passes the key along, and gets the sale
+ * back when — and only when — a complete barcode became an item. No rule about
+ * what a scan is exists on this side.
+ */
+export function scannerKey(key: string): Promise<RetailTransaction | null> {
+  return invoke<RetailTransaction | null>("scanner_key", { key });
 }
 
 /** Resolve a barcode the way a sale would. The core prices it, not this code. */

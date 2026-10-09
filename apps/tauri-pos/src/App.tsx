@@ -11,7 +11,11 @@ import {
   describeError,
   fetchCashPosition,
   fetchCatalogStatus,
+  fetchHardwareStatus,
   fetchInventoryPosition,
+  openDrawer,
+  printTestPage,
+  scannerKey,
   fetchRefundEligibility,
   fetchTransactionRefunds,
   fetchConnection,
@@ -28,6 +32,7 @@ import type {
   ConnectionStatus,
   CoreInfo,
   EdgeState,
+  HardwareStatus,
   InventoryPosition,
   ProductLookup,
   Refund,
@@ -300,6 +305,10 @@ export default function App() {
         <InventoryLedger enabled={connection.connected} />
       </Card>
 
+      <Card title="Hardware">
+        <HardwarePanel enabled={connection.connected} onChanged={refresh} />
+      </Card>
+
       <Card title="Refunds">
         <Refunds enabled={connection.connected} />
       </Card>
@@ -411,6 +420,162 @@ function BarcodeLookup({ enabled }: { enabled: boolean }) {
       <p className="muted">
         The core resolves the price book, the price and the tax. React computes
         nothing.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Hardware diagnostics, and the keyboard-wedge capture.
+ *
+ * The two buttons are safe by construction: they ask for an *intent* —
+ * "print a test page", "open the drawer" — and carry no address, no bytes and
+ * no driver name. The core decides what that means and audits it.
+ *
+ * The capture forwards keystrokes to the Rust host and nothing else: the rule
+ * for what counts as a scan lives in `edge-hardware`, so this component holds
+ * no buffer, no timeout and no barcode logic (ADR 036).
+ */
+function HardwarePanel({
+  enabled,
+  onChanged,
+}: {
+  enabled: boolean;
+  onChanged: () => void;
+}) {
+  const [status, setStatus] = useState<HardwareStatus | null>(null);
+  const [error, setError] = useState<BridgeError | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [lastScan, setLastScan] = useState<string | null>(null);
+
+  const read = useCallback(async () => {
+    setBusy(true);
+    try {
+      setStatus(await fetchHardwareStatus());
+      setError(null);
+    } catch (failure) {
+      setStatus(null);
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const act = async (action: () => Promise<HardwareStatus>) => {
+    setBusy(true);
+    try {
+      setStatus(await action());
+      setError(null);
+    } catch (failure) {
+      // A device that refused is reported, and nothing commercial moved.
+      setError(describeError(failure));
+      void read();
+    } finally {
+      setBusy(false);
+      onChanged();
+    }
+  };
+
+  // While capturing, every keystroke in the window goes to the host. The
+  // scanner is a very fast typist, and the host's parser is what tells the
+  // difference between it and a person.
+  useEffect(() => {
+    if (!capturing || !enabled) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      void scannerKey(event.key)
+        .then((transaction) => {
+          if (transaction) {
+            setLastScan(
+              `${transaction.lines.length} line(s) · ${transaction.totals.grand_total.formatted}`,
+            );
+            onChanged();
+          }
+        })
+        .catch((failure) => setError(describeError(failure)));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [capturing, enabled, onChanged]);
+
+  return (
+    <>
+      <div className="lookup">
+        <button type="button" onClick={() => void read()} disabled={!enabled || busy}>
+          {busy ? "Working…" : "Probe devices"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void act(printTestPage)}
+          disabled={!enabled || busy}
+        >
+          Print test page
+        </button>
+        <button
+          type="button"
+          onClick={() => void act(openDrawer)}
+          disabled={!enabled || busy}
+        >
+          Open drawer
+        </button>
+        <button
+          type="button"
+          onClick={() => setCapturing((on) => !on)}
+          disabled={!enabled}
+        >
+          {capturing ? "Stop scanner capture" : "Start scanner capture"}
+        </button>
+      </div>
+
+      {capturing ? (
+        <p className="muted">
+          Capturing keystrokes for the scanner. The host decides what a scan is;
+          this window only forwards keys.
+          {lastScan ? ` Last scan added: ${lastScan}.` : ""}
+        </p>
+      ) : null}
+
+      {status ? (
+        <table className="lines">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Driver</th>
+              <th>State</th>
+              <th>Last success</th>
+              <th>Last error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[status.scanner, status.printer, status.drawer].map((device) => (
+              <tr key={device.kind}>
+                <td>{device.kind}</td>
+                <td className="mono">{device.driver ?? "—"}</td>
+                <td>{device.state}</td>
+                <td className="muted">{device.last_success_at ?? "—"}</td>
+                <td className="mono">
+                  {device.last_error_code ?? "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">
+          Not probed yet. A configured device is not an available one, so
+          nothing is claimed until it answers.
+        </p>
+      )}
+      {error ? (
+        <p className="muted">
+          <code>{error.code}</code> {error.message}
+        </p>
+      ) : null}
+      <p className="muted">
+        A device that fails changes nothing commercial: a sale stays paid, the
+        drawer ledger stays right, and the failure is recorded.
       </p>
     </>
   );

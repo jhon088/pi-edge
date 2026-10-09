@@ -9,15 +9,16 @@ use edge_application::AppError;
 use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, MoneyError};
+use edge_hardware::HardwareError;
 use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
 use edge_protocol::{
     error_codes, AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1,
     ChangeQuantityRequestV1, CreateRefundRequestV1, DeclareClosingCashRequestV1,
     ForceCloseBusinessDayRequestV1, ImportInventoryBootstrapRequestV1, InventoryMovementRequestV1,
-    InventoryQueryV1, OperationV1, PaymentRequestV1, ProductSelectorV1, RefundRequestV1,
-    RemoveItemRequestV1, ReopenSessionRequestV1, SessionCloseRequirementsV1, StartPaymentRequestV1,
-    TransactionRequestV1,
+    InventoryQueryV1, OperationV1, PaymentRequestV1, PrintTransactionRequestV1, ProductSelectorV1,
+    RefundRequestV1, RemoveItemRequestV1, ReopenSessionRequestV1, SessionCloseRequirementsV1,
+    StartPaymentRequestV1, SubmitScanRequestV1, TransactionRequestV1,
 };
 use edge_refunds::RefundError;
 
@@ -760,5 +761,153 @@ fn the_create_refund_payload_cannot_assert_authority_or_fiscal_state() {
             !object.contains_key(forbidden),
             "`{forbidden}` must not be something a client can state"
         );
+    }
+}
+
+#[test]
+fn hardware_codes_are_stable() {
+    for (error, expected) in [
+        (
+            HardwareError::Unavailable {
+                device: "printer",
+                detail: "nothing is listening".to_owned(),
+            },
+            error_codes::HARDWARE_UNAVAILABLE,
+        ),
+        (
+            HardwareError::Timeout {
+                device: "printer",
+                elapsed_ms: 2_000,
+            },
+            error_codes::HARDWARE_TIMEOUT,
+        ),
+        (
+            HardwareError::Io {
+                device: "printer",
+                detail: "write failed".to_owned(),
+            },
+            error_codes::HARDWARE_IO_ERROR,
+        ),
+        (
+            HardwareError::NotConfigured {
+                device: "cash drawer",
+                detail: "no bridge".to_owned(),
+            },
+            error_codes::HARDWARE_NOT_CONFIGURED,
+        ),
+        (
+            HardwareError::ActionAlreadyCompleted {
+                source_ref: "p1".to_owned(),
+            },
+            error_codes::HARDWARE_ACTION_ALREADY_COMPLETED,
+        ),
+    ] {
+        assert_eq!(error.code(), expected);
+        assert_eq!(AppError::Hardware(error).kind(), expected);
+    }
+    assert_eq!(
+        AppError::ScanWithoutTransaction.kind(),
+        error_codes::SCAN_NO_ACTIVE_TRANSACTION
+    );
+}
+
+#[test]
+fn hardware_operations_have_stable_names() {
+    for (operation, expected, is_command) in [
+        (OperationV1::GetHardwareStatus, "GET_HARDWARE_STATUS", false),
+        (
+            OperationV1::SubmitScan(SubmitScanRequestV1 {
+                event_id: "11111111-1111-1111-1111-111111111111".to_owned(),
+                barcode: "7501000000001".to_owned(),
+                device_id: None,
+            }),
+            "SUBMIT_SCAN",
+            true,
+        ),
+        (OperationV1::PrintTestPage, "PRINT_TEST_PAGE", true),
+        (
+            OperationV1::PrintTransaction(PrintTransactionRequestV1 {
+                transaction_id: "22222222-2222-2222-2222-222222222222".to_owned(),
+                reprint: true,
+            }),
+            "PRINT_TRANSACTION",
+            true,
+        ),
+        (
+            OperationV1::OpenDrawerDiagnostic,
+            "OPEN_DRAWER_DIAGNOSTIC",
+            true,
+        ),
+    ] {
+        assert_eq!(operation.name(), expected);
+        assert_eq!(operation.is_command(), is_command, "{expected}");
+    }
+}
+
+/// The hardware surface asks for an **intention**, never for a capability.
+///
+/// A payload that could carry a host, a port, a driver or raw bytes would let
+/// any client print anywhere on the network or send an arbitrary escape
+/// sequence to a device. None of them has a field for it (ADR 039).
+#[test]
+fn no_hardware_payload_can_name_a_device_or_carry_bytes() {
+    // The two diagnostic operations carry nothing at all.
+    for operation in [
+        OperationV1::PrintTestPage,
+        OperationV1::OpenDrawerDiagnostic,
+    ] {
+        let rendered = serde_json::to_value(&operation).unwrap();
+        let payload = rendered.get("payload");
+        assert!(
+            payload.is_none() || payload == Some(&serde_json::Value::Null),
+            "{} must carry no payload: {rendered}",
+            operation.name()
+        );
+    }
+
+    // And the two that do carry a payload carry only what they are about.
+    let print = serde_json::to_value(PrintTransactionRequestV1 {
+        transaction_id: "22222222-2222-2222-2222-222222222222".to_owned(),
+        reprint: false,
+    })
+    .unwrap();
+    assert_eq!(
+        print
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["transaction_id", "reprint"]
+    );
+
+    let scan = serde_json::to_value(SubmitScanRequestV1 {
+        event_id: "11111111-1111-1111-1111-111111111111".to_owned(),
+        barcode: "7501000000001".to_owned(),
+        device_id: None,
+    })
+    .unwrap();
+    assert_eq!(
+        scan.as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["event_id", "barcode", "device_id"]
+    );
+
+    for forbidden in [
+        "host", "port", "address", "driver", "bytes", "payload", "escpos", "command", "method",
+        "copies", "width",
+    ] {
+        for rendered in [&print, &scan] {
+            assert!(
+                !rendered
+                    .as_object()
+                    .expect("an object")
+                    .contains_key(forbidden),
+                "`{forbidden}` must not be something a client can state"
+            );
+        }
     }
 }

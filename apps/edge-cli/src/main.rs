@@ -25,9 +25,9 @@ use edge_protocol::{
     AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1, ChangeQuantityRequestV1,
     CreateRefundRequestV1, DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1,
     InitDeviceRequestV1, InventoryMovementRequestV1, InventoryQueryV1,
-    OpenRegisterSessionRequestV1, PaymentRequestV1, ProductSelectorV1, RefundRequestV1,
-    RemoveItemRequestV1, ReopenSessionRequestV1, StartPaymentRequestV1, TransactionRequestV1,
-    PROTOCOL_VERSION,
+    OpenRegisterSessionRequestV1, PaymentRequestV1, PrintTransactionRequestV1, ProductSelectorV1,
+    RefundRequestV1, RemoveItemRequestV1, ReopenSessionRequestV1, StartPaymentRequestV1,
+    SubmitScanRequestV1, TransactionRequestV1, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -220,6 +220,30 @@ enum Command {
     GetState,
     /// Print the active transaction, if any.
     ActiveSale,
+    /// What each device is and what the runtime knows about it.
+    HardwareStatus,
+    /// Print a diagnostic page. Touches no commercial data.
+    PrinterTest,
+    /// Open the drawer because you asked. Audited, and it opens every time.
+    DrawerOpen,
+    /// Print a finalized sale. `--reprint` marks it as a copy and still
+    /// changes nothing: no cash, no stock, no drawer (ADR 037).
+    PrintTransaction {
+        #[arg(long = "transaction")]
+        transaction_id: String,
+        #[arg(long)]
+        reprint: bool,
+    },
+    /// Feed a completed scan, as a host's parser would. Diagnostic: the real
+    /// path is the scanner itself.
+    Scan {
+        #[arg(long)]
+        barcode: String,
+        /// The id of this physical scan. A fresh one each time, because two
+        /// scans of the same product are two units (ADR 036).
+        #[arg(long = "event")]
+        event_id: Option<String>,
+    },
     /// What a closed sale can still give back. The core computes it all.
     RefundEligibility {
         #[arg(long = "transaction")]
@@ -563,6 +587,28 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             }))
         }
         Command::ActiveSale => to_value(&client.get_active_transaction()?),
+        Command::HardwareStatus => to_value(&client.hardware_status()?),
+        Command::PrinterTest => to_value(&client.print_test_page(request_id)?),
+        Command::DrawerOpen => to_value(&client.open_drawer(request_id)?),
+        Command::PrintTransaction {
+            transaction_id,
+            reprint,
+        } => to_value(&client.print_transaction(
+            PrintTransactionRequestV1 {
+                transaction_id: transaction_id.clone(),
+                reprint: *reprint,
+            },
+            request_id,
+        )?),
+        Command::Scan { barcode, event_id } => to_value(
+            &client.submit_scan(SubmitScanRequestV1 {
+                event_id: event_id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                barcode: barcode.clone(),
+                device_id: None,
+            })?,
+        ),
         Command::RefundEligibility { transaction_id } => {
             to_value(&client.refund_eligibility(TransactionRequestV1 {
                 transaction_id: transaction_id.clone(),

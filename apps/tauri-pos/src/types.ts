@@ -511,3 +511,30 @@ export interface Refund {
   accepted_at: string | null;
   completed_at: string | null;
 }
+
+/**
+ * One device's health.
+ *
+ * Carries no host, port or driver internals beyond the driver's name: a
+ * diagnostic screen must not become a way to read the installation's
+ * configuration.
+ */
+export interface HardwareDevice {
+  /** `SCANNER`, `PRINTER` or `CASH_DRAWER`. */
+  kind: string;
+  device_id: string;
+  driver: string | null;
+  /** `AVAILABLE`, `UNAVAILABLE`, `DEGRADED` or `UNKNOWN`. */
+  state: string;
+  last_checked_at: string | null;
+  /** Survives a restart: rebuilt from the hardware action log. */
+  last_success_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+}
+
+export interface HardwareStatus {
+  scanner: HardwareDevice;
+  printer: HardwareDevice;
+  drawer: HardwareDevice;
+}

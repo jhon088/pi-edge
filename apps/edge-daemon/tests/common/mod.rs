@@ -46,6 +46,16 @@ impl DaemonProcess {
     /// Start a daemon, optionally **without** refund authority, which is the
     /// production default: no authority source, no refunds (ADR 030).
     pub fn start_configured(database: &Path, script: Option<&str>, refund_authority: bool) -> Self {
+        Self::start_with_env(database, script, refund_authority, &[])
+    }
+
+    /// Start a daemon with extra configuration, for the hardware drivers.
+    pub fn start_with_env(
+        database: &Path,
+        script: Option<&str>,
+        refund_authority: bool,
+        env: &[(&str, &str)],
+    ) -> Self {
         let log_path = database.with_extension("daemon.log");
         let log = std::fs::File::create(&log_path).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_edge-daemon"));
@@ -54,6 +64,9 @@ impl DaemonProcess {
         }
         if refund_authority {
             command.env("PI_EDGE_REFUND_AUTHORITY", "dev-accept-local");
+        }
+        for (key, value) in env {
+            command.env(key, value);
         }
         let mut child = command
             .arg("--db")
