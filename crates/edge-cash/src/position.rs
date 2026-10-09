@@ -23,6 +23,8 @@ pub struct CashPosition {
     pub cash_out: Money,
     /// Approved drops only. A pending drop has not moved anything.
     pub safe_drops: Money,
+    /// Cash handed back for commercial refunds.
+    pub cash_refunds: Money,
     /// `Σ(IN) − Σ(OUT)`.
     pub expected_cash: Money,
     pub movement_count: i64,
@@ -42,6 +44,7 @@ impl CashPosition {
             cash_in: zero,
             cash_out: zero,
             safe_drops: zero,
+            cash_refunds: zero,
             expected_cash: zero,
             movement_count: 0,
             tendered_total: zero,
@@ -80,6 +83,9 @@ pub fn position(movements: &[CashMovement], currency: Currency) -> Result<CashPo
             (MovementType::SafeDrop, _) => {
                 position.safe_drops = position.safe_drops.checked_add(amount)?;
             }
+            (MovementType::CashRefund, _) => {
+                position.cash_refunds = position.cash_refunds.checked_add(amount)?;
+            }
         }
         position.movement_count += 1;
     }
@@ -88,7 +94,10 @@ pub fn position(movements: &[CashMovement], currency: Currency) -> Result<CashPo
         .opening_float
         .checked_add(position.cash_sales)?
         .checked_add(position.cash_in)?;
-    let outflow = position.cash_out.checked_add(position.safe_drops)?;
+    let outflow = position
+        .cash_out
+        .checked_add(position.safe_drops)?
+        .checked_add(position.cash_refunds)?;
     // Expected cash can legitimately be negative if a drawer was over-emptied,
     // so it is not clamped: hiding that would hide a real problem.
     position.expected_cash = inflow.checked_sub(outflow)?;

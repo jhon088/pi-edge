@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
 use edge_protocol::{
     CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, InventoryPositionV1,
-    InventoryQueryV1, ProductLookupV1, ProductSelectorV1, TransactionPaymentsV1,
-    TransactionRequestV1,
+    InventoryQueryV1, ProductLookupV1, ProductSelectorV1, RefundEligibilityV1, RefundV1,
+    TransactionPaymentsV1, TransactionRequestV1,
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -175,6 +175,35 @@ fn inventory_position(
         .map_err(BridgeError::from)
 }
 
+/// What a closed sale can still give back, and the refunds it already has.
+///
+/// A diagnostic read. There is deliberately no command here for creating,
+/// accepting, paying or reconciling a refund: this window is read-only in this
+/// milestone and those are exercised through the CLI. Every refundable figure
+/// is the core's — the UI computes nothing (ADR 031).
+#[tauri::command]
+fn refund_eligibility(
+    bridge: tauri::State<'_, EdgeBridge>,
+    transaction_id: String,
+) -> Result<RefundEligibilityV1, BridgeError> {
+    bridge
+        .client
+        .refund_eligibility(TransactionRequestV1 { transaction_id })
+        .map_err(BridgeError::from)
+}
+
+/// Every refund of one sale, with its financial, inventory and fiscal state.
+#[tauri::command]
+fn transaction_refunds(
+    bridge: tauri::State<'_, EdgeBridge>,
+    transaction_id: String,
+) -> Result<Vec<RefundV1>, BridgeError> {
+    bridge
+        .client
+        .transaction_refunds(TransactionRequestV1 { transaction_id })
+        .map_err(BridgeError::from)
+}
+
 #[tauri::command]
 fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDto {
     let status = bridge.client.connection();
@@ -222,6 +251,8 @@ pub fn run() {
             transaction_payments,
             cash_position,
             inventory_position,
+            refund_eligibility,
+            transaction_refunds,
             connection_status
         ])
         .run(tauri::generate_context!());

@@ -36,6 +36,7 @@ the active sale, the journal and the outbox live in the daemon.
 | `crates/edge-payments` | tenders, the payment and attempt state machines, settlement arithmetic, the provider port and a deterministic simulator. Pure Rust: no SQLite, no HTTP, no provider SDK |
 | `crates/edge-cash` | the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Pure Rust |
 | `crates/edge-inventory` | the append-only stock ledger, its movement types and directions, and the derived on-hand fold. Pure Rust |
+| `crates/edge-refunds` | the refund document, its lines, the refundable arithmetic over a closed sale, the financial refund lifecycle and the fiscal consequence. Pure Rust |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
 | `crates/edge-ipc` | the only crate that knows what a socket or a pipe is: `EdgeTransport`, JSON Lines framing, local credentials |
@@ -44,7 +45,86 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 8 (inventory ledger V1)
+## Status — milestone 9 (refund engine V1)
+
+Done: giving money and goods back is a **document of its own**, not a
+correction of the sale:
+
+```text
+Original sale (FINALIZED)
+      │
+      ▼
+   Refund ──┬── lines, priced from the sale's own materialised economics
+            ├── financial refund  → CASH / CARD, pro-rata over the tenders
+            ├── inventory return  → REFUND_RETURN, when the goods come back
+            └── fiscal consequence → NONE / CREDIT_NOTE_PENDING / REQUESTED
+```
+
+The three consequences settle at **different moments and can disagree** — the
+merchandise can be on the shelf while the card refund is still unresolved — so
+the lifecycle separates commercial acceptance from financial settlement
+(ADR 033):
+
+```text
+CREATED ──accept──> ACCEPTED ─────────────────────> COMPLETED
+   │                    │                               ▲
+  FAILED                └──> FINANCIAL_PENDING ─────────┘
+```
+
+* **`ACCEPTED` means the goods came back.** The inventory return is written
+  there, once, in the same transaction. From then on the commercial refund is
+  irrevocable: an unresolved card refund waits for reconciliation and never
+  "fails".
+* **Only `CREATED` can fail**, and failing frees the quantities it held.
+* **A refund never re-prices anything.** It consumes the original line's
+  materialised `net`, `tax`, `discount` and `line_total`, so it is right even
+  after the catalog that priced the sale is gone (ADR 031).
+* **Promotions are never re-run.** Buy-2-get-1 on three units charged 232.00, so
+  one unit gives back a third of that — not the 116.00 shelf price (arbitrage)
+  and not zero (shorting the customer). Three single-unit refunds give back
+  232.00 exactly.
+* **Partial refunds exhaust a line to the cent.** Each slice is prorated against
+  what is *left*, and the last one takes precisely the remainder.
+* **A tender never gives back more than it took.** The refund is spread
+  pro-rata over what each original tender *applied*, capped per tender: a
+  300/860 sale refunding 580.00 returns 150.00 cash and 430.00 card.
+* **A refund needs central authority over the original sale.** A locally
+  finalized sale is not a centrally accepted one, and the wire has no field a
+  client could assert it with. With no authority source configured, every refund
+  is refused — the production rule by default (ADR 030).
+* **One refund in progress per sale**, enforced by a partial unique index, with
+  validation and reservation in one transaction.
+* **Refund ≠ reversal.** A reversal un-applies a charge that should not have
+  stayed, on an open sale; a refund is a new document for a closed one. After a
+  refund the original payment is still `COMMITTED` and the sale still
+  `FINALIZED` (ADR 034).
+* **`UNKNOWN` is first class again.** A lost provider answer is never promoted
+  to `FAILED` and never retried: starting again answers
+  `REFUND_REQUIRES_RECONCILIATION`. The priority is never paying twice.
+* **The fiscal consequence is recorded, never stamped.** A sale that was never
+  invoiced admits only `NONE`; an invoiced one must choose explicitly.
+  `CREDIT_NOTE_REQUESTED` is a durable intention, not a result. No CFDI, no
+  PAC, no SAT (ADR 032).
+* **PI.Edge consumes fiscal metadata and never declares it.** Invoicing happens
+  upstream, so no operation, client method or CLI command writes the fiscal
+  state — a till only ever meets `NOT_INVOICED`. The invoiced case is arranged
+  by a test fixture, not by a POS capability (ADR 032).
+
+```bash
+edge-cli refund-eligibility --transaction <id>
+edge-cli refund-create --transaction <id> --line 1:2000 --reason CUSTOMER_RETURN \
+                       --fiscal-action NONE
+edge-cli refund-accept --refund <id>     # goods back -> inventory returns
+edge-cli refund-pay    --refund <id>     # money back -> drawer / provider
+edge-cli refund-reconcile --refund <id>  # resolves an unknown; never refunds again
+edge-cli refund-show --refund <id>
+```
+
+Refunds are durable locally and in their own tables; **M11 Sync must publish
+them.** No outbox event was added, because there is no consumer yet and the
+frozen rule is no events without one.
+
+## Previously — milestone 8 (inventory ledger V1)
 
 Done: PI.Edge knows what *it* has recorded, locally and offline. The model is a
 ledger, not a number:
@@ -300,6 +380,9 @@ Extras: `remove-item --line N`, `change-qty --line N --qty N`,
 `activate-catalog`, `abort-catalog`, `lookup --barcode|--sku|--product`,
 `inventory-movements --product <ref> --limit N --offset N`,
 `inventory-in|inventory-out --product <ref> --qty <thousandths> --reason <code>`,
+`refund-eligibility`, `refund-create`, `refund-accept`, `refund-pay`,
+`refund-reconcile`, `refund-show`, `refunds --transaction <id>`,
+`PI_EDGE_REFUND_AUTHORITY=dev-accept-local` to enable refunds in development,
 `init-demo --block-negative-inventory` for a till that refuses to oversell,
 `--format json`, `--db <path>` (or `PI_EDGE_DB`), `--request-id <uuid>` for
 idempotent retries, `PI_EDGE_LOG=info` for structured logs on stderr.
@@ -554,6 +637,43 @@ future upstream reconciliation will *not* be expressed as an
 movement type, command, authority and audit — not a silent overwrite
 (ADR 028).
 
+## Refunds
+
+```text
+                       ┌─ lines         priced from the sale, never re-priced
+Refund (own document) ─┼─ financial     pro-rata per original tender, capped
+                       ├─ inventory     REFUND_RETURN (IN) at ACCEPTED
+                       └─ fiscal        NONE | CREDIT_NOTE_PENDING | REQUESTED
+```
+
+**What a unit is worth is already decided.** The sale materialised
+`net`, `tax`, `discount` and `line_total` on every line, with basket discounts
+already allocated onto the lines before tax (milestone 5). A refund of part of a
+line takes that share of those amounts — so the promotion is accounted for
+without re-running the promotion engine, and without anyone deciding which unit
+"was the free one".
+
+**Slices are taken against the remainder**, so repeated partial refunds of one
+line add up to the line to the minor unit, and the last refund absorbs the
+remainder. `Money::prorate(part, whole)` returns the amount untouched when
+`part == whole`, which is what makes that exact.
+
+**Refund and reversal are different documents:**
+
+```text
+ReversePayment   open sale    un-applies a charge that should not have stayed
+Refund           closed sale  new document: goods back, money back, credit note owed
+```
+
+**The money going back is never more than the money that came in.** Each tender
+is capped at what it *applied* — a customer who handed over 200.00 for a 116.00
+cash sale is owed 116.00, not 200.00; the change went home with them.
+
+**Authority is resolved by the runtime, not claimed by the till.** In production
+PI.COMMERCE Server validates the original sale. Until it exists,
+`PI_EDGE_REFUND_AUTHORITY=dev-accept-local` turns on a development stand-in that
+marks what it produces; with no switch, refunds are refused.
+
 ## Runtime layout
 
 Derived from the database path, so one database means one runtime:
@@ -598,7 +718,7 @@ arithmetic are denied outside tests.
 | `apps/edge-daemon/tests/promotions.rs` | the promotion surface over real IPC: adjustments on the transaction DTO, `remove-item`/`change-qty`, `AMBIGUOUS_PROMOTION`, promotions in the chunked import, count mismatch, a promotion naming a product from another chunk |
 | `tests/integration/tests/pricing.rs` | base price, store override, other store's book ignored, inactive book ignored, priority within a scope, future and expired prices, no price, ambiguous price, overlapping schedules, both price modes, price book in the journal, import-time validation |
 | `tests/integration/tests/snapshot_switching.rs` | an open sale keeps its prices across activations; the next sale uses the new catalog; exactly one `ACTIVE` |
-| `tests/golden` | deterministic protocol output for known sales, both price modes, rounding boundaries, one case per promotion kind, one per payment shape — cash exact, cash with change, mixed tender, card unknown, card reconciled, card reversed, partial settlement — and one per inventory shape: the opening position, a ledger with all four movement types, a fractional balance, a negative balance and a promotional sale that moved three units while billing two (frozen clock, sequential ids, scripted provider). Regenerate with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests` |
+| `tests/golden` | deterministic protocol output for known sales, both price modes, rounding boundaries, one case per promotion kind, one per payment shape — cash exact, cash with change, mixed tender, card unknown, card reconciled, card reversed, partial settlement — and one per inventory shape — the opening position, a ledger with all four movement types, a fractional balance, a negative balance and a promotional sale that moved three units while billing two — and one per refund shape: eligibility, a full cash refund, a promotional partial, a mixed-tender spread, a card refund that came back unknown, and an invoiced sale with its credit note pending (frozen clock, sequential ids, scripted provider). Regenerate with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests` |
 | `apps/edge-daemon/tests/catalog_import.rs` | chunked import over real IPC: many chunks, idempotent replay, chunk conflict, missing chunk, bad hash, malformed record, daemon killed mid-import and resumed, atomic activation, CLI importer end to end |
 | `apps/edge-daemon/tests/milestone_lifecycle.rs` | two clients over one real daemon; UI killed → core survives; core killed → clients degrade safely and reconnect; second runtime refused |
 | `apps/edge-daemon/tests/auth.rs` | handshake surface: good, wrong, missing and malformed credentials; per-connection authentication; the credential never reaches a log or an error |
@@ -615,7 +735,13 @@ arithmetic are denied outside tests.
 | `tests/crash-recovery/tests/inventory_recovery.rs` | an exact position after a restart; a crash before `COMMIT` leaving no opening position, no manual movement and no half-finalized sale; a replayed finalization across a restart moving stock once; the policy surviving a restart |
 | `apps/edge-daemon/tests/inventory.rs` | the inventory surface over real IPC: rendered quantities, explicit direction, movements as their own operation, a position without movements, a refused competing snapshot, a strict till refusing the payment, and the CLI importer reaching the same ledger |
 | `crates/edge-storage` migration tests | the inventory triggers against raw SQL: `UPDATE`/`DELETE` refused, a bootstrap recorded once, a movement contradicting its own type refused, one movement per cause per product |
-| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, and that a stock movement crosses the wire as a positive magnitude plus an explicit direction |
+| `tests/integration/tests/refunds.rs` | refunds on real SQLite: eligibility and its shrinking as refunds consume the lines, non-finalized and unknown originals, quantity exceeded, duplicate and missing lines, reason required, total and partial refunds, promotional arbitrage, fractional refund, pricing from the sale and not from today's catalog, mixed-tender pro-rata with per-tender ceilings, cash out of the drawer once, replay, inventory returned once and only on acceptance, invoiced vs non-invoiced fiscal choices, one refund at a time, the journal, and refund ≠ reversal |
+| `crates/edge-refunds` unit tests | the refundable arithmetic: a full line, a promotional unit, successive partials summing to the line exactly in every split order, `net + tax == gross`, fractional shares, exceeded and exhausted lines, the tender spread with caps; plus the lifecycle, the fiscal choice matrix and the wire round-trips |
+| `crates/edge-domain` allocation tests | the single allocation policy: exact sums, proportionality, caps, largest-remainder tie-breaks, and `prorate` slicing a line to the cent in every split |
+| `tests/crash-recovery/tests/refund_recovery.rs` | a created refund still holding its quantities; a crash before `COMMIT` leaving no refund, no reservation, no returned goods; goods returned once across a restart; a cash refund emptying the drawer once; a fiscal consequence still pending; and an unresolved card refund resolving through the **same** attempt after a restart, never a second refund |
+| `apps/edge-daemon/tests/refunds.rs` | the refund surface over real IPC: **no authority configured means no refund**, the eligibility view a UI renders, a whole refund end to end, a card refund whose answer was lost, **a till being unable to invoice a sale or ask for a credit note**, malformed payloads as `INVALID_ARGUMENT`, and the CLI driving a refund in a separate process |
+| `crates/edge-storage` migration tests | the rebuilt ledgers accepting `CASH_REFUND` and `REFUND_RETURN` with their directions and one-per-cause uniqueness, still append-only; the refund invariants (`gross = net + tax`, one live refund per sale, the fiscal pairing); refund attempts append-only with unique correlation ids |
+| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, and that the create-refund payload cannot assert authority or a fiscal state |
 
 ## Non-negotiable boundaries
 
@@ -625,12 +751,18 @@ arithmetic are denied outside tests.
   the Cargo workspace so this cannot regress by accident.
 * A UI never opens SQLite, never computes official totals, never decides
   payment state, and never issues a command while disconnected. The diagnostic
-  window shows payments, the cash drawer and the stock ledger read-only and
-  issues no payment, cash or inventory command.
+  window shows payments, the cash drawer, the stock ledger and refunds read-only
+  and issues no payment, cash, inventory or refund command.
 * A cashier never sees expected cash before declaring the count, and that is
   enforced by the protocol rather than by the interface.
-* The cash ledger, the inventory ledger and close declarations are append-only
-  in the database, not merely by convention.
+* The cash ledger, the inventory ledger, refund attempts and close declarations
+  are append-only in the database, not merely by convention.
+* A refund is never a payment reversal, and never re-prices the sale it refunds.
+* A refund requires authority over the original sale, resolved by the runtime
+  and refused by default. No client can assert it.
+* PI.Edge issues no fiscal document, and never declares a sale invoiced. It
+  consumes fiscal metadata an upstream system owns, and records which document
+  is owed.
 * There is no mutable stock field. On hand is always a fold over movements.
 * An inventory position is a **projection of one installation**, never a claim
   about a whole store's shelves. PI.Edge runs per POS.

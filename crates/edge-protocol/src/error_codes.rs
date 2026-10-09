@@ -176,6 +176,42 @@ pub const INVENTORY_INSUFFICIENT_STOCK: &str = "INVENTORY_INSUFFICIENT_STOCK";
 /// An inventory record failed validation at the boundary.
 pub const INVENTORY_INVALID_RECORD: &str = "INVENTORY_INVALID_RECORD";
 
+// Refund codes, produced by the refund context.
+
+/// The original sale is not a refundable document: only `FINALIZED` is.
+pub const REFUND_ORIGINAL_NOT_REFUNDABLE: &str = "REFUND_ORIGINAL_NOT_REFUNDABLE";
+/// No authority over the original sale. A locally finalized sale is not a
+/// centrally accepted one, and PI.Edge never assumes it is (ADR 030).
+pub const REFUND_AUTHORITY_REQUIRED: &str = "REFUND_AUTHORITY_REQUIRED";
+/// The original sale has no such line.
+pub const REFUND_LINE_NOT_FOUND: &str = "REFUND_LINE_NOT_FOUND";
+/// The refund names no line, or names one twice.
+pub const REFUND_INVALID_LINES: &str = "REFUND_INVALID_LINES";
+/// More was asked for than the line has left after earlier refunds.
+pub const REFUND_QUANTITY_EXCEEDED: &str = "REFUND_QUANTITY_EXCEEDED";
+/// One refund in progress per original sale (ADR 030).
+pub const REFUND_IN_PROGRESS: &str = "REFUND_IN_PROGRESS";
+/// The refund is not in a state that allows this step.
+pub const REFUND_INVALID_STATE: &str = "REFUND_INVALID_STATE";
+/// A refund arrived with no reason. An unexplained refund is not an audit
+/// trail.
+pub const REFUND_REASON_REQUIRED: &str = "REFUND_REASON_REQUIRED";
+/// The fiscal consequence does not match the original sale: a sale that was
+/// never invoiced has no credit note, and an invoiced one has to choose
+/// (ADR 032).
+pub const REFUND_FISCAL_ACTION_INVALID: &str = "REFUND_FISCAL_ACTION_INVALID";
+/// A tender was asked to give back more than it took (ADR 031).
+pub const REFUND_TENDER_EXCEEDED: &str = "REFUND_TENDER_EXCEEDED";
+/// A refund attempt is unresolved. The only way forward is asking the provider
+/// about that same attempt — never a second refund (ADR 018).
+pub const REFUND_REQUIRES_RECONCILIATION: &str = "REFUND_REQUIRES_RECONCILIATION";
+/// A refund record failed validation at the boundary.
+pub const REFUND_INVALID_RECORD: &str = "REFUND_INVALID_RECORD";
+/// No refund with that id.
+pub const REFUND_NOT_FOUND: &str = "REFUND_NOT_FOUND";
+/// No sale with that id.
+pub const TRANSACTION_NOT_FOUND: &str = "TRANSACTION_NOT_FOUND";
+
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";
 /// A request arrived before a successful handshake.

@@ -28,6 +28,11 @@
     "currency": "MXN",
     "formatted": "0.00"
   },
+  "cash_refunds": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
   "expected_cash": {
     "minor": 151600,
     "currency": "MXN",

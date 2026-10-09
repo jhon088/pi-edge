@@ -10,16 +10,17 @@
 
 use edge_application::commands::{
     AddItemCommand, ApproveSafeDropCommand, BeginCatalogImportCommand, CashInCommand,
-    CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand, DeclareClosingCashCommand,
-    ForceCloseBusinessDayCommand, ImportInventoryBootstrapCommand, InitDeviceCommand,
-    InventoryInCommand, InventoryOutCommand, OpenRegisterSessionCommand, PutCatalogChunkCommand,
-    ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand, RequestSafeDropCommand,
-    ReversePaymentCommand, StartPaymentCommand,
+    CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand, CreateRefundCommand,
+    DeclareClosingCashCommand, ForceCloseBusinessDayCommand, ImportInventoryBootstrapCommand,
+    InitDeviceCommand, InventoryInCommand, InventoryOutCommand, OpenRegisterSessionCommand,
+    PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand,
+    RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand,
 };
 use edge_application::ports::{DeviceProfile, InventoryBootstrapState};
 use edge_application::queries::{
     CashPositionView, CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState,
-    InventoryPositionView, PendingOutbox, ProductLookup, SessionCloseResult,
+    InventoryPositionView, PendingOutbox, ProductLookup, RefundEligibilityView, RefundView,
+    SessionCloseResult,
 };
 use edge_application::{AppError, PaymentOutcome};
 use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
@@ -27,6 +28,10 @@ use edge_catalog::CatalogError;
 use edge_domain::prelude::*;
 use edge_inventory::{BootstrapItem, InventoryMovement};
 use edge_payments::{PaymentAttempt, PaymentError, PaymentView, Settlement, TenderType};
+use edge_refunds::{
+    LineRefundable, RefundAttempt, RefundAuthorizationContext, RefundFiscalStatus, RefundLine,
+    RefundLineRequest, RefundPaymentView, TenderRefundable,
+};
 use uuid::Uuid;
 
 use crate::content_mapping::{parse_snapshot_id, parse_timestamp};
@@ -625,6 +630,7 @@ impl From<&CashPositionView> for CashPositionV1 {
             cash_in: MoneyV1::from(&position.cash_in),
             cash_out: MoneyV1::from(&position.cash_out),
             safe_drops: MoneyV1::from(&position.safe_drops),
+            cash_refunds: MoneyV1::from(&position.cash_refunds),
             expected_cash: MoneyV1::from(&position.expected_cash),
             tendered_total: MoneyV1::from(&position.tendered_total),
             change_total: MoneyV1::from(&position.change_total),
@@ -866,4 +872,194 @@ impl InventoryQueryV1 {
     pub fn product(&self) -> Result<ProductRef, DomainError> {
         Ok(ProductRef::new(self.product_ref.clone())?)
     }
+}
+
+// --------------------------------------------------------------------- refunds
+
+impl From<&LineRefundable> for RefundableLineV1 {
+    fn from(line: &LineRefundable) -> Self {
+        Self {
+            line_number: line.line_number,
+            product_ref: line.product_ref.clone(),
+            description: line.description.clone(),
+            sold_quantity: line.sold_quantity.to_string(),
+            refunded_quantity: thousandths(line.refunded_thousandths),
+            remaining_quantity: thousandths(line.remaining_thousandths),
+            remaining_quantity_thousandths: line.remaining_thousandths,
+            original_gross: MoneyV1::from(&line.original.gross),
+            remaining_net: MoneyV1::from(&line.remaining.net),
+            remaining_tax: MoneyV1::from(&line.remaining.tax),
+            remaining_gross: MoneyV1::from(&line.remaining.gross),
+            remaining_discount: MoneyV1::from(&line.remaining.discount),
+        }
+    }
+}
+
+impl From<&TenderRefundable> for RefundableTenderV1 {
+    fn from(tender: &TenderRefundable) -> Self {
+        Self {
+            payment_id: tender.payment_id.clone(),
+            tender_type: tender.tender_type.clone(),
+            committed: MoneyV1::from(&tender.committed),
+            remaining: MoneyV1::from(&tender.remaining),
+        }
+    }
+}
+
+impl From<&RefundEligibilityView> for RefundEligibilityV1 {
+    fn from(view: &RefundEligibilityView) -> Self {
+        Self {
+            transaction_id: view.transaction_id.to_string(),
+            original_status: view.original_status.clone(),
+            register_sequence: view.register_sequence,
+            original_total: MoneyV1::from(&view.original_total),
+            fiscal_state: view.fiscal_state.as_str().to_owned(),
+            invoice_ref: view.invoice_ref.clone(),
+            lines: view.lines.iter().map(RefundableLineV1::from).collect(),
+            tenders: view.tenders.iter().map(RefundableTenderV1::from).collect(),
+            refundable_total: MoneyV1::from(&view.refundable_total),
+            refund_in_progress: view.refund_in_progress.map(|id| id.to_string()),
+            refund_ids: view.refund_ids.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+}
+
+impl From<&RefundLine> for RefundLineV1 {
+    fn from(line: &RefundLine) -> Self {
+        Self {
+            refund_line_id: line.refund_line_id.to_string(),
+            original_line_number: line.original_line_number,
+            product_ref: line.product_ref.clone(),
+            description: line.description.clone(),
+            quantity: line.quantity.to_string(),
+            quantity_thousandths: line.quantity.thousandths(),
+            net: MoneyV1::from(&line.amounts.net),
+            tax: MoneyV1::from(&line.amounts.tax),
+            gross: MoneyV1::from(&line.amounts.gross),
+            discount: MoneyV1::from(&line.amounts.discount),
+        }
+    }
+}
+
+impl From<&RefundAttempt> for RefundAttemptV1 {
+    fn from(attempt: &RefundAttempt) -> Self {
+        Self {
+            attempt_id: attempt.attempt_id.to_string(),
+            attempt_number: attempt.attempt_number,
+            status: attempt.status.as_str().to_owned(),
+            requested: MoneyV1::from(&attempt.requested_amount),
+            refunded: attempt.refunded_amount.as_ref().map(MoneyV1::from),
+            correlation_id: attempt.correlation_id.to_string(),
+            provider_reference: attempt.provider_reference.clone(),
+            failure_code: attempt.failure_code.clone(),
+            created_at: attempt.created_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<&RefundPaymentView> for RefundPaymentV1 {
+    fn from(view: &RefundPaymentView) -> Self {
+        let payment = &view.payment;
+        Self {
+            refund_payment_id: payment.refund_payment_id.to_string(),
+            original_payment_id: payment.original_payment_id.to_string(),
+            tender_type: payment.tender_type.as_str().to_owned(),
+            requested: MoneyV1::from(&payment.requested_amount),
+            refunded: MoneyV1::from(&payment.refunded_amount),
+            status: payment.status.as_str().to_owned(),
+            attempts: view.attempts.iter().map(RefundAttemptV1::from).collect(),
+        }
+    }
+}
+
+impl From<&RefundView> for RefundV1 {
+    fn from(view: &RefundView) -> Self {
+        let refund = &view.refund;
+        Self {
+            refund_id: refund.refund_id.to_string(),
+            original_transaction_id: refund.original_transaction_id.to_string(),
+            store_id: refund.store_id.to_string(),
+            business_day_id: refund.business_day_id.to_string(),
+            session_id: refund.session_id.to_string(),
+            register_id: refund.register_id.to_string(),
+            operator_id: refund.operator_id.to_string(),
+            status: refund.status.as_str().to_owned(),
+            authority: refund.authority.as_str().to_owned(),
+            authorization_ref: refund.authorization_ref.clone(),
+            lines: refund.lines.iter().map(RefundLineV1::from).collect(),
+            net: MoneyV1::from(&refund.total.net),
+            tax: MoneyV1::from(&refund.total.tax),
+            gross: MoneyV1::from(&refund.total.gross),
+            discount: MoneyV1::from(&refund.total.discount),
+            fiscal_status: refund.fiscal_status.as_str().to_owned(),
+            original_fiscal_state: refund.original_fiscal_state.as_str().to_owned(),
+            reason_code: refund.reason_code.clone(),
+            restock: refund.restock,
+            payments: view.payments.iter().map(RefundPaymentV1::from).collect(),
+            remaining_to_refund: MoneyV1::from(&view.remaining_to_refund),
+            inventory_returned: view.inventory_returned,
+            requires_reconciliation: view.requires_reconciliation,
+            created_at: refund.created_at.to_rfc3339(),
+            accepted_at: refund.accepted_at.map(|ts| ts.to_rfc3339()),
+            completed_at: refund.completed_at.map(|ts| ts.to_rfc3339()),
+        }
+    }
+}
+
+impl CreateRefundRequestV1 {
+    /// The authority is **not** taken from the wire: the caller resolves it and
+    /// passes it in, so a client cannot assert that a sale is refundable
+    /// (ADR 030).
+    pub fn into_command(
+        self,
+        authorization: RefundAuthorizationContext,
+        request_id: Option<Uuid>,
+    ) -> Result<CreateRefundCommand, DomainError> {
+        let lines = self
+            .lines
+            .into_iter()
+            .map(|line| {
+                Ok(RefundLineRequest {
+                    original_line_number: line.original_line_number,
+                    quantity: Quantity::from_thousandths(line.quantity_thousandths)?,
+                })
+            })
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        // A fiscal action the contract does not define is a malformed payload,
+        // not a refused business rule. Whether a *defined* action is allowed
+        // for this sale is the domain's call, and answers
+        // `REFUND_FISCAL_ACTION_INVALID` (ADR 032).
+        let fiscal_action = RefundFiscalStatus::parse(&self.fiscal_action).map_err(|_| {
+            DomainError::UnknownEnumValue {
+                kind: "fiscal_action",
+                value: self.fiscal_action.clone(),
+            }
+        })?;
+        Ok(CreateRefundCommand {
+            request_id,
+            authorization,
+            lines,
+            reason_code: self.reason_code,
+            fiscal_action,
+        })
+    }
+
+    /// The sale this refund is for, validated at the boundary.
+    pub fn transaction(&self) -> Result<TransactionId, DomainError> {
+        Ok(self.transaction_id.parse()?)
+    }
+}
+
+impl RefundRequestV1 {
+    pub fn refund(&self) -> Result<RefundId, DomainError> {
+        Ok(self.refund_id.parse()?)
+    }
+}
+
+/// Render a thousandths figure the way every quantity is rendered: `0.750`.
+fn thousandths(value: i64) -> String {
+    let units = value / 1_000;
+    let fraction = (value % 1_000).unsigned_abs();
+    let sign = if value < 0 && units == 0 { "-" } else { "" };
+    format!("{sign}{units}.{fraction:03}")
 }

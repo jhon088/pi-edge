@@ -4,15 +4,22 @@
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
 use edge_application::ports::InventoryBootstrapState;
-use edge_application::queries::InventoryPositionView;
+use edge_application::queries::{InventoryPositionView, RefundView};
 use edge_application::testing::{
     CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory, DEMO_BARCODE,
 };
 use edge_application::EdgeApplication;
+use edge_catalog::promotions::{
+    NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
+};
+use edge_catalog::scope::CatalogScope;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
+use edge_refunds::{
+    RefundAuthority, RefundAuthorizationContext, RefundFiscalStatus, RefundLineRequest,
+};
 use edge_storage::SqliteEdgeStore;
 
 pub use edge_payments::TenderType as Tender;
@@ -247,6 +254,151 @@ pub fn on_hand(core: &TestCore, product_ref: &str) -> i64 {
 pub fn position(core: &TestCore, product_ref: &str) -> InventoryPositionView {
     core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 100)
         .unwrap()
+}
+
+/// The demo catalog plus a buy-2-get-1 on the demo product, so a refund of a
+/// promotional line is testable end to end.
+pub fn promotional_catalog(version: i64) -> CatalogFixture {
+    CatalogFixture::demo(version).promoting(
+        Promotion::import(NewPromotion {
+            promotion_id: PromotionId::new("BOGO").unwrap(),
+            code: "BOGO".to_owned(),
+            name: "Lleva 3, paga 2".to_owned(),
+            active: true,
+            priority: 0,
+            stackability: Stackability::Stackable,
+            scope: CatalogScope::Tenant,
+            valid_from: None,
+            valid_until: None,
+            rule: PromotionRule::BuyNGetM {
+                applies_to: ProductApplicability::Product {
+                    product_ref: ProductRef::new("SKU-001").unwrap(),
+                },
+                buy: Quantity::from_units(2).unwrap(),
+                get: Quantity::from_units(1).unwrap(),
+            },
+        })
+        .unwrap(),
+    )
+}
+
+/// Provision a scripted core the way `open_register` provisions a plain one.
+pub fn open_scripted_register(core: &ScriptedCore) {
+    core.init_device(InitDeviceCommand {
+        tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
+        store_id: StoreId::new("STORE-DEMO").unwrap(),
+        currency: Currency::Mxn,
+        allow_negative_inventory: true,
+    })
+    .unwrap();
+    CatalogFixture::demo(1).activate(core).unwrap();
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor: 100_000,
+    })
+    .unwrap();
+}
+
+// --------------------------------------------------------------- refunds
+
+/// The authority a refund needs, as the composition root would resolve it.
+///
+/// Tests build it directly because that is what the daemon does: the domain
+/// receives an already-resolved context and never looks for one (ADR 030).
+pub fn central_authority(transaction_id: TransactionId) -> RefundAuthorizationContext {
+    RefundAuthorizationContext {
+        original_transaction_id: transaction_id,
+        authority: RefundAuthority::CentralAccepted,
+        authorization_ref: Some(format!("TEST-CENTRAL:{transaction_id}")),
+    }
+}
+
+/// `(original_line_number, units)` pairs as a refund request.
+pub fn refund_lines(lines: &[(i64, i64)]) -> Vec<RefundLineRequest> {
+    lines
+        .iter()
+        .map(|(line_number, units)| RefundLineRequest {
+            original_line_number: *line_number,
+            quantity: Quantity::from_units(*units).unwrap(),
+        })
+        .collect()
+}
+
+/// A refund request in thousandths, for fractional quantities.
+pub fn refund_lines_thousandths(lines: &[(i64, i64)]) -> Vec<RefundLineRequest> {
+    lines
+        .iter()
+        .map(|(line_number, thousandths)| RefundLineRequest {
+            original_line_number: *line_number,
+            quantity: Quantity::from_thousandths(*thousandths).unwrap(),
+        })
+        .collect()
+}
+
+/// Open a refund with central authority and no fiscal consequence.
+pub fn create_refund(
+    core: &TestCore,
+    transaction_id: TransactionId,
+    lines: Vec<RefundLineRequest>,
+) -> Result<RefundView, edge_application::AppError> {
+    core.create_refund(CreateRefundCommand {
+        request_id: None,
+        authorization: central_authority(transaction_id),
+        lines,
+        reason_code: "CUSTOMER_RETURN".to_owned(),
+        fiscal_action: RefundFiscalStatus::None,
+    })
+}
+
+/// A whole refund: open it, take the goods, give the money back.
+pub fn full_refund(
+    core: &TestCore,
+    transaction_id: TransactionId,
+    lines: Vec<RefundLineRequest>,
+) -> RefundView {
+    let refund = create_refund(core, transaction_id, lines).unwrap();
+    core.accept_refund(AcceptRefundCommand {
+        request_id: None,
+        refund_id: refund.refund.refund_id,
+    })
+    .unwrap();
+    core.start_refund_payment(StartRefundPaymentCommand {
+        request_id: None,
+        refund_id: refund.refund.refund_id,
+    })
+    .unwrap()
+}
+
+/// A finished cash sale, answering with its id so a refund can name it.
+pub fn finalized_cash_sale(core: &TestCore, item: AddItemCommand, tendered: i64) -> TransactionId {
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    core.add_item(item).unwrap();
+    core.totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    pay_cash(core, tendered);
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap()
+        .id()
+}
+
+/// Arrange an invoiced sale, for the fiscal cases.
+///
+/// A **fixture**, not a capability: PI.Edge consumes fiscal metadata and has no
+/// production operation, protocol message or CLI command that writes it. This
+/// reaches the `testing`-only use case to stand in for the upstream system that
+/// will eventually supply it (ADR 032).
+pub fn mark_invoiced(core: &TestCore, transaction_id: TransactionId) {
+    core.mark_transaction_invoiced(MarkTransactionInvoicedCommand {
+        request_id: None,
+        transaction_id,
+        invoice_ref: "INV-0001".to_owned(),
+    })
+    .unwrap();
 }
 
 /// A supervisor identity, distinct from the demo cashier.

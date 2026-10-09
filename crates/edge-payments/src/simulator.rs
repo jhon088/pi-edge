@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::error::PaymentError;
 use crate::provider::{
     PaymentProviderPort, ProviderOutcome, ProviderQuery, ProviderRequest, ProviderReversal,
-    ReversalOutcome,
+    RefundOutcome, RefundRequest, ReversalOutcome,
 };
 use crate::tender::ProviderKind;
 
@@ -56,9 +56,22 @@ pub struct SimulatorScript {
     query_outcome: SimulatedOutcome,
     /// Whether `reverse_payment` confirms.
     reversal_confirms: bool,
-    /// Fault injection: die after answering, before anything is persisted.
+    /// What `refund_payment` answers, by requested minor amount.
+    refunds_by_amount: BTreeMap<i64, SimulatedOutcome>,
+    /// What `refund_payment` answers for any other amount.
+    refund_outcome: SimulatedOutcome,
+    /// What `query_refund` answers — how an unresolved refund resolves.
+    refund_query_outcome: SimulatedOutcome,
+    /// Fault injection: die after answering a charge, before anything is
+    /// persisted.
     #[cfg(feature = "fault-injection")]
     crash_after_answer: bool,
+    /// Fault injection: die after answering a *refund*, before anything is
+    /// persisted. Separate from the charge hook so a test can let a sale
+    /// settle normally and then crash the refund — the window ADR 034 cares
+    /// about.
+    #[cfg(feature = "fault-injection")]
+    crash_after_refund_answer: bool,
 }
 
 impl Default for SimulatorScript {
@@ -68,8 +81,13 @@ impl Default for SimulatorScript {
             default_outcome: SimulatedOutcome::Approve,
             query_outcome: SimulatedOutcome::Approve,
             reversal_confirms: true,
+            refunds_by_amount: BTreeMap::new(),
+            refund_outcome: SimulatedOutcome::Approve,
+            refund_query_outcome: SimulatedOutcome::Approve,
             #[cfg(feature = "fault-injection")]
             crash_after_answer: false,
+            #[cfg(feature = "fault-injection")]
+            crash_after_refund_answer: false,
         }
     }
 }
@@ -101,6 +119,31 @@ impl SimulatorScript {
         self
     }
 
+    /// What a refund of any amount answers.
+    pub fn refunding(mut self, outcome: SimulatedOutcome) -> Self {
+        self.refund_outcome = outcome;
+        self
+    }
+
+    /// Answer `outcome` when exactly `minor` is refunded.
+    pub fn on_refund_amount(mut self, minor: i64, outcome: SimulatedOutcome) -> Self {
+        self.refunds_by_amount.insert(minor, outcome);
+        self
+    }
+
+    /// How a reconciliation resolves an unresolved refund.
+    pub fn resolving_refund_queries_to(mut self, outcome: SimulatedOutcome) -> Self {
+        self.refund_query_outcome = outcome;
+        self
+    }
+
+    fn refund_outcome_for(&self, amount: Money) -> SimulatedOutcome {
+        self.refunds_by_amount
+            .get(&amount.minor())
+            .copied()
+            .unwrap_or(self.refund_outcome)
+    }
+
     /// Parse a development configuration string such as
     /// `"default:approve,amount:70000=unknown,query:approve,reversal:confirm"`.
     ///
@@ -117,10 +160,16 @@ impl SimulatorScript {
                 "default" => script.default_outcome = SimulatedOutcome::parse(value.trim())?,
                 "query" => script.query_outcome = SimulatedOutcome::parse(value.trim())?,
                 "reversal" => script.reversal_confirms = value.trim() != "unknown",
+                "refund" => script.refund_outcome = SimulatedOutcome::parse(value.trim())?,
+                "refund-query" => {
+                    script.refund_query_outcome = SimulatedOutcome::parse(value.trim())?
+                }
                 // Fault injection, test builds only. A production binary does
                 // not know this key and refuses to start with it.
                 #[cfg(feature = "fault-injection")]
                 "crash" => script.crash_after_answer = value.trim() == "after-answer",
+                #[cfg(feature = "fault-injection")]
+                "refund-crash" => script.crash_after_refund_answer = value.trim() == "after-answer",
                 "amount" => {
                     let (minor, outcome) =
                         value.split_once('=').ok_or(PaymentError::InvalidRecord {
@@ -254,6 +303,44 @@ impl PaymentProviderPort for SimulatorPaymentProvider {
             ReversalOutcome::Reversed
         } else {
             ReversalOutcome::Unknown
+        })
+    }
+
+    fn refund_payment(&self, request: &RefundRequest) -> Result<RefundOutcome, PaymentError> {
+        let outcome = match self.script.refund_outcome_for(request.amount) {
+            SimulatedOutcome::Approve => RefundOutcome::Refunded {
+                refunded: request.amount,
+                provider_reference: self.reference(request.correlation_id),
+            },
+            SimulatedOutcome::Decline => RefundOutcome::Declined {
+                failure_code: "SIMULATED_REFUND_DECLINED".to_owned(),
+            },
+            SimulatedOutcome::Unknown => RefundOutcome::Unknown,
+        };
+        // The provider has decided — in the real world the money is on its way
+        // back by now. Dying here is the window ADR 020 is designed around,
+        // and the stored attempt must come back unresolved, never failed.
+        #[cfg(feature = "fault-injection")]
+        if self.script.crash_after_refund_answer {
+            std::process::abort();
+        }
+        Ok(outcome)
+    }
+
+    fn query_refund(&self, query: &ProviderQuery) -> Result<RefundOutcome, PaymentError> {
+        // A query reports; it never refunds.
+        Ok(match self.script.refund_query_outcome {
+            SimulatedOutcome::Approve => RefundOutcome::Refunded {
+                refunded: query.amount,
+                provider_reference: query
+                    .provider_reference
+                    .clone()
+                    .unwrap_or_else(|| self.reference(query.correlation_id)),
+            },
+            SimulatedOutcome::Decline => RefundOutcome::Declined {
+                failure_code: "SIMULATED_REFUND_NOT_SENT".to_owned(),
+            },
+            SimulatedOutcome::Unknown => RefundOutcome::Unknown,
         })
     }
 }

@@ -112,6 +112,13 @@ pub enum OperationV1 {
     GetPayment(PaymentRequestV1),
     GetTransactionPayments(TransactionRequestV1),
     FinalizeTransaction,
+    GetRefundEligibility(TransactionRequestV1),
+    CreateRefund(CreateRefundRequestV1),
+    AcceptRefund(RefundRequestV1),
+    StartRefundPayment(RefundRequestV1),
+    ReconcileRefund(RefundRequestV1),
+    GetRefund(RefundRequestV1),
+    GetTransactionRefunds(TransactionRequestV1),
     ImportInventoryBootstrap(ImportInventoryBootstrapRequestV1),
     GetInventoryPosition(InventoryQueryV1),
     GetInventoryMovements(InventoryQueryV1),
@@ -163,6 +170,13 @@ impl OperationV1 {
             OperationV1::GetPayment(_) => "GET_PAYMENT",
             OperationV1::GetTransactionPayments(_) => "GET_TRANSACTION_PAYMENTS",
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
+            OperationV1::GetRefundEligibility(_) => "GET_REFUND_ELIGIBILITY",
+            OperationV1::CreateRefund(_) => "CREATE_REFUND",
+            OperationV1::AcceptRefund(_) => "ACCEPT_REFUND",
+            OperationV1::StartRefundPayment(_) => "START_REFUND_PAYMENT",
+            OperationV1::ReconcileRefund(_) => "RECONCILE_REFUND",
+            OperationV1::GetRefund(_) => "GET_REFUND",
+            OperationV1::GetTransactionRefunds(_) => "GET_TRANSACTION_REFUNDS",
             OperationV1::ImportInventoryBootstrap(_) => "IMPORT_INVENTORY_BOOTSTRAP",
             OperationV1::GetInventoryPosition(_) => "GET_INVENTORY_POSITION",
             OperationV1::GetInventoryMovements(_) => "GET_INVENTORY_MOVEMENTS",
@@ -203,6 +217,10 @@ impl OperationV1 {
                 | OperationV1::ReconcilePayment(_)
                 | OperationV1::ReversePayment(_)
                 | OperationV1::FinalizeTransaction
+                | OperationV1::CreateRefund(_)
+                | OperationV1::AcceptRefund(_)
+                | OperationV1::StartRefundPayment(_)
+                | OperationV1::ReconcileRefund(_)
                 | OperationV1::ImportInventoryBootstrap(_)
                 | OperationV1::InventoryIn(_)
                 | OperationV1::InventoryOut(_)
@@ -312,6 +330,9 @@ pub enum ResultV1 {
     InventoryPosition(InventoryPositionV1),
     InventoryMovements(Vec<InventoryMovementV1>),
     InventoryBootstrap(InventoryBootstrapV1),
+    RefundEligibility(RefundEligibilityV1),
+    Refund(RefundV1),
+    Refunds(Vec<RefundV1>),
 }
 
 impl ResultV1 {
@@ -340,6 +361,9 @@ impl ResultV1 {
             ResultV1::InventoryPosition(_) => "INVENTORY_POSITION",
             ResultV1::InventoryMovements(_) => "INVENTORY_MOVEMENTS",
             ResultV1::InventoryBootstrap(_) => "INVENTORY_BOOTSTRAP",
+            ResultV1::RefundEligibility(_) => "REFUND_ELIGIBILITY",
+            ResultV1::Refund(_) => "REFUND",
+            ResultV1::Refunds(_) => "REFUNDS",
         }
     }
 }

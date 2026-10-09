@@ -228,6 +228,8 @@ export interface CashPosition {
   cash_out: Money;
   /** Approved drops only. */
   safe_drops: Money;
+  /** Cash handed back for commercial refunds. */
+  cash_refunds: Money;
   /** Derived from the movements, never stored. */
   expected_cash: Money;
   /** Audit only: what customers handed over in cash. */
@@ -395,4 +397,117 @@ export interface BridgeError {
 export interface StateChangedEvent {
   reason: string;
   revision: number;
+}
+
+/** One original line and what it can still give back. */
+export interface RefundableLine {
+  line_number: number;
+  product_ref: string;
+  description: string;
+  sold_quantity: string;
+  refunded_quantity: string;
+  remaining_quantity: string;
+  remaining_quantity_thousandths: number;
+  original_gross: Money;
+  remaining_net: Money;
+  remaining_tax: Money;
+  remaining_gross: Money;
+  remaining_discount: Money;
+}
+
+/** One original tender and what it can still refund. */
+export interface RefundableTender {
+  payment_id: string;
+  tender_type: string;
+  committed: Money;
+  remaining: Money;
+}
+
+/**
+ * What a closed sale can still give back.
+ *
+ * Every figure is the core's: the UI never works out a refundable quantity or
+ * amount of its own.
+ */
+export interface RefundEligibility {
+  transaction_id: string;
+  original_status: string;
+  register_sequence: number;
+  original_total: Money;
+  /** `NOT_INVOICED` or `INVOICED`. */
+  fiscal_state: string;
+  invoice_ref: string | null;
+  lines: RefundableLine[];
+  tenders: RefundableTender[];
+  refundable_total: Money;
+  refund_in_progress: string | null;
+  refund_ids: string[];
+}
+
+export interface RefundLine {
+  refund_line_id: string;
+  original_line_number: number;
+  product_ref: string;
+  description: string;
+  quantity: string;
+  quantity_thousandths: number;
+  net: Money;
+  tax: Money;
+  gross: Money;
+  discount: Money;
+}
+
+export interface RefundAttempt {
+  attempt_id: string;
+  attempt_number: number;
+  /** `CREATED`, `PROCESSING`, `UNKNOWN`, `REFUNDED` or `FAILED`. */
+  status: string;
+  requested: Money;
+  refunded: Money | null;
+  correlation_id: string;
+  provider_reference: string | null;
+  failure_code: string | null;
+  created_at: string;
+}
+
+export interface RefundPayment {
+  refund_payment_id: string;
+  original_payment_id: string;
+  tender_type: string;
+  requested: Money;
+  refunded: Money;
+  status: string;
+  attempts: RefundAttempt[];
+}
+
+/** A refund, with its financial, inventory and fiscal state. */
+export interface Refund {
+  refund_id: string;
+  original_transaction_id: string;
+  store_id: string;
+  business_day_id: string;
+  session_id: string;
+  register_id: string;
+  operator_id: string;
+  /** `CREATED`, `ACCEPTED`, `FINANCIAL_PENDING`, `COMPLETED` or `FAILED`. */
+  status: string;
+  authority: string;
+  authorization_ref: string | null;
+  lines: RefundLine[];
+  net: Money;
+  tax: Money;
+  gross: Money;
+  discount: Money;
+  /** `NONE`, `CREDIT_NOTE_PENDING` or `CREDIT_NOTE_REQUESTED`. */
+  fiscal_status: string;
+  original_fiscal_state: string;
+  reason_code: string;
+  restock: boolean;
+  payments: RefundPayment[];
+  remaining_to_refund: Money;
+  inventory_returned: boolean;
+  requires_reconciliation: boolean;
+  created_at: string;
+  accepted_at: string | null;
+  completed_at: string | null;
 }

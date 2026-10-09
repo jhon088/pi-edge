@@ -11,6 +11,7 @@ use edge_catalog::{
 use edge_domain::prelude::*;
 use edge_inventory::BootstrapItem;
 use edge_payments::TenderType;
+use edge_refunds::{RefundAuthorizationContext, RefundFiscalStatus, RefundLineRequest};
 use uuid::Uuid;
 
 /// Provision the local device identity (normally pushed by the server).
@@ -98,6 +99,69 @@ pub struct InventoryOutCommand {
     pub product_ref: ProductRef,
     pub quantity: Quantity,
     pub reason_code: String,
+}
+
+// ---------------------------------------------------------------- refunds
+
+/// Open a refund of a closed sale.
+///
+/// One command does the whole opening: it validates the authority, prices the
+/// lines from the original sale's materialised economics and reserves the
+/// quantities, all in one database transaction. Splitting validation from
+/// reservation would be an invitation to race (ADR 030).
+#[derive(Debug, Clone)]
+pub struct CreateRefundCommand {
+    pub request_id: Option<Uuid>,
+    /// Evidence that the original sale may be refunded. The application layer
+    /// resolves this; the domain never goes looking for it (ADR 030).
+    pub authorization: RefundAuthorizationContext,
+    pub lines: Vec<RefundLineRequest>,
+    pub reason_code: String,
+    /// What should happen fiscally. Constrained by the original sale: a sale
+    /// that was never invoiced admits only `NONE` (ADR 032).
+    pub fiscal_action: RefundFiscalStatus,
+}
+
+/// The goods came back. This is where the inventory return is written and
+/// where the commercial refund becomes irrevocable (ADR 033).
+#[derive(Debug, Clone)]
+pub struct AcceptRefundCommand {
+    pub request_id: Option<Uuid>,
+    pub refund_id: RefundId,
+}
+
+/// Give the money back, spread over the original tenders.
+///
+/// No amount and no tender: the allocation is the core's single deterministic
+/// policy over what each original tender actually took (ADR 031).
+#[derive(Debug, Clone)]
+pub struct StartRefundPaymentCommand {
+    pub request_id: Option<Uuid>,
+    pub refund_id: RefundId,
+}
+
+/// Ask the provider what happened to an unresolved refund. Never refunds
+/// again (ADR 018, applied to refunds).
+#[derive(Debug, Clone)]
+pub struct ReconcileRefundCommand {
+    pub request_id: Option<Uuid>,
+    pub refund_id: RefundId,
+}
+
+/// Record that a sale was invoiced upstream.
+///
+/// **Test and development only**, behind the `testing` feature. PI.Edge is not
+/// the authority for declaring a sale invoiced: it *consumes* fiscal metadata
+/// that an upstream system owns, and has no production operation to write it.
+/// Until a sync brings that metadata in, this is how a fixture arranges an
+/// invoiced sale (ADR 032).
+#[cfg(feature = "testing")]
+#[derive(Debug, Clone)]
+pub struct MarkTransactionInvoicedCommand {
+    pub request_id: Option<Uuid>,
+    pub transaction_id: TransactionId,
+    /// Canonical, opaque reference assigned upstream.
+    pub invoice_ref: String,
 }
 
 /// Open an import and declare what is coming.

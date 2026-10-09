@@ -67,3 +67,20 @@ COMMITTED   ──> REVERSAL_PENDING ──> REVERSED     (the payment un-applie
   `TOTALIZED` with the full balance due again.
 * Reversal history is never erased: the attempt stays in the table as
   `REVERSED`, so the audit trail shows that money moved and was undone.
+
+## Amendment (milestone 9)
+
+This ADR said `PaymentProviderPort` has no refund method, because a refund is a
+different document and a different domain and nothing consumed one.
+
+Commercial refunds (milestone 9) gave it a consumer. The reasoning that a refund
+is a different *document* stands, and ADR 034 depends on it; the conclusion that
+the provider *capability* therefore has no place on the port is superseded.
+`refund_payment` and `query_refund` now sit beside `reverse_payment` as separate
+methods, so no implementation can serve one with the other, and `RefundOutcome`
+is its own type rather than a reversal's.
+
+Reversal still means exactly what it means here: un-applying a charge that
+should not have stayed, inside the lifecycle of the original payment, on a sale
+that is still open. A refund is a new document for a sale that is closed. See
+ADR 034.

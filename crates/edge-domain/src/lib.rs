@@ -28,12 +28,13 @@ pub mod prelude {
     pub use crate::error::DomainError;
     pub use crate::ids::{
         BusinessDayId, CatalogSnapshotId, EventId, IdError, LineId, OperatorId, PaymentId,
-        PriceBookId, ProductRef, PromotionId, RegisterId, SessionId, StoreId, TenantId,
+        PriceBookId, ProductRef, PromotionId, RefundId, RegisterId, SessionId, StoreId, TenantId,
         TransactionId,
     };
     pub use crate::journal::{JournalEvent, JournalEventType};
     pub use crate::money::{
-        Currency, Money, MoneyError, Percentage, PriceMode, Quantity, TaxRate, TaxedAmount,
+        allocate_proportionally, Currency, Money, MoneyError, Percentage, PriceMode, Quantity,
+        TaxRate, TaxedAmount,
     };
     pub use crate::outbox::{OutboxEvent, OutboxEventType, OutboxStatus};
     pub use crate::session::{

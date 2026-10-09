@@ -18,6 +18,8 @@ import type {
   EdgeState,
   InventoryPosition,
   ProductLookup,
+  Refund,
+  RefundEligibility,
   StateChangedEvent,
   TransactionPayments,
 } from "./types";
@@ -95,6 +97,24 @@ export function fetchInventoryPosition(
     productRef,
     movementLimit,
   });
+}
+
+/**
+ * What a closed sale can still give back, and the refunds it already has.
+ *
+ * Read-only, and every refundable figure is the core's: a refund is priced
+ * from the original sale's materialised economics, never re-priced here.
+ */
+export function fetchRefundEligibility(
+  transactionId: string,
+): Promise<RefundEligibility> {
+  return invoke<RefundEligibility>("refund_eligibility", { transactionId });
+}
+
+export function fetchTransactionRefunds(
+  transactionId: string,
+): Promise<Refund[]> {
+  return invoke<Refund[]>("transaction_refunds", { transactionId });
 }
 
 /** Resolve a barcode the way a sale would. The core prices it, not this code. */

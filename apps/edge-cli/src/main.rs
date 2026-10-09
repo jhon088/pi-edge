@@ -13,6 +13,7 @@
 mod catalog;
 mod error;
 mod inventory;
+mod refund;
 mod render;
 
 use std::path::PathBuf;
@@ -22,10 +23,11 @@ use clap::{Args, Parser, Subcommand};
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1, ChangeQuantityRequestV1,
-    DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1, InitDeviceRequestV1,
-    InventoryMovementRequestV1, InventoryQueryV1, OpenRegisterSessionRequestV1, PaymentRequestV1,
-    ProductSelectorV1, RemoveItemRequestV1, ReopenSessionRequestV1, StartPaymentRequestV1,
-    TransactionRequestV1, PROTOCOL_VERSION,
+    CreateRefundRequestV1, DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1,
+    InitDeviceRequestV1, InventoryMovementRequestV1, InventoryQueryV1,
+    OpenRegisterSessionRequestV1, PaymentRequestV1, ProductSelectorV1, RefundRequestV1,
+    RemoveItemRequestV1, ReopenSessionRequestV1, StartPaymentRequestV1, TransactionRequestV1,
+    PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -218,6 +220,53 @@ enum Command {
     GetState,
     /// Print the active transaction, if any.
     ActiveSale,
+    /// What a closed sale can still give back. The core computes it all.
+    RefundEligibility {
+        #[arg(long = "transaction")]
+        transaction_id: String,
+    },
+    /// Open a refund of a closed sale.
+    ///
+    /// Authority over the original sale is resolved by the runtime, never
+    /// asserted here (ADR 030).
+    RefundCreate {
+        #[arg(long = "transaction")]
+        transaction_id: String,
+        /// One per line, as `<original-line>:<thousandths>`, e.g. `1:2000`.
+        #[arg(long = "line", required = true)]
+        lines: Vec<String>,
+        /// Why. A blank reason is refused.
+        #[arg(long)]
+        reason: String,
+        /// `NONE`, `PENDING` or `REQUEST`. A sale that was never invoiced
+        /// admits only `NONE` (ADR 032).
+        #[arg(long = "fiscal-action", default_value = "NONE")]
+        fiscal_action: String,
+    },
+    /// Record that the goods came back. Returns them to stock, once.
+    RefundAccept {
+        #[arg(long = "refund")]
+        refund_id: String,
+    },
+    /// Give the money back, spread over the original tenders by the core.
+    RefundPay {
+        #[arg(long = "refund")]
+        refund_id: String,
+    },
+    /// Ask the provider about an unresolved refund. Never refunds again.
+    RefundReconcile {
+        #[arg(long = "refund")]
+        refund_id: String,
+    },
+    RefundShow {
+        #[arg(long = "refund")]
+        refund_id: String,
+    },
+    /// Every refund of one sale.
+    Refunds {
+        #[arg(long = "transaction")]
+        transaction_id: String,
+    },
     /// Import the opening stock baseline. One per installation, ever
     /// (ADR 028).
     InventoryImport {
@@ -514,6 +563,51 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             }))
         }
         Command::ActiveSale => to_value(&client.get_active_transaction()?),
+        Command::RefundEligibility { transaction_id } => {
+            to_value(&client.refund_eligibility(TransactionRequestV1 {
+                transaction_id: transaction_id.clone(),
+            })?)
+        }
+        Command::RefundCreate {
+            transaction_id,
+            lines,
+            reason,
+            fiscal_action,
+        } => to_value(&client.create_refund(
+            CreateRefundRequestV1 {
+                transaction_id: transaction_id.clone(),
+                lines: refund::parse_lines(lines)?,
+                reason_code: reason.clone(),
+                fiscal_action: refund::parse_fiscal_action(fiscal_action)?,
+            },
+            request_id,
+        )?),
+        Command::RefundAccept { refund_id } => to_value(&client.accept_refund(
+            RefundRequestV1 {
+                refund_id: refund_id.clone(),
+            },
+            request_id,
+        )?),
+        Command::RefundPay { refund_id } => to_value(&client.start_refund_payment(
+            RefundRequestV1 {
+                refund_id: refund_id.clone(),
+            },
+            request_id,
+        )?),
+        Command::RefundReconcile { refund_id } => to_value(&client.reconcile_refund(
+            RefundRequestV1 {
+                refund_id: refund_id.clone(),
+            },
+            request_id,
+        )?),
+        Command::RefundShow { refund_id } => to_value(&client.get_refund(RefundRequestV1 {
+            refund_id: refund_id.clone(),
+        })?),
+        Command::Refunds { transaction_id } => {
+            to_value(&client.transaction_refunds(TransactionRequestV1 {
+                transaction_id: transaction_id.clone(),
+            })?)
+        }
         Command::InventoryImport { file } => {
             to_value(&inventory::import_bootstrap(&client, file, request_id)?)
         }

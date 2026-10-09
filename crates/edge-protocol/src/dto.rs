@@ -751,6 +751,171 @@ pub struct InventoryQueryV1 {
     pub offset: i64,
 }
 
+// ------------------------------------------------------------------- refunds
+
+/// What one original line can still give back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundableLineV1 {
+    pub line_number: i64,
+    pub product_ref: String,
+    pub description: String,
+    /// Rendered: `3.000`.
+    pub sold_quantity: String,
+    pub refunded_quantity: String,
+    pub remaining_quantity: String,
+    pub remaining_quantity_thousandths: i64,
+    /// What the whole line was worth.
+    pub original_gross: MoneyV1,
+    /// What is still available, after earlier refunds took their share.
+    pub remaining_net: MoneyV1,
+    pub remaining_tax: MoneyV1,
+    pub remaining_gross: MoneyV1,
+    pub remaining_discount: MoneyV1,
+}
+
+/// One original tender and what it can still refund.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundableTenderV1 {
+    pub payment_id: String,
+    /// `CASH` or `CARD`.
+    pub tender_type: String,
+    pub committed: MoneyV1,
+    pub remaining: MoneyV1,
+}
+
+/// Everything a client needs to offer a refund, computed by the core.
+///
+/// A client never works out a refundable quantity or amount of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundEligibilityV1 {
+    pub transaction_id: String,
+    /// The original sale's status. Only `FINALIZED` is refundable.
+    pub original_status: String,
+    pub register_sequence: i64,
+    pub original_total: MoneyV1,
+    /// `NOT_INVOICED` or `INVOICED`: what fiscal consequences a refund may
+    /// choose depends on it.
+    pub fiscal_state: String,
+    pub invoice_ref: Option<String>,
+    pub lines: Vec<RefundableLineV1>,
+    pub tenders: Vec<RefundableTenderV1>,
+    pub refundable_total: MoneyV1,
+    /// While a refund is live, a second cannot be created.
+    pub refund_in_progress: Option<String>,
+    pub refund_ids: Vec<String>,
+}
+
+/// One line of a refund, priced by the core from the original sale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundLineV1 {
+    pub refund_line_id: String,
+    pub original_line_number: i64,
+    pub product_ref: String,
+    pub description: String,
+    pub quantity: String,
+    pub quantity_thousandths: i64,
+    pub net: MoneyV1,
+    pub tax: MoneyV1,
+    pub gross: MoneyV1,
+    pub discount: MoneyV1,
+}
+
+/// One tender's share of a refund, with its attempt history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundPaymentV1 {
+    pub refund_payment_id: String,
+    pub original_payment_id: String,
+    pub tender_type: String,
+    pub requested: MoneyV1,
+    pub refunded: MoneyV1,
+    /// `CREATED`, `PENDING`, `REFUNDED` or `FAILED`.
+    pub status: String,
+    pub attempts: Vec<RefundAttemptV1>,
+}
+
+/// One concrete interaction with a provider to give money back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundAttemptV1 {
+    pub attempt_id: String,
+    pub attempt_number: i64,
+    /// `CREATED`, `PROCESSING`, `UNKNOWN`, `REFUNDED` or `FAILED`.
+    pub status: String,
+    pub requested: MoneyV1,
+    pub refunded: Option<MoneyV1>,
+    /// What the provider is asked about during reconciliation. Never a
+    /// cardholder detail.
+    pub correlation_id: String,
+    pub provider_reference: Option<String>,
+    pub failure_code: Option<String>,
+    pub created_at: String,
+}
+
+/// A refund and everything that explains it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundV1 {
+    pub refund_id: String,
+    pub original_transaction_id: String,
+    pub store_id: String,
+    pub business_day_id: String,
+    pub session_id: String,
+    pub register_id: String,
+    pub operator_id: String,
+    /// `CREATED`, `ACCEPTED`, `FINANCIAL_PENDING`, `COMPLETED` or `FAILED`.
+    pub status: String,
+    /// Who said the original sale could be refunded. `CENTRAL_ACCEPTED`.
+    pub authority: String,
+    pub authorization_ref: Option<String>,
+    pub lines: Vec<RefundLineV1>,
+    pub net: MoneyV1,
+    pub tax: MoneyV1,
+    pub gross: MoneyV1,
+    pub discount: MoneyV1,
+    /// `NONE`, `CREDIT_NOTE_PENDING` or `CREDIT_NOTE_REQUESTED`. PI.Edge
+    /// issues no CFDI: this records what is owed fiscally, nothing more.
+    pub fiscal_status: String,
+    pub original_fiscal_state: String,
+    pub reason_code: String,
+    pub restock: bool,
+    pub payments: Vec<RefundPaymentV1>,
+    pub remaining_to_refund: MoneyV1,
+    /// True from `ACCEPTED` onwards: the goods are back on the ledger.
+    pub inventory_returned: bool,
+    /// True while a refund attempt is unresolved. The way out is reconciling
+    /// that attempt, never a second refund.
+    pub requires_reconciliation: bool,
+    pub created_at: String,
+    pub accepted_at: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+/// Which quantity of which original line to give back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundLineRequestV1 {
+    pub original_line_number: i64,
+    pub quantity_thousandths: i64,
+}
+
+/// Open a refund.
+///
+/// There is deliberately **no authority field**: the runtime resolves who says
+/// the original sale is refundable, so a client cannot assert it (ADR 030).
+/// There is no fiscal *state* field either — only the fiscal *action*, which
+/// the core then validates against the original sale (ADR 032).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateRefundRequestV1 {
+    pub transaction_id: String,
+    pub lines: Vec<RefundLineRequestV1>,
+    pub reason_code: String,
+    /// `NONE`, `CREDIT_NOTE_PENDING` or `CREDIT_NOTE_REQUESTED`.
+    pub fiscal_action: String,
+}
+
+/// Address one refund.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundRequestV1 {
+    pub refund_id: String,
+}
+
 // ------------------------------------------------------------ cash management
 
 /// One drawer movement. Append-only: there is no update DTO (ADR 021).
@@ -793,6 +958,8 @@ pub struct CashPositionV1 {
     pub cash_out: MoneyV1,
     /// Approved drops only. A pending drop has moved nothing.
     pub safe_drops: MoneyV1,
+    /// Cash handed back for commercial refunds.
+    pub cash_refunds: MoneyV1,
     /// Derived from the movements, never stored.
     pub expected_cash: MoneyV1,
     /// Audit only: what customers handed over in cash.

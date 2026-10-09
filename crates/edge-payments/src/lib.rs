@@ -22,7 +22,7 @@ pub use error::PaymentError;
 pub use payment::{NewPayment, Payment, PaymentStatus};
 pub use provider::{
     PaymentProviderPort, ProviderOutcome, ProviderQuery, ProviderRequest, ProviderReversal,
-    ReversalOutcome,
+    RefundOutcome, RefundRequest, ReversalOutcome,
 };
 pub use settlement::{settle, split_tender, CashSplit, PaymentView, Settlement};
 pub use simulator::{SimulatedOutcome, SimulatorPaymentProvider, SimulatorScript};

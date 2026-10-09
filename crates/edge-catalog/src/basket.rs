@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use edge_domain::prelude::{
-    CatalogSnapshotId, Currency, Money, PriceMode, ProductRef, PromotionId, Quantity, StoreId,
-    Timestamp,
+    allocate_proportionally, CatalogSnapshotId, Currency, Money, PriceMode, ProductRef,
+    PromotionId, Quantity, StoreId, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 
@@ -304,7 +304,7 @@ pub fn evaluate(
                 Ok((line.line_number, line.extended.checked_sub(discount)?))
             })
             .collect::<Result<_, CatalogError>>()?;
-        let allocation = allocate(amount, &weights)?;
+        let allocation = allocate(amount, &weights);
         if allocation.is_empty() {
             continue;
         }
@@ -504,71 +504,24 @@ fn adjustment(
     }
 }
 
-/// Spread an amount across weighted lines, exactly.
+/// Spread a basket amount across the lines it applies to.
 ///
-/// Largest fractional remainder, ties broken by ascending line number, each
-/// share capped at the line's own weight. The shares always sum to `amount`.
-fn allocate(amount: Money, weights: &[(i64, Money)]) -> Result<Vec<LineDiscount>, CatalogError> {
-    let currency = amount.currency();
-    let total: i64 = weights.iter().map(|(_, weight)| weight.minor()).sum();
-    if total <= 0 || !amount.is_positive() {
-        return Ok(Vec::new());
-    }
-    let budget = amount.minor().min(total);
-
-    struct Share {
-        line_number: i64,
-        minor: i64,
-        remainder: i128,
-        cap: i64,
-    }
-    let mut shares: Vec<Share> = weights
-        .iter()
-        .map(|(line_number, weight)| {
-            let numerator = i128::from(budget) * i128::from(weight.minor());
-            let denominator = i128::from(total);
-            Share {
-                line_number: *line_number,
-                minor: i64::try_from(numerator / denominator).unwrap_or(0),
-                remainder: numerator % denominator,
-                cap: weight.minor(),
-            }
-        })
-        .collect();
-
-    let mut residual = budget - shares.iter().map(|share| share.minor).sum::<i64>();
-    let mut order: Vec<usize> = (0..shares.len()).collect();
-    order.sort_by(|left, right| {
-        shares[*right]
-            .remainder
-            .cmp(&shares[*left].remainder)
-            .then_with(|| shares[*left].line_number.cmp(&shares[*right].line_number))
-    });
-    while residual > 0 {
-        let mut progressed = false;
-        for index in &order {
-            if residual == 0 {
-                break;
-            }
-            if shares[*index].minor < shares[*index].cap {
-                shares[*index].minor += 1;
-                residual -= 1;
-                progressed = true;
-            }
-        }
-        if !progressed {
-            break;
-        }
-    }
-
-    Ok(shares
+/// A thin adaptation of the core's single allocation policy
+/// (`allocate_proportionally`) onto line numbers: weights are passed in
+/// ascending line order, so the policy's index tie-break *is* the line-number
+/// tie-break, and zero shares are dropped because a line that received nothing
+/// carries no discount.
+fn allocate(amount: Money, weights: &[(i64, Money)]) -> Vec<LineDiscount> {
+    let amounts: Vec<Money> = weights.iter().map(|(_, weight)| *weight).collect();
+    allocate_proportionally(amount, &amounts)
         .into_iter()
-        .filter(|share| share.minor > 0)
-        .map(|share| LineDiscount {
-            line_number: share.line_number,
-            amount: Money::from_minor(share.minor, currency),
+        .zip(weights)
+        .filter(|(share, _)| share.is_positive())
+        .map(|(share, (line_number, _))| LineDiscount {
+            line_number: *line_number,
+            amount: share,
         })
-        .collect())
+        .collect()
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

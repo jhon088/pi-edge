@@ -1,0 +1,111 @@
+{
+  "refund_id": "00000000-0000-0000-0000-000000000018",
+  "original_transaction_id": "00000000-0000-0000-0000-000000000009",
+  "store_id": "STORE-DEMO",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "status": "FINANCIAL_PENDING",
+  "authority": "CENTRAL_ACCEPTED",
+  "authorization_ref": "GOLDEN-CENTRAL",
+  "lines": [
+    {
+      "refund_line_id": "00000000-0000-0000-0000-000000000019",
+      "original_line_number": 1,
+      "product_ref": "SKU-16",
+      "description": "Gravado 16%",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "net": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "tax": {
+        "minor": 1600,
+        "currency": "MXN",
+        "formatted": "16.00"
+      },
+      "gross": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "discount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      }
+    }
+  ],
+  "net": {
+    "minor": 10000,
+    "currency": "MXN",
+    "formatted": "100.00"
+  },
+  "tax": {
+    "minor": 1600,
+    "currency": "MXN",
+    "formatted": "16.00"
+  },
+  "gross": {
+    "minor": 11600,
+    "currency": "MXN",
+    "formatted": "116.00"
+  },
+  "discount": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "fiscal_status": "NONE",
+  "original_fiscal_state": "NOT_INVOICED",
+  "reason_code": "CUSTOMER_RETURN",
+  "restock": true,
+  "payments": [
+    {
+      "refund_payment_id": "00000000-0000-0000-0000-00000000001d",
+      "original_payment_id": "00000000-0000-0000-0000-00000000000e",
+      "tender_type": "CARD",
+      "requested": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "refunded": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "status": "PENDING",
+      "attempts": [
+        {
+          "attempt_id": "00000000-0000-0000-0000-00000000001e",
+          "attempt_number": 1,
+          "status": "UNKNOWN",
+          "requested": {
+            "minor": 11600,
+            "currency": "MXN",
+            "formatted": "116.00"
+          },
+          "refunded": null,
+          "correlation_id": "00000000-0000-0000-0000-00000000001f",
+          "provider_reference": null,
+          "failure_code": null,
+          "created_at": "2026-10-08T15:00:00.000000Z"
+        }
+      ]
+    }
+  ],
+  "remaining_to_refund": {
+    "minor": 11600,
+    "currency": "MXN",
+    "formatted": "116.00"
+  },
+  "inventory_returned": true,
+  "requires_reconciliation": true,
+  "created_at": "2026-10-08T15:00:00.000000Z",
+  "accepted_at": "2026-10-08T15:00:00.000000Z",
+  "completed_at": null
+}

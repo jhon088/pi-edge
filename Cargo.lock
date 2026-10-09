@@ -228,6 +228,7 @@ dependencies = [
  "edge-domain",
  "edge-inventory",
  "edge-payments",
+ "edge-refunds",
  "serde",
  "serde_json",
  "thiserror",
@@ -295,6 +296,7 @@ dependencies = [
  "edge-domain",
  "edge-inventory",
  "edge-payments",
+ "edge-refunds",
  "edge-storage",
  "serde_json",
  "tempfile",
@@ -315,6 +317,7 @@ dependencies = [
  "edge-ipc",
  "edge-payments",
  "edge-protocol",
+ "edge-refunds",
  "edge-storage",
  "serde_json",
  "signal-hook",
@@ -348,6 +351,7 @@ dependencies = [
  "edge-inventory",
  "edge-payments",
  "edge-protocol",
+ "edge-refunds",
  "edge-storage",
  "serde_json",
 ]
@@ -364,6 +368,7 @@ dependencies = [
  "edge-inventory",
  "edge-payments",
  "edge-protocol",
+ "edge-refunds",
  "edge-storage",
  "serde_json",
  "tempfile",
@@ -415,8 +420,20 @@ dependencies = [
  "edge-domain",
  "edge-inventory",
  "edge-payments",
+ "edge-refunds",
  "serde",
  "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "edge-refunds"
+version = "0.1.0"
+dependencies = [
+ "edge-domain",
+ "edge-payments",
+ "serde",
+ "thiserror",
  "uuid",
 ]
 
@@ -430,6 +447,7 @@ dependencies = [
  "edge-domain",
  "edge-inventory",
  "edge-payments",
+ "edge-refunds",
  "rusqlite",
  "serde_json",
  "tempfile",

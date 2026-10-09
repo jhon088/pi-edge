@@ -229,6 +229,92 @@ for payment states that do not exist yet.
 * **There are no reservations in V1.** The window between the availability
   check and the finalization is documented, not closed. (ADR 029)
 
+## Refunds (milestone 9)
+
+* **A refund is its own document**, never a correction of the sale and never a
+  payment reversal. After a refund the original payment is still `COMMITTED`
+  and the sale still `FINALIZED`. (ADR 030, ADR 034)
+* **A refund needs central authority over the original sale.** A locally
+  finalized sale is *not* a centrally accepted one. The domain receives an
+  already-resolved `RefundAuthorizationContext`; the wire has no field a client
+  could assert it with; and with no authority source configured every refund is
+  refused with `REFUND_AUTHORITY_REQUIRED`. (ADR 030)
+* **A refund never re-prices anything** — not the current price, promotion, tax
+  profile or snapshot. It consumes the original line's materialised
+  `extended`, `discount`, `net`, `tax` and `line_total`. (ADR 031)
+* **The promotion engine is never re-run for a refund**, and no unit is
+  identified as "the free one". A buy-2-get-1 line that charged 232.00 for three
+  units gives back a third of 232.00 per unit — neither the shelf price
+  (arbitrage) nor zero (shorting the customer). (ADR 031)
+* **Partial refunds exhaust a line exactly.** Each slice is prorated against
+  what is *left*, so `Σ(partial refunds of a line) == line_total` to the minor
+  unit in every split and order, and the last refund absorbs the remainder.
+  `Money::prorate(part, whole)` returns the amount unchanged when
+  `part == whole`, which is what makes it exact. (ADR 031)
+* **`net + tax == gross` on every refund and refund line**, because `gross` is
+  computed from the other two rather than rounded a third time.
+* **One allocation policy for the whole repo**:
+  `edge_domain::money::allocate_proportionally`, largest remainder with caps,
+  shared by basket discounts and refund tender spreads. (ADR 031)
+* **A tender never gives back more than it took.** A refund is spread pro-rata
+  over what each original tender *applied* (`committed_amount`, never
+  `requested_amount`), capped per tender by what it has left. A refund the
+  tenders cannot cover is refused. Operator-chosen allocation is not built.
+  (ADR 031)
+* **Commercial acceptance and financial settlement are different facts.**
+  `ACCEPTED` means the goods came back and the inventory return is written
+  there, exactly once; from then on the refund is irrevocable. Only `CREATED`
+  can fail. An unresolved provider refund keeps the goods returned and waits for
+  reconciliation. (ADR 033)
+* **`REFUND_RETURN` (`IN`) is not `MANUAL_IN`**, and the quantity returned is
+  the physical one, exactly as on the way out. **`CASH_REFUND` (`OUT`) is not a
+  reversal of a `CASH_SALE`**, and it reduces expected cash exactly once per
+  cash refund payment. (ADR 033)
+* **V1 restocks everything**, recorded as a value on the refund. There is no
+  disposition engine. (ADR 033)
+* **`UNKNOWN` is first class for refunds too.** A lost provider answer is never
+  promoted to `FAILED` and never retried; starting again answers
+  `REFUND_REQUIRES_RECONCILIATION`. The priority is never paying twice.
+  (ADR 018, ADR 034)
+* **Durable before the provider call**, for refunds as for charges: the refund
+  payment, its attempt and its correlation id are committed before anything is
+  sent. Refund attempts are append-only. (ADR 020, ADR 034)
+* **One refund in progress per original sale**, enforced by a partial unique
+  index. Validation and reservation happen in one database transaction. A
+  completed refund blocks nothing while quantity remains; a replayed
+  `request_id` is not a second refund. (ADR 030)
+* **PI.Edge issues no fiscal document.** It records which one is owed:
+  `NONE`, `CREDIT_NOTE_PENDING`, `CREDIT_NOTE_REQUESTED`. No CFDI, no stamping,
+  no PAC, no SAT. (ADR 032)
+* **`CREDIT_NOTE_REQUESTED` is a durable intention, not a result.** It records
+  that the credit note was asked for; it never means stamped, issued or
+  completed. That is why `CREDIT_NOTE_COMPLETED` and `CREDIT_NOTE_FAILED` do
+  not exist yet. (ADR 032)
+* **PI.Edge *consumes* fiscal metadata; PI.Edge is not the authority for
+  declaring a sale invoiced.** Invoicing happens upstream. There is therefore
+  **no production operation** that writes the fiscal state: none in Edge
+  Protocol V1, none on `EdgeClient` or `IpcEdgeClient`, no arm in the daemon's
+  dispatch, no CLI command. A till only ever meets `NOT_INVOICED`, written when
+  the sale finalized. The invoiced case is arranged by a fixture behind the
+  `testing` feature of `edge-application`, which the production binary does not
+  enable. (ADR 032)
+* **The fiscal consequence is constrained by the original sale**: never invoiced
+  admits only `NONE`, invoiced must choose explicitly, and the original's fiscal
+  state is materialised on the refund so a later invoice cannot rewrite the
+  decision. The operator never declares the fiscal *state*, only the *action*.
+  (ADR 032)
+* **Fiscal metadata lives beside the sale, not on it**, because it has its own
+  lifecycle: a sale can be finalized today and invoiced tomorrow. The row is
+  written at finalization, so a missing row for a finalized sale is a bug rather
+  than a third state. (ADR 032)
+* **`PaymentProviderPort` gained `refund_payment` and `query_refund`** as
+  methods of their own, beside `reverse_payment`, now that a consumer exists.
+  `edge-payments` owns the provider capability; `edge-refunds` owns
+  `RefundPayment` and `RefundAttempt`. `PaymentAttempt` is not reused.
+  (ADR 034, amending ADR 019)
+* **M11 Sync must publish refunds.** No outbox event was added in M9, because
+  there is no consumer and the frozen rule is no events without one.
+
 ## Engineering rules (frozen in milestone 7)
 
 The organisation and quality rules in **`CLAUDE.md`** at the repository root are

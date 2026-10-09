@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
 use edge_application::ports::InventoryBootstrapState;
-use edge_application::queries::InventoryPositionView;
+use edge_application::queries::{InventoryPositionView, RefundView};
 use edge_application::testing::{
     CatalogFixture, FixedClock, FixturePrice, FixtureProduct, SequentialIdFactory,
 };
@@ -23,6 +23,9 @@ use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
+use edge_refunds::{
+    RefundAuthority, RefundAuthorizationContext, RefundFiscalStatus, RefundLineRequest,
+};
 use edge_storage::SqliteEdgeStore;
 use serde_json::Value;
 
@@ -496,6 +499,74 @@ pub fn golden_bootstrap(core: &GoldenCore, items: &[(&str, i64)]) -> InventoryBo
 pub fn golden_position(core: &GoldenCore, product_ref: &str) -> InventoryPositionView {
     core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 50)
         .unwrap()
+}
+
+// ----------------------------------------------------------------- refunds
+
+/// The authority a refund needs, as the composition root would resolve it.
+pub fn central_authority(transaction_id: TransactionId) -> RefundAuthorizationContext {
+    RefundAuthorizationContext {
+        original_transaction_id: transaction_id,
+        authority: RefundAuthority::CentralAccepted,
+        authorization_ref: Some("GOLDEN-CENTRAL".to_owned()),
+    }
+}
+
+/// `(original_line_number, thousandths)` pairs as a refund request.
+pub fn refund_lines(lines: &[(i64, i64)]) -> Vec<RefundLineRequest> {
+    lines
+        .iter()
+        .map(|(line_number, thousandths)| RefundLineRequest {
+            original_line_number: *line_number,
+            quantity: Quantity::from_thousandths(*thousandths).unwrap(),
+        })
+        .collect()
+}
+
+/// A whole refund on a golden core: open it, take the goods, pay it back.
+pub fn golden_refund(
+    core: &GoldenCore,
+    transaction_id: TransactionId,
+    lines: Vec<RefundLineRequest>,
+    fiscal_action: RefundFiscalStatus,
+) -> RefundView {
+    let refund = core
+        .create_refund(CreateRefundCommand {
+            request_id: None,
+            authorization: central_authority(transaction_id),
+            lines,
+            reason_code: "CUSTOMER_RETURN".to_owned(),
+            fiscal_action,
+        })
+        .unwrap();
+    core.accept_refund(AcceptRefundCommand {
+        request_id: None,
+        refund_id: refund.refund.refund_id,
+    })
+    .unwrap();
+    core.start_refund_payment(StartRefundPaymentCommand {
+        request_id: None,
+        refund_id: refund.refund.refund_id,
+    })
+    .unwrap()
+}
+
+/// A finished cash sale on a golden core, answering with its id.
+pub fn golden_finalized_sale(
+    core: &GoldenCore,
+    barcode: &str,
+    quantity_thousandths: i64,
+    tendered_minor: i64,
+) -> TransactionId {
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    scan(core, barcode, quantity_thousandths);
+    core.totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    pay_cash(core, tendered_minor);
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap()
+        .id()
 }
 
 /// A finished cash sale of the 16% product: 116.00, tendered `tendered_minor`.

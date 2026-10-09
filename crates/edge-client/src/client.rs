@@ -6,14 +6,14 @@ use edge_protocol::{
     AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayV1,
     CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
     CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1,
-    DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
-    ImportInventoryBootstrapRequestV1, InitDeviceRequestV1, InventoryBootstrapV1,
-    InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1, InventoryQueryV1,
-    JournalEventV1, OpenRegisterSessionRequestV1, PaymentRequestV1, PaymentResultV1,
-    PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
-    RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RetailTransactionV1,
-    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
-    TransactionPaymentsV1, TransactionRequestV1,
+    CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
+    ForceCloseBusinessDayRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
+    InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1,
+    InventoryQueryV1, JournalEventV1, OpenRegisterSessionRequestV1, PaymentRequestV1,
+    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1,
+    ReopenSessionRequestV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
+    SessionCloseResultV1, StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -111,6 +111,43 @@ pub trait EdgeClient: Debug + Send + Sync {
         &self,
         request_id: Option<Uuid>,
     ) -> Result<RetailTransactionV1, ClientError>;
+    // --------------------------------------------------------------- refunds
+
+    /// What a sale can still give back. The core computes every figure.
+    fn refund_eligibility(
+        &self,
+        request: TransactionRequestV1,
+    ) -> Result<RefundEligibilityV1, ClientError>;
+    /// Open a refund. The runtime resolves the authority over the original
+    /// sale; a client cannot assert it (ADR 030).
+    fn create_refund(
+        &self,
+        request: CreateRefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError>;
+    /// The goods came back: writes the inventory return, exactly once.
+    fn accept_refund(
+        &self,
+        request: RefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError>;
+    /// Give the money back, spread over the original tenders by the core.
+    fn start_refund_payment(
+        &self,
+        request: RefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError>;
+    /// Ask the provider about an unresolved refund. Never refunds again.
+    fn reconcile_refund(
+        &self,
+        request: RefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError>;
+    fn get_refund(&self, request: RefundRequestV1) -> Result<RefundV1, ClientError>;
+    fn transaction_refunds(
+        &self,
+        request: TransactionRequestV1,
+    ) -> Result<Vec<RefundV1>, ClientError>;
     // ------------------------------------------------------------- inventory
 
     /// Import the opening baseline. One per installation, ever (ADR 028).

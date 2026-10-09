@@ -20,6 +20,7 @@
 pub mod connection;
 pub mod dispatch;
 pub mod error;
+pub mod refund_authority;
 pub mod state;
 
 use std::path::PathBuf;
@@ -105,6 +106,10 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
         UuidFactory,
         provider,
     ));
+    // How refunds get authority over an original sale. Off unless explicitly
+    // switched on, so the production rule is the default (ADR 030).
+    let refund_authority =
+        refund_authority::RefundAuthoritySource::from_env().map_err(DaemonError::Configuration)?;
     let state = Arc::new(state::DaemonState::new(migrations::target_version()));
 
     let endpoint = paths.endpoint()?;
@@ -115,7 +120,11 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
         &SystemClock.now().to_rfc3339(),
     )?;
 
-    let dispatcher = Arc::new(Dispatcher::new(Arc::clone(&core), Arc::clone(&state)));
+    let dispatcher = Arc::new(Dispatcher::with_refund_authority(
+        Arc::clone(&core),
+        Arc::clone(&state),
+        refund_authority,
+    ));
     let context = Arc::new(ConnectionContext::new(Arc::clone(&dispatcher), token));
 
     state.set_status(CoreStatusV1::Ready);

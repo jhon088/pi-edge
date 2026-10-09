@@ -19,6 +19,7 @@ mod inventory;
 pub mod lock;
 pub mod migrations;
 mod payments;
+mod refunds;
 pub mod sqlite;
 
 pub use error::StorageError;

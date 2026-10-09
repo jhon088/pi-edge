@@ -6,7 +6,7 @@
 //! happened.
 
 use edge_domain::prelude::{
-    BusinessDayId, ProductRef, Quantity, SessionId, StoreId, Timestamp, TransactionId,
+    BusinessDayId, ProductRef, Quantity, RefundId, SessionId, StoreId, Timestamp, TransactionId,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -63,6 +63,11 @@ pub enum MovementType {
     ManualIn,
     /// An operator taking stock out, with a stated reason.
     ManualOut,
+    /// Goods that came back with an accepted commercial refund (ADR 033).
+    /// Joined in milestone 9, when refunds gave it an operation; a refund is
+    /// never recorded as a `MANUAL_IN`, because then nothing would say the
+    /// stock came back from a customer.
+    RefundReturn,
 }
 
 impl MovementType {
@@ -72,6 +77,7 @@ impl MovementType {
             MovementType::Sale => "SALE",
             MovementType::ManualIn => "MANUAL_IN",
             MovementType::ManualOut => "MANUAL_OUT",
+            MovementType::RefundReturn => "REFUND_RETURN",
         }
     }
 
@@ -81,6 +87,7 @@ impl MovementType {
             "SALE" => Ok(MovementType::Sale),
             "MANUAL_IN" => Ok(MovementType::ManualIn),
             "MANUAL_OUT" => Ok(MovementType::ManualOut),
+            "REFUND_RETURN" => Ok(MovementType::RefundReturn),
             other => Err(InventoryError::UnknownEnumValue {
                 kind: "MovementType",
                 value: other.to_owned(),
@@ -92,7 +99,9 @@ impl MovementType {
     /// construction and again by a database `CHECK`.
     pub const fn direction(self) -> Direction {
         match self {
-            MovementType::OpeningBalance | MovementType::ManualIn => Direction::In,
+            MovementType::OpeningBalance | MovementType::ManualIn | MovementType::RefundReturn => {
+                Direction::In
+            }
             MovementType::Sale | MovementType::ManualOut => Direction::Out,
         }
     }
@@ -119,6 +128,11 @@ pub enum MovementSource {
     },
     /// An operator action, identified by the command that requested it.
     Manual { request_ref: Uuid },
+    /// One line of one accepted refund.
+    RefundLine {
+        refund_id: RefundId,
+        line_number: i64,
+    },
 }
 
 impl MovementSource {
@@ -132,6 +146,10 @@ impl MovementSource {
                 line_number,
             } => format!("{transaction_id}:{line_number}"),
             MovementSource::Manual { request_ref } => request_ref.to_string(),
+            MovementSource::RefundLine {
+                refund_id,
+                line_number,
+            } => format!("{refund_id}:{line_number}"),
         }
     }
 }

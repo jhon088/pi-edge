@@ -8,6 +8,7 @@ use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
 use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
+use edge_refunds::RefundError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {
@@ -26,6 +27,9 @@ pub enum AppError {
     #[error(transparent)]
     Inventory(#[from] InventoryError),
 
+    #[error(transparent)]
+    Refund(#[from] RefundError),
+
     #[error("the session cannot close yet: {}", blockers.join(", "))]
     SessionCloseBlocked { blockers: Vec<String> },
 
@@ -43,6 +47,12 @@ pub enum AppError {
 
     #[error("edge device is not initialized; run `init-demo` first")]
     DeviceNotInitialized,
+
+    #[error("no transaction `{transaction_id}`")]
+    TransactionNotFound { transaction_id: String },
+
+    #[error("no refund `{refund_id}`")]
+    RefundNotFound { refund_id: String },
 
     #[error("business day {business_day_id} is already open for this store")]
     BusinessDayAlreadyOpen { business_day_id: String },
@@ -107,12 +117,16 @@ impl AppError {
             AppError::Cash(error) => error.code(),
             // The inventory context publishes its own codes.
             AppError::Inventory(error) => error.code(),
+            // The refund context publishes its own codes.
+            AppError::Refund(error) => error.code(),
             AppError::SessionCloseBlocked { .. } => "SESSION_CLOSE_BLOCKED",
             AppError::BusinessDayCloseBlocked { .. } => "BUSINESS_DAY_CLOSE_BLOCKED",
             AppError::Storage(_) => "STORAGE_FAILURE",
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
             AppError::Serialization(_) => "SERIALIZATION_FAILURE",
             AppError::DeviceNotInitialized => "DEVICE_NOT_INITIALIZED",
+            AppError::TransactionNotFound { .. } => "TRANSACTION_NOT_FOUND",
+            AppError::RefundNotFound { .. } => "REFUND_NOT_FOUND",
             AppError::BusinessDayAlreadyOpen { .. } => "BUSINESS_DAY_ALREADY_OPEN",
             AppError::NoOpenBusinessDay => "NO_OPEN_BUSINESS_DAY",
             AppError::BusinessDayNotOpen { .. } => "BUSINESS_DAY_NOT_OPEN",

@@ -11,8 +11,9 @@
 use std::sync::Arc;
 
 use edge_application::commands::{
-    AbortCatalogImportCommand, ActivateCatalogSnapshotCommand, CloseBusinessDayCommand,
-    FinalizeTransactionCommand, OpenBusinessDayCommand, RequestSessionCloseCommand,
+    AbortCatalogImportCommand, AcceptRefundCommand, ActivateCatalogSnapshotCommand,
+    CloseBusinessDayCommand, FinalizeTransactionCommand, OpenBusinessDayCommand,
+    ReconcileRefundCommand, RequestSessionCloseCommand, StartRefundPaymentCommand,
     StartTransactionCommand, TotalizeTransactionCommand,
 };
 use edge_application::{AppError, EdgeApplication, CORE_VERSION};
@@ -24,11 +25,14 @@ use edge_protocol::{
     error_codes, BusinessDayV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
     CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, InventoryBootstrapV1,
     InventoryMovementV1, InventoryPositionV1, JournalEventV1, OperationV1, PaymentResultV1,
-    PendingOutboxV1, ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1,
-    ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
-    TransactionPaymentsV1, PROTOCOL_VERSION,
+    PendingOutboxV1, ProductLookupV1, RefundEligibilityV1, RefundV1, RegisterSessionV1,
+    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1,
+    SessionCloseRequirementsV1, SessionCloseResultV1, TransactionPaymentsV1, PROTOCOL_VERSION,
 };
+use edge_refunds::RefundError;
 use edge_storage::SqliteEdgeStore;
+
+use crate::refund_authority::RefundAuthoritySource;
 use uuid::Uuid;
 
 use crate::state::DaemonState;
@@ -46,11 +50,27 @@ pub type Core = EdgeApplication<
 pub struct Dispatcher {
     core: Arc<Core>,
     state: Arc<DaemonState>,
+    /// How this runtime resolves authority over an original sale being
+    /// refunded. Resolved here, in the composition root's dispatch, so the
+    /// refund domain only ever sees an answer (ADR 030).
+    refund_authority: RefundAuthoritySource,
 }
 
 impl Dispatcher {
     pub fn new(core: Arc<Core>, state: Arc<DaemonState>) -> Self {
-        Self { core, state }
+        Self::with_refund_authority(core, state, RefundAuthoritySource::Unavailable)
+    }
+
+    pub fn with_refund_authority(
+        core: Arc<Core>,
+        state: Arc<DaemonState>,
+        refund_authority: RefundAuthoritySource,
+    ) -> Self {
+        Self {
+            core,
+            state,
+            refund_authority,
+        }
     }
 
     pub fn state(&self) -> &Arc<DaemonState> {
@@ -300,6 +320,85 @@ impl Dispatcher {
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
             }
+            OperationV1::GetRefundEligibility(payload) => {
+                let transaction_id = payload.transaction_id().map_err(payment_error)?;
+                let view = self
+                    .core
+                    .get_refund_eligibility(transaction_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::RefundEligibility(RefundEligibilityV1::from(
+                    &view,
+                )))
+            }
+            OperationV1::CreateRefund(payload) => {
+                // The runtime resolves the authority over the original sale.
+                // A client never asserts it, and with no authority source
+                // configured every refund is refused (ADR 030).
+                let transaction_id = payload.transaction().map_err(domain_error)?;
+                let authorization = self
+                    .refund_authority
+                    .authorize(transaction_id)
+                    .map_err(refund_error)?;
+                let command = payload
+                    .into_command(authorization, Some(request_id))
+                    .map_err(domain_error)?;
+                let view = self
+                    .core
+                    .create_refund(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Refund(RefundV1::from(&view)))
+            }
+            OperationV1::AcceptRefund(payload) => {
+                let refund_id = payload.refund().map_err(domain_error)?;
+                let view = self
+                    .core
+                    .accept_refund(AcceptRefundCommand {
+                        request_id: Some(request_id),
+                        refund_id,
+                    })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Refund(RefundV1::from(&view)))
+            }
+            OperationV1::StartRefundPayment(payload) => {
+                let refund_id = payload.refund().map_err(domain_error)?;
+                let view = self
+                    .core
+                    .start_refund_payment(StartRefundPaymentCommand {
+                        request_id: Some(request_id),
+                        refund_id,
+                    })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Refund(RefundV1::from(&view)))
+            }
+            OperationV1::ReconcileRefund(payload) => {
+                let refund_id = payload.refund().map_err(domain_error)?;
+                let view = self
+                    .core
+                    .reconcile_refund(ReconcileRefundCommand {
+                        request_id: Some(request_id),
+                        refund_id,
+                    })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Refund(RefundV1::from(&view)))
+            }
+            OperationV1::GetRefund(payload) => {
+                let refund_id = payload.refund().map_err(domain_error)?;
+                let view = self
+                    .core
+                    .get_refund(refund_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Refund(RefundV1::from(&view)))
+            }
+            OperationV1::GetTransactionRefunds(payload) => {
+                let transaction_id = payload.transaction_id().map_err(payment_error)?;
+                let views = self
+                    .core
+                    .get_transaction_refunds(transaction_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Refunds(
+                    views.iter().map(RefundV1::from).collect(),
+                ))
+            }
             OperationV1::ImportInventoryBootstrap(payload) => {
                 let command = payload
                     .into_command(Some(request_id))
@@ -543,13 +642,23 @@ fn cash_error(error: CashError) -> ErrorV1 {
     ErrorV1::new(error.code(), error.to_string())
 }
 
+/// Refund failures already carry their own stable code — including the refusal
+/// produced when no refund authority is configured.
+fn refund_error(error: RefundError) -> ErrorV1 {
+    ErrorV1::new(error.code(), error.to_string())
+}
+
 fn domain_error(error: DomainError) -> ErrorV1 {
     // Validation failures at the boundary are the client's fault; everything
     // else is a refused business rule.
     let code = match &error {
-        DomainError::Id(_) | DomainError::Money(_) | DomainError::Time(_) => {
-            error_codes::INVALID_ARGUMENT
-        }
+        // Everything a client can get structurally wrong in a payload: a bad
+        // id, a bad amount or quantity, a bad timestamp, or a value the
+        // contract does not define.
+        DomainError::Id(_)
+        | DomainError::Money(_)
+        | DomainError::Time(_)
+        | DomainError::UnknownEnumValue { .. } => error_codes::INVALID_ARGUMENT,
         DomainError::InvalidTransition { .. } => error_codes::INVALID_TRANSACTION_STATE,
         _ => error_codes::DOMAIN_RULE_VIOLATION,
     };

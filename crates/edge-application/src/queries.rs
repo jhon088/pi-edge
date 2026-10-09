@@ -9,6 +9,7 @@ use edge_catalog::{
 };
 use edge_domain::prelude::*;
 use edge_inventory::{InventoryMovement, InventoryPosition};
+use edge_refunds::{FiscalState, LineRefundable, Refund, RefundPaymentView, TenderRefundable};
 use serde::{Deserialize, Serialize};
 
 use crate::ports::DeviceProfile;
@@ -116,4 +117,47 @@ pub struct InventoryPositionView {
     pub on_hand_display: String,
     /// Empty unless the caller asked for movements.
     pub movements: Vec<InventoryMovement>,
+}
+
+// ------------------------------------------------------------------ refunds
+
+/// What a sale can still give back, computed by the core.
+///
+/// A client never works out a refundable quantity or amount: everything here
+/// is the core's arithmetic over the original sale's materialised economics
+/// and the refunds that already happened (ADR 031).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundEligibilityView {
+    pub transaction_id: TransactionId,
+    /// The original sale's status. Only `FINALIZED` is refundable.
+    pub original_status: String,
+    pub register_sequence: i64,
+    pub currency: Currency,
+    pub original_total: Money,
+    /// Whether the original sale was invoiced, which decides what fiscal
+    /// consequences a refund may choose (ADR 032).
+    pub fiscal_state: FiscalState,
+    pub invoice_ref: Option<String>,
+    pub lines: Vec<LineRefundable>,
+    pub tenders: Vec<TenderRefundable>,
+    /// What all the remaining lines together would give back.
+    pub refundable_total: Money,
+    /// The live refund of this sale, if any. While one exists, a second cannot
+    /// be created (ADR 030).
+    pub refund_in_progress: Option<RefundId>,
+    /// Refunds already recorded against this sale, newest last.
+    pub refund_ids: Vec<RefundId>,
+}
+
+/// A refund with everything that explains it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundView {
+    pub refund: Refund,
+    pub payments: Vec<RefundPaymentView>,
+    /// What the financial side still owes the customer.
+    pub remaining_to_refund: Money,
+    /// Whether the goods were returned to stock. True from `ACCEPTED` onwards.
+    pub inventory_returned: bool,
+    /// Whether the only way forward is reconciling a refund attempt.
+    pub requires_reconciliation: bool,
 }

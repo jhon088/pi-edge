@@ -13,11 +13,13 @@ use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
 use edge_protocol::{
     error_codes, AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1,
-    ChangeQuantityRequestV1, DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1,
-    ImportInventoryBootstrapRequestV1, InventoryMovementRequestV1, InventoryQueryV1, OperationV1,
-    PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1, ReopenSessionRequestV1,
-    SessionCloseRequirementsV1, StartPaymentRequestV1, TransactionRequestV1,
+    ChangeQuantityRequestV1, CreateRefundRequestV1, DeclareClosingCashRequestV1,
+    ForceCloseBusinessDayRequestV1, ImportInventoryBootstrapRequestV1, InventoryMovementRequestV1,
+    InventoryQueryV1, OperationV1, PaymentRequestV1, ProductSelectorV1, RefundRequestV1,
+    RemoveItemRequestV1, ReopenSessionRequestV1, SessionCloseRequirementsV1, StartPaymentRequestV1,
+    TransactionRequestV1,
 };
+use edge_refunds::RefundError;
 
 #[test]
 fn core_error_kinds_match_the_published_codes() {
@@ -576,4 +578,187 @@ fn an_inventory_movement_carries_a_magnitude_and_an_explicit_direction() {
         rendered["quantity_thousandths"].is_i64(),
         "a quantity is an integer on the wire, in thousandths"
     );
+}
+
+#[test]
+fn refund_codes_are_stable() {
+    for (error, expected) in [
+        (
+            RefundError::OriginalNotRefundable {
+                transaction_id: "t".to_owned(),
+                status: "OPEN",
+            },
+            error_codes::REFUND_ORIGINAL_NOT_REFUNDABLE,
+        ),
+        (
+            RefundError::AuthorityRequired {
+                transaction_id: "t".to_owned(),
+            },
+            error_codes::REFUND_AUTHORITY_REQUIRED,
+        ),
+        (
+            RefundError::LineNotFound { line_number: 7 },
+            error_codes::REFUND_LINE_NOT_FOUND,
+        ),
+        (
+            RefundError::DuplicateLine { line_number: 1 },
+            error_codes::REFUND_INVALID_LINES,
+        ),
+        (RefundError::EmptyRefund, error_codes::REFUND_INVALID_LINES),
+        (
+            RefundError::QuantityExceeded {
+                line_number: 1,
+                remaining: "1.000".to_owned(),
+                requested: "2.000".to_owned(),
+            },
+            error_codes::REFUND_QUANTITY_EXCEEDED,
+        ),
+        (
+            RefundError::RefundInProgress {
+                transaction_id: "t".to_owned(),
+                refund_id: "r".to_owned(),
+            },
+            error_codes::REFUND_IN_PROGRESS,
+        ),
+        (
+            RefundError::InvalidState {
+                status: "CREATED",
+                attempted: "COMPLETE",
+            },
+            error_codes::REFUND_INVALID_STATE,
+        ),
+        (
+            RefundError::ReasonRequired,
+            error_codes::REFUND_REASON_REQUIRED,
+        ),
+        (
+            RefundError::FiscalActionInvalid {
+                attempted: "NONE",
+                original: "INVOICED",
+            },
+            error_codes::REFUND_FISCAL_ACTION_INVALID,
+        ),
+        (
+            RefundError::TenderExceeded {
+                tender: "CASH",
+                remaining: "1.00".to_owned(),
+                requested: "2.00".to_owned(),
+            },
+            error_codes::REFUND_TENDER_EXCEEDED,
+        ),
+        (
+            RefundError::RequiresReconciliation {
+                refund_id: "r".to_owned(),
+            },
+            error_codes::REFUND_REQUIRES_RECONCILIATION,
+        ),
+        (
+            RefundError::InvalidRecord {
+                field: "uuid",
+                reason: "bad".to_owned(),
+            },
+            error_codes::REFUND_INVALID_RECORD,
+        ),
+    ] {
+        assert_eq!(error.code(), expected);
+        assert_eq!(AppError::Refund(error).kind(), expected);
+    }
+}
+
+#[test]
+fn refund_operations_have_stable_names() {
+    let refund = RefundRequestV1 {
+        refund_id: "11111111-1111-1111-1111-111111111111".to_owned(),
+    };
+    let transaction = TransactionRequestV1 {
+        transaction_id: "22222222-2222-2222-2222-222222222222".to_owned(),
+    };
+    for (operation, expected, is_command) in [
+        (
+            OperationV1::GetRefundEligibility(transaction.clone()),
+            "GET_REFUND_ELIGIBILITY",
+            false,
+        ),
+        (
+            OperationV1::CreateRefund(CreateRefundRequestV1 {
+                transaction_id: transaction.transaction_id.clone(),
+                lines: Vec::new(),
+                reason_code: "CUSTOMER_RETURN".to_owned(),
+                fiscal_action: "NONE".to_owned(),
+            }),
+            "CREATE_REFUND",
+            true,
+        ),
+        (
+            OperationV1::AcceptRefund(refund.clone()),
+            "ACCEPT_REFUND",
+            true,
+        ),
+        (
+            OperationV1::StartRefundPayment(refund.clone()),
+            "START_REFUND_PAYMENT",
+            true,
+        ),
+        (
+            OperationV1::ReconcileRefund(refund.clone()),
+            "RECONCILE_REFUND",
+            true,
+        ),
+        (OperationV1::GetRefund(refund), "GET_REFUND", false),
+        (
+            OperationV1::GetTransactionRefunds(transaction.clone()),
+            "GET_TRANSACTION_REFUNDS",
+            false,
+        ),
+    ] {
+        assert_eq!(operation.name(), expected);
+        assert_eq!(operation.is_command(), is_command, "{expected}");
+    }
+
+    // A refund is not a reversal: the two never share an operation (ADR 034).
+    assert_ne!("RECONCILE_REFUND", "RECONCILE_PAYMENT");
+    assert_ne!("START_REFUND_PAYMENT", "REVERSE_PAYMENT");
+
+    // `transaction` is consumed by the loop above; this keeps the compiler
+    // honest about it rather than leaving a dangling clone.
+    drop(transaction);
+}
+
+/// The payload that opens a refund cannot assert who authorised it, and cannot
+/// declare the original sale's fiscal state (ADR 030, ADR 032).
+#[test]
+fn the_create_refund_payload_cannot_assert_authority_or_fiscal_state() {
+    let rendered = serde_json::to_value(CreateRefundRequestV1 {
+        transaction_id: "22222222-2222-2222-2222-222222222222".to_owned(),
+        lines: vec![edge_protocol::RefundLineRequestV1 {
+            original_line_number: 1,
+            quantity_thousandths: 1_000,
+        }],
+        reason_code: "CUSTOMER_RETURN".to_owned(),
+        fiscal_action: "NONE".to_owned(),
+    })
+    .unwrap();
+    let object = rendered.as_object().expect("an object");
+
+    assert_eq!(
+        object.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["transaction_id", "lines", "reason_code", "fiscal_action"],
+        "adding a field here needs a deliberate review: it is what a till may \
+         say about a refund"
+    );
+    // No authority, no authorization reference, no fiscal state: the runtime
+    // owns the first two and the original sale owns the third.
+    for forbidden in [
+        "authority",
+        "authorization_ref",
+        "fiscal_state",
+        "invoice_ref",
+        "amount_minor",
+        "gross_minor",
+    ] {
+        assert!(
+            !object.contains_key(forbidden),
+            "`{forbidden}` must not be something a client can state"
+        );
+    }
 }

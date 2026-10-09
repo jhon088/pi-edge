@@ -45,9 +45,11 @@ impl Direction {
 
 /// Why the money moved.
 ///
-/// `CASH_REFUND` and a manual cash adjustment are deliberately absent: a type
-/// nothing can produce, with no operation and no authorisation policy behind
-/// it, is a promise rather than a model. Each arrives with its own use case.
+/// Each type arrives with its own use case: a type nothing can produce, with no
+/// operation and no authorisation policy behind it, is a promise rather than a
+/// model. `CASH_REFUND` joined in milestone 9, when commercial refunds gave it
+/// one. A manual cash adjustment is still absent, for the same reason as
+/// before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MovementType {
@@ -61,6 +63,9 @@ pub enum MovementType {
     CashOut,
     /// Money moved to the safe, once a supervisor approved it (ADR 023).
     SafeDrop,
+    /// Cash handed back for a commercial refund. Exists because refunds exist
+    /// (milestone 9); it is not a reversal of a `CASH_SALE` (ADR 034).
+    CashRefund,
 }
 
 impl MovementType {
@@ -71,6 +76,7 @@ impl MovementType {
             MovementType::CashIn => "CASH_IN",
             MovementType::CashOut => "CASH_OUT",
             MovementType::SafeDrop => "SAFE_DROP",
+            MovementType::CashRefund => "CASH_REFUND",
         }
     }
 
@@ -81,6 +87,7 @@ impl MovementType {
             "CASH_IN" => Ok(MovementType::CashIn),
             "CASH_OUT" => Ok(MovementType::CashOut),
             "SAFE_DROP" => Ok(MovementType::SafeDrop),
+            "CASH_REFUND" => Ok(MovementType::CashRefund),
             other => Err(CashError::UnknownEnumValue {
                 kind: "MovementType",
                 value: other.to_owned(),
@@ -95,7 +102,9 @@ impl MovementType {
             MovementType::OpeningFloat | MovementType::CashSale | MovementType::CashIn => {
                 Direction::In
             }
-            MovementType::CashOut | MovementType::SafeDrop => Direction::Out,
+            MovementType::CashOut | MovementType::SafeDrop | MovementType::CashRefund => {
+                Direction::Out
+            }
         }
     }
 

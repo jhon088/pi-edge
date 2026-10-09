@@ -76,6 +76,10 @@ uuid_id!(
     PaymentId
 );
 uuid_id!(
+    /// Public id of a commercial refund.
+    RefundId
+);
+uuid_id!(
     /// Public id of a journal or outbox event.
     EventId
 );

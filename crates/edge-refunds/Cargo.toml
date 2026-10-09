@@ -1,0 +1,20 @@
+[package]
+name = "edge-refunds"
+description = "Commercial refunds for PI.Edge: the refund document, its lines, the refundable arithmetic over a closed sale, the financial refund lifecycle and the fiscal consequence. Knows nothing about SQLite, HTTP, a payment provider, CFDI or an ERP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Pure Rust, like edge-domain, edge-catalog, edge-payments, edge-cash and
+# edge-inventory: no SQLite, no HTTP, no transport, no clock, no provider SDK.
+[dependencies]
+edge-domain = { workspace = true }
+edge-payments = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

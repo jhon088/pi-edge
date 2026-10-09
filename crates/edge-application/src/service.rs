@@ -655,6 +655,10 @@ where
                 // Stock moves here and nowhere else, in the same transaction as
                 // the finalization: there is no state in which a sale is
                 // FINALIZED and its stock has not moved (ADR 027).
+                // Every finalized sale gets its fiscal metadata row, so a
+                // refund can tell "never invoiced" from "we do not know"
+                // without a third state (ADR 032).
+                crate::refund_service::record_sale_fiscal_metadata(uow, transaction.id(), now)?;
                 let stock_movements = crate::inventory_service::record_sale_movements(
                     uow,
                     ids,

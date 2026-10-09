@@ -11,6 +11,7 @@ use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
+use edge_refunds::{RefundAuthority, RefundAuthorizationContext, RefundLineRequest};
 use edge_storage::SqliteEdgeStore;
 
 pub use edge_payments::TenderType as Tender;
@@ -96,6 +97,20 @@ pub fn bootstrap_command(
     }
 }
 
+/// On hand on a scripted core.
+pub fn on_hand_scripted(core: &ScriptedCore, product_ref: &str) -> i64 {
+    core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 100)
+        .unwrap()
+        .position
+        .on_hand_thousandths
+}
+
+/// Import an opening position on a scripted core.
+pub fn bootstrap_stock_scripted(core: &ScriptedCore, items: &[(&str, i64)]) {
+    core.import_inventory_bootstrap(bootstrap_command("WMS-SNAPSHOT-1", items))
+        .unwrap();
+}
+
 /// On hand in thousandths, straight from the core's own fold.
 pub fn on_hand(core: &TestCore, product_ref: &str) -> i64 {
     core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 100)
@@ -108,6 +123,81 @@ pub fn on_hand(core: &TestCore, product_ref: &str) -> i64 {
 pub fn movements(core: &TestCore, product_ref: &str) -> Vec<edge_inventory::InventoryMovement> {
     core.get_inventory_movements(ProductRef::new(product_ref).unwrap(), 100, 0)
         .unwrap()
+}
+
+/// Provision a scripted core the way `open_register` provisions a plain one.
+pub fn open_scripted_register(core: &ScriptedCore) {
+    core.init_device(InitDeviceCommand {
+        tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
+        store_id: StoreId::new("STORE-DEMO").unwrap(),
+        currency: Currency::Mxn,
+        allow_negative_inventory: true,
+    })
+    .unwrap();
+    CatalogFixture::demo(1).activate(core).unwrap();
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor: 100_000,
+    })
+    .unwrap();
+}
+
+/// A finished card sale of one demo unit, on a scripted core.
+pub fn card_sale(core: &ScriptedCore) -> TransactionId {
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    core.add_item(demo_item()).unwrap();
+    let totalized = core
+        .totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    core.start_payment(StartPaymentCommand {
+        request_id: None,
+        tender_type: TenderType::Card,
+        amount_minor: totalized.state().totals.grand_total.minor(),
+    })
+    .unwrap();
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap()
+        .id()
+}
+
+// --------------------------------------------------------------- refunds
+
+/// The authority a refund needs, as the composition root would resolve it.
+pub fn central_authority(transaction_id: TransactionId) -> RefundAuthorizationContext {
+    RefundAuthorizationContext {
+        original_transaction_id: transaction_id,
+        authority: RefundAuthority::CentralAccepted,
+        authorization_ref: Some(format!("TEST-CENTRAL:{transaction_id}")),
+    }
+}
+
+/// `(original_line_number, units)` pairs as a refund request.
+pub fn refund_lines(lines: &[(i64, i64)]) -> Vec<RefundLineRequest> {
+    lines
+        .iter()
+        .map(|(line_number, units)| RefundLineRequest {
+            original_line_number: *line_number,
+            quantity: Quantity::from_units(*units).unwrap(),
+        })
+        .collect()
+}
+
+/// A finished cash sale, answering with its id so a refund can name it.
+pub fn finalized_cash_sale(core: &TestCore, tendered_minor: i64) -> TransactionId {
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    core.add_item(demo_item()).unwrap();
+    core.totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    pay_cash(core, tendered_minor);
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap()
+        .id()
 }
 
 pub fn demo_item() -> AddItemCommand {

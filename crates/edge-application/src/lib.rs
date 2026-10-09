@@ -18,6 +18,7 @@ pub mod inventory_service;
 pub mod payment_service;
 pub mod ports;
 pub mod queries;
+pub mod refund_service;
 pub mod service;
 
 #[cfg(feature = "testing")]

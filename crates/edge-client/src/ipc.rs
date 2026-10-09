@@ -9,14 +9,15 @@ use edge_protocol::{
     AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayV1,
     CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotRequestV1,
     CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
-    CoreInfoV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
-    ImportInventoryBootstrapRequestV1, InitDeviceRequestV1, InventoryBootstrapV1,
-    InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1, InventoryQueryV1,
-    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PaymentRequestV1,
-    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
-    RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RequestEnvelopeV1,
-    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
-    SessionCloseResultV1, StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
+    CoreInfoV1, CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
+    ForceCloseBusinessDayRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
+    InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1,
+    InventoryQueryV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
+    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1,
+    PutCatalogChunkRequestV1, RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1,
+    RemoveItemRequestV1, ReopenSessionRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
+    RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
+    StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -385,6 +386,84 @@ impl EdgeClient for IpcEdgeClient {
             self.call(OperationV1::FinalizeTransaction, request_id)?,
             ResultV1::Transaction,
             "TRANSACTION"
+        )
+    }
+
+    fn refund_eligibility(
+        &self,
+        request: TransactionRequestV1,
+    ) -> Result<RefundEligibilityV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetRefundEligibility(request), None)?,
+            ResultV1::RefundEligibility,
+            "REFUND_ELIGIBILITY"
+        )
+    }
+
+    fn create_refund(
+        &self,
+        request: CreateRefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::CreateRefund(request), request_id)?,
+            ResultV1::Refund,
+            "REFUND"
+        )
+    }
+
+    fn accept_refund(
+        &self,
+        request: RefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::AcceptRefund(request), request_id)?,
+            ResultV1::Refund,
+            "REFUND"
+        )
+    }
+
+    fn start_refund_payment(
+        &self,
+        request: RefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::StartRefundPayment(request), request_id)?,
+            ResultV1::Refund,
+            "REFUND"
+        )
+    }
+
+    fn reconcile_refund(
+        &self,
+        request: RefundRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RefundV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ReconcileRefund(request), request_id)?,
+            ResultV1::Refund,
+            "REFUND"
+        )
+    }
+
+    fn get_refund(&self, request: RefundRequestV1) -> Result<RefundV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetRefund(request), None)?,
+            ResultV1::Refund,
+            "REFUND"
+        )
+    }
+
+    fn transaction_refunds(
+        &self,
+        request: TransactionRequestV1,
+    ) -> Result<Vec<RefundV1>, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetTransactionRefunds(request), None)?,
+            ResultV1::Refunds,
+            "REFUNDS"
         )
     }
 

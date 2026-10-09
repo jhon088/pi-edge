@@ -21,6 +21,7 @@ edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
 edge-inventory = { workspace = true }
+edge-refunds = { workspace = true }
 edge-ipc = { workspace = true }
 edge-payments = { workspace = true }
 edge-protocol = { workspace = true, features = ["core-mapping"] }

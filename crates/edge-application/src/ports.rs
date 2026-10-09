@@ -12,6 +12,10 @@ use edge_catalog::{
 use edge_domain::prelude::*;
 use edge_inventory::{InventoryMovement, InventoryPosition, MovementType};
 use edge_payments::{Payment, PaymentAttempt, PaymentView};
+use edge_refunds::{
+    Refund, RefundAmounts, RefundAttempt, RefundPayment, RefundPaymentView,
+    TransactionFiscalMetadata,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -328,8 +332,79 @@ pub struct InventoryBootstrapState {
     pub bootstrapped_at: Timestamp,
 }
 
+/// Refund persistence.
+///
+/// The refund document and its financial side. Refund attempts are append-only
+/// (a reconciliation adds knowledge, it never rewrites what was sent), so
+/// there is no delete for those and there never will be.
+pub trait RefundUnitOfWork {
+    fn insert_refund(&mut self, refund: &Refund) -> Result<(), AppError>;
+    fn update_refund(&mut self, refund: &Refund) -> Result<(), AppError>;
+    fn find_refund(&mut self, refund_id: RefundId) -> Result<Option<Refund>, AppError>;
+    /// Every refund of a sale, oldest first.
+    fn list_transaction_refunds(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Vec<Refund>, AppError>;
+    /// The live refund of a sale, if any. At most one (ADR 030).
+    fn find_refund_in_progress(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Option<Refund>, AppError>;
+    /// What earlier refunds already took from each line of one sale, keyed by
+    /// original line number: the quantity and the economics.
+    fn refunded_by_line(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Vec<RefundedLineTotals>, AppError>;
+    /// What earlier refunds already gave back through each original tender.
+    fn refunded_by_payment(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Vec<RefundedTenderTotals>, AppError>;
+
+    fn insert_refund_payment(&mut self, payment: &RefundPayment) -> Result<(), AppError>;
+    fn update_refund_payment(&mut self, payment: &RefundPayment) -> Result<(), AppError>;
+    fn list_refund_payments(
+        &mut self,
+        refund_id: RefundId,
+    ) -> Result<Vec<RefundPaymentView>, AppError>;
+    fn insert_refund_attempt(&mut self, attempt: &RefundAttempt) -> Result<(), AppError>;
+    fn update_refund_attempt(&mut self, attempt: &RefundAttempt) -> Result<(), AppError>;
+    fn next_refund_attempt_number(&mut self, refund_payment_id: Uuid) -> Result<i64, AppError>;
+
+    /// The sale's fiscal metadata. `None` only for a sale that never
+    /// finalized: a finalized sale always has a row (ADR 032).
+    fn find_transaction_fiscal_metadata(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Option<TransactionFiscalMetadata>, AppError>;
+    fn put_transaction_fiscal_metadata(
+        &mut self,
+        transaction_id: TransactionId,
+        metadata: &TransactionFiscalMetadata,
+    ) -> Result<(), AppError>;
+}
+
+/// What earlier refunds already took from one line of a sale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefundedLineTotals {
+    pub original_line_number: i64,
+    pub quantity_thousandths: i64,
+    pub amounts: RefundAmounts,
+}
+
+/// What earlier refunds already gave back through one original tender.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefundedTenderTotals {
+    pub original_payment_id: PaymentId,
+    /// Requested through this tender by refunds that are not terminal, plus
+    /// what completed ones actually returned: the capacity already spoken for.
+    pub reserved: Money,
+}
+
 pub trait UnitOfWork:
-    CatalogUnitOfWork + PaymentUnitOfWork + CashUnitOfWork + InventoryUnitOfWork
+    CatalogUnitOfWork + PaymentUnitOfWork + CashUnitOfWork + InventoryUnitOfWork + RefundUnitOfWork
 {
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;
     fn put_device_profile(

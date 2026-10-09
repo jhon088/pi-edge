@@ -16,7 +16,8 @@ use edge_protocol::{
     CommitCatalogImportRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
     InventoryBootstrapItemV1, InventoryBootstrapV1, InventoryPositionV1, InventoryQueryV1,
     OpenRegisterSessionRequestV1, PriceBookV1, PriceRecordV1, ProductSelectorV1, PromotionRecordV1,
-    PromotionRuleV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
+    PromotionRuleV1, PutCatalogChunkRequestV1, SnapshotCountsV1, StartPaymentRequestV1,
+    TaxProfileV1,
 };
 
 /// A spawned daemon process. Killed on drop so a failing test cannot leak a
@@ -39,11 +40,20 @@ impl DaemonProcess {
     /// Start a daemon whose card provider follows a script, so a declined or
     /// lost provider call is reproducible over the real transport.
     pub fn start_with_payment_script(database: &Path, script: Option<&str>) -> Self {
+        Self::start_configured(database, script, true)
+    }
+
+    /// Start a daemon, optionally **without** refund authority, which is the
+    /// production default: no authority source, no refunds (ADR 030).
+    pub fn start_configured(database: &Path, script: Option<&str>, refund_authority: bool) -> Self {
         let log_path = database.with_extension("daemon.log");
         let log = std::fs::File::create(&log_path).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_edge-daemon"));
         if let Some(script) = script {
             command.env("PI_EDGE_PAYMENT_SIM", script);
+        }
+        if refund_authority {
+            command.env("PI_EDGE_REFUND_AUTHORITY", "dev-accept-local");
         }
         let mut child = command
             .arg("--db")
@@ -501,6 +511,23 @@ pub fn inventory_position(client: &IpcEdgeClient, product_ref: &str) -> Inventor
             offset: 0,
         })
         .unwrap()
+}
+
+/// A finished cash sale over the wire, answering with its id.
+pub fn finalized_cash_sale(client: &IpcEdgeClient, tendered_minor: i64) -> String {
+    client.start_transaction(None).unwrap();
+    client.add_item(demo_item(), None).unwrap();
+    client.totalize(None).unwrap();
+    client
+        .start_payment(
+            StartPaymentRequestV1 {
+                tender_type: "CASH".to_owned(),
+                amount_minor: tendered_minor,
+            },
+            None,
+        )
+        .unwrap();
+    client.finalize_transaction(None).unwrap().transaction_id
 }
 
 /// Scan the demo product: the core resolves 100.00 MXN at 16%.

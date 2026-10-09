@@ -1,0 +1,95 @@
+{
+  "refund_id": "00000000-0000-0000-0000-000000000017",
+  "original_transaction_id": "00000000-0000-0000-0000-000000000009",
+  "store_id": "STORE-DEMO",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "status": "COMPLETED",
+  "authority": "CENTRAL_ACCEPTED",
+  "authorization_ref": "GOLDEN-CENTRAL",
+  "lines": [
+    {
+      "refund_line_id": "00000000-0000-0000-0000-000000000018",
+      "original_line_number": 1,
+      "product_ref": "SKU-8",
+      "description": "Gravado 8%",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "net": {
+        "minor": 6667,
+        "currency": "MXN",
+        "formatted": "66.67"
+      },
+      "tax": {
+        "minor": 533,
+        "currency": "MXN",
+        "formatted": "5.33"
+      },
+      "gross": {
+        "minor": 7200,
+        "currency": "MXN",
+        "formatted": "72.00"
+      },
+      "discount": {
+        "minor": 3333,
+        "currency": "MXN",
+        "formatted": "33.33"
+      }
+    }
+  ],
+  "net": {
+    "minor": 6667,
+    "currency": "MXN",
+    "formatted": "66.67"
+  },
+  "tax": {
+    "minor": 533,
+    "currency": "MXN",
+    "formatted": "5.33"
+  },
+  "gross": {
+    "minor": 7200,
+    "currency": "MXN",
+    "formatted": "72.00"
+  },
+  "discount": {
+    "minor": 3333,
+    "currency": "MXN",
+    "formatted": "33.33"
+  },
+  "fiscal_status": "NONE",
+  "original_fiscal_state": "NOT_INVOICED",
+  "reason_code": "CUSTOMER_RETURN",
+  "restock": true,
+  "payments": [
+    {
+      "refund_payment_id": "00000000-0000-0000-0000-00000000001c",
+      "original_payment_id": "00000000-0000-0000-0000-00000000000e",
+      "tender_type": "CASH",
+      "requested": {
+        "minor": 7200,
+        "currency": "MXN",
+        "formatted": "72.00"
+      },
+      "refunded": {
+        "minor": 7200,
+        "currency": "MXN",
+        "formatted": "72.00"
+      },
+      "status": "REFUNDED",
+      "attempts": []
+    }
+  ],
+  "remaining_to_refund": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "inventory_returned": true,
+  "requires_reconciliation": false,
+  "created_at": "2026-10-08T15:00:00.000000Z",
+  "accepted_at": "2026-10-08T15:00:00.000000Z",
+  "completed_at": "2026-10-08T15:00:00.000000Z"
+}

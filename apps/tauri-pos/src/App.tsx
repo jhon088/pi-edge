@@ -12,6 +12,8 @@ import {
   fetchCashPosition,
   fetchCatalogStatus,
   fetchInventoryPosition,
+  fetchRefundEligibility,
+  fetchTransactionRefunds,
   fetchConnection,
   fetchCoreInfo,
   fetchEdgeState,
@@ -28,6 +30,8 @@ import type {
   EdgeState,
   InventoryPosition,
   ProductLookup,
+  Refund,
+  RefundEligibility,
   TransactionPayments,
 } from "./types";
 
@@ -296,6 +300,10 @@ export default function App() {
         <InventoryLedger enabled={connection.connected} />
       </Card>
 
+      <Card title="Refunds">
+        <Refunds enabled={connection.connected} />
+      </Card>
+
       <Card title="Payments">
         {!connection.connected ? (
           <p className="muted">
@@ -405,6 +413,182 @@ function BarcodeLookup({ enabled }: { enabled: boolean }) {
         nothing.
       </p>
     </>
+  );
+}
+
+/**
+ * Read-only refund view.
+ *
+ * Driven by the original sale's id, because that is what a refund is about. It
+ * shows what the core says is still refundable — quantities, amounts and the
+ * per-tender ceilings — and the refunds already recorded. It computes none of
+ * it, and it offers no way to create, accept, pay or reconcile a refund: those
+ * are exercised through the CLI in this milestone.
+ */
+function Refunds({ enabled }: { enabled: boolean }) {
+  const [transactionId, setTransactionId] = useState("");
+  const [eligibility, setEligibility] = useState<RefundEligibility | null>(null);
+  const [refunds, setRefunds] = useState<Refund[]>([]);
+  const [error, setError] = useState<BridgeError | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const id = transactionId.trim();
+    if (!id) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const [view, history] = await Promise.all([
+        fetchRefundEligibility(id),
+        fetchTransactionRefunds(id),
+      ]);
+      setEligibility(view);
+      setRefunds(history);
+      setError(null);
+    } catch (failure) {
+      setEligibility(null);
+      setRefunds([]);
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <form className="lookup" onSubmit={submit}>
+        <input
+          type="text"
+          value={transactionId}
+          placeholder="Original transaction id"
+          onChange={(event) => setTransactionId(event.target.value)}
+          disabled={!enabled}
+        />
+        <button type="submit" disabled={!enabled || busy}>
+          {busy ? "Reading…" : "Read refunds"}
+        </button>
+      </form>
+
+      {eligibility ? (
+        <>
+          <div className="row">
+            <Field label="Sale" value={eligibility.original_status} />
+            <Field
+              label="Ticket"
+              value={String(eligibility.register_sequence)}
+            />
+            <Field label="Sold for" value={eligibility.original_total.formatted} />
+            <Field
+              label="Still refundable"
+              value={eligibility.refundable_total.formatted}
+            />
+            <Field label="Fiscal" value={eligibility.fiscal_state} />
+            <Field label="Invoice" value={eligibility.invoice_ref ?? "—"} mono />
+          </div>
+          {eligibility.original_status !== "FINALIZED" ? (
+            <p className="muted">
+              Only a finalized sale can be refunded.
+            </p>
+          ) : null}
+          {eligibility.refund_in_progress ? (
+            <p className="banner" role="status">
+              A refund of this sale is in progress ({eligibility.refund_in_progress}).
+              A second one cannot be created until it finishes.
+            </p>
+          ) : null}
+
+          <table className="lines">
+            <thead>
+              <tr>
+                <th>Line</th>
+                <th>Product</th>
+                <th className="num">Sold</th>
+                <th className="num">Refunded</th>
+                <th className="num">Remaining</th>
+                <th className="num">Refundable</th>
+              </tr>
+            </thead>
+            <tbody>
+              {eligibility.lines.map((line) => (
+                <tr key={line.line_number}>
+                  <td>{line.line_number}</td>
+                  <td className="mono">{line.product_ref}</td>
+                  <td className="num">{line.sold_quantity}</td>
+                  <td className="num">{line.refunded_quantity}</td>
+                  <td className="num">{line.remaining_quantity}</td>
+                  <td className="num">{line.remaining_gross.formatted}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <table className="lines">
+            <thead>
+              <tr>
+                <th>Tender</th>
+                <th className="num">Paid</th>
+                <th className="num">Refundable</th>
+              </tr>
+            </thead>
+            <tbody>
+              {eligibility.tenders.map((tender) => (
+                <tr key={tender.payment_id}>
+                  <td>{tender.tender_type}</td>
+                  <td className="num">{tender.committed.formatted}</td>
+                  <td className="num">{tender.remaining.formatted}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {refunds.length === 0 ? (
+            <p className="muted">No refunds for this sale.</p>
+          ) : (
+            refunds.map((refund) => <RefundCard key={refund.refund_id} refund={refund} />)
+          )}
+        </>
+      ) : null}
+      {error ? (
+        <p className="muted">
+          <code>{error.code}</code> {error.message}
+        </p>
+      ) : null}
+      <p className="muted">
+        A refund gives back what the original sale actually charged: the core
+        prices it from the sale&apos;s own materialised amounts, never from
+        today&apos;s prices or promotions.
+      </p>
+    </>
+  );
+}
+
+/** One refund: commercial, financial, inventory and fiscal state together. */
+function RefundCard({ refund }: { refund: Refund }) {
+  return (
+    <div className="row">
+      <Field label="Refund" value={refund.refund_id} mono />
+      <Field label="Status" value={refund.status} />
+      <Field label="Given back" value={refund.gross.formatted} />
+      <Field label="Still owed" value={refund.remaining_to_refund.formatted} />
+      <Field
+        label="Stock returned"
+        value={refund.inventory_returned ? "YES" : "NOT YET"}
+      />
+      <Field label="Fiscal" value={refund.fiscal_status} />
+      <Field label="Reason" value={refund.reason_code} mono />
+      {refund.requires_reconciliation ? (
+        <Field label="Needs" value="RECONCILIATION" />
+      ) : null}
+      {refund.payments.map((payment) => (
+        <Field
+          key={payment.refund_payment_id}
+          label={`${payment.tender_type} refund`}
+          value={`${payment.refunded.formatted} of ${payment.requested.formatted} (${payment.status})`}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -671,6 +855,7 @@ function CashDrawer({ cash }: { cash: CashPosition }) {
         <Field label="Cash in" value={cash.cash_in.formatted} />
         <Field label="Cash out" value={cash.cash_out.formatted} />
         <Field label="Safe drops" value={cash.safe_drops.formatted} />
+        <Field label="Refunds paid" value={cash.cash_refunds.formatted} />
         <Field label="Expected cash" value={cash.expected_cash.formatted} />
       </div>
       <div className="row">

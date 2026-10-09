@@ -1,0 +1,71 @@
+{
+  "transaction_id": "00000000-0000-0000-0000-000000000009",
+  "original_status": "FINALIZED",
+  "register_sequence": 1,
+  "original_total": {
+    "minor": 34800,
+    "currency": "MXN",
+    "formatted": "348.00"
+  },
+  "fiscal_state": "NOT_INVOICED",
+  "invoice_ref": null,
+  "lines": [
+    {
+      "line_number": 1,
+      "product_ref": "SKU-16",
+      "description": "Gravado 16%",
+      "sold_quantity": "3.000",
+      "refunded_quantity": "0.000",
+      "remaining_quantity": "3.000",
+      "remaining_quantity_thousandths": 3000,
+      "original_gross": {
+        "minor": 34800,
+        "currency": "MXN",
+        "formatted": "348.00"
+      },
+      "remaining_net": {
+        "minor": 30000,
+        "currency": "MXN",
+        "formatted": "300.00"
+      },
+      "remaining_tax": {
+        "minor": 4800,
+        "currency": "MXN",
+        "formatted": "48.00"
+      },
+      "remaining_gross": {
+        "minor": 34800,
+        "currency": "MXN",
+        "formatted": "348.00"
+      },
+      "remaining_discount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      }
+    }
+  ],
+  "tenders": [
+    {
+      "payment_id": "00000000-0000-0000-0000-00000000000e",
+      "tender_type": "CASH",
+      "committed": {
+        "minor": 34800,
+        "currency": "MXN",
+        "formatted": "348.00"
+      },
+      "remaining": {
+        "minor": 34800,
+        "currency": "MXN",
+        "formatted": "348.00"
+      }
+    }
+  ],
+  "refundable_total": {
+    "minor": 34800,
+    "currency": "MXN",
+    "formatted": "348.00"
+  },
+  "refund_in_progress": null,
+  "refund_ids": []
+}
