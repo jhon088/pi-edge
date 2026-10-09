@@ -9,7 +9,10 @@ use edge_application::testing::{CatalogFixture, FixedClock, SequentialIdFactory,
 use edge_application::EdgeApplication;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
+use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_storage::SqliteEdgeStore;
+
+pub use edge_payments::TenderType as Tender;
 
 pub type TestCore = EdgeApplication<SqliteEdgeStore, FixedClock, SequentialIdFactory>;
 
@@ -80,4 +83,32 @@ pub fn journal_types(core: &TestCore) -> Vec<String> {
         .iter()
         .map(|e| e.event_type.as_str().to_owned())
         .collect()
+}
+
+/// Cash tender through the payment engine, answering with the sale.
+///
+/// Cash has no provider, so this is one database transaction and the payment
+/// is committed when it returns.
+pub fn pay_cash(core: &TestCore, amount_minor: i64) -> RetailTransaction {
+    core.start_payment(StartPaymentCommand {
+        request_id: None,
+        tender_type: TenderType::Cash,
+        amount_minor,
+    })
+    .unwrap()
+    .transaction
+}
+
+pub type ScriptedCore =
+    EdgeApplication<SqliteEdgeStore, FixedClock, SequentialIdFactory, SimulatorPaymentProvider>;
+
+/// A lifetime whose card provider follows a script, so a lost provider call is
+/// reproducible rather than a matter of timing.
+pub fn scripted_core_at(path: &Path, id_offset: u64, script: SimulatorScript) -> ScriptedCore {
+    EdgeApplication::with_payment_provider(
+        SqliteEdgeStore::open(path).unwrap(),
+        FixedClock::new(start_instant(), 1_000),
+        SequentialIdFactory::starting_at(id_offset),
+        SimulatorPaymentProvider::new(script),
+    )
 }

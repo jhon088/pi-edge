@@ -23,6 +23,7 @@ edge-protocol = { path = "crates/edge-protocol" }
 edge-ipc = { path = "crates/edge-ipc" }
 edge-client = { path = "crates/edge-client" }
 edge-hardware-api = { path = "crates/edge-hardware-api" }
+edge-payments = { path = "crates/edge-payments" }
 
 # External
 getrandom = "0.4.3"

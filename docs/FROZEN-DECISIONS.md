@@ -83,3 +83,40 @@ deliberate, reviewed break — not a refactor.
 The payment-side half of this rule is the subject of milestone 6. It is
 recorded here as a decision, not as code: no speculative handling is written
 for payment states that do not exist yet.
+
+## Payments (milestone 6)
+
+* **`Payment` and `PaymentAttempt` are two concepts.** A payment is the
+  commercial intention to cover part of a sale with one tender; an attempt is
+  one concrete interaction with a provider, and attempts are append-only.
+  (ADR 016)
+* **Cash creates no synthetic attempts.** An attempt models a provider
+  interaction and cash has no provider. Cash still uses the same aggregate,
+  state machine, settlement arithmetic, persistence and protocol operation.
+* **`CARD` is a generic tender.** Mercado Pago will be a *provider of `CARD`*,
+  never a tender of its own, so routing a card elsewhere is not a change to the
+  sale's commercial meaning.
+* **`requested`, `authorized`, `committed`, `tendered`, `applied` and `change`
+  are distinct concepts** and are never collapsed. A sale reports what it
+  collected, not what the customer handed over.
+* **`UNKNOWN` is a first-class state**, and **`PROCESSING` is equally
+  unresolved**. An ambiguous outcome is never promoted to `FAILED` and never
+  retried automatically: the only way forward is an explicit query (ADR 018).
+* **The basket freezes as soon as financial activity starts.** `AddItem`,
+  `RemoveItem` and `ChangeQuantity` answer `BASKET_LOCKED_BY_PAYMENT`
+  (ADR 019).
+* **`PaymentProviderPort` knows nothing about any concrete provider.** Inputs
+  and outputs are domain types: amounts, correlation ids and stable status
+  codes.
+* **`RetailTransaction` is not the source of truth for payments.** The payment
+  tables are; `PaymentSummary` on the sale is derived and recomputed on every
+  load (ADR 020).
+* **Durable before the provider call is mandatory.** The payment, its attempt
+  and its correlation identity are committed before anything is sent
+  (ADR 020).
+* **Reversal is not refund.** A reversal un-applies money on an unfinalized
+  sale; a refund returns money for a completed one and is a different domain.
+* **No cardholder data is ever stored** — no PAN, CVV, track data or terminal
+  payload, in any table, log, journal event or DTO.
+* **`COMMIT_CASH_PAYMENT` and the legacy cash path are gone for good.** There
+  is exactly one way to take money.

@@ -19,12 +19,7 @@ fn finalize_is_all_or_nothing() {
     core.add_item(demo_item()).unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    let committed = core
-        .commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 11_600,
-        })
-        .unwrap();
+    let committed = pay_cash(&core, 11_600);
     assert_eq!(committed.status(), TransactionStatus::Committed);
 
     // Simulate power loss after every write of the finalize use case but

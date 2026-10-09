@@ -17,6 +17,7 @@ import type {
   EdgeState,
   ProductLookup,
   StateChangedEvent,
+  TransactionPayments,
 } from "./types";
 
 /** Event the Rust bridge emits when the core says its state changed. */
@@ -52,6 +53,20 @@ export function fetchConnection(): Promise<ConnectionStatus> {
 
 export function fetchCatalogStatus(): Promise<CatalogStatus> {
   return invoke<CatalogStatus>("catalog_status");
+}
+
+/**
+ * Every payment of one sale, with its attempts and what they settle.
+ *
+ * Read-only. All the arithmetic — applied total, remaining balance, change,
+ * whether the sale may finalize — is the core's; this only asks for it.
+ */
+export function fetchTransactionPayments(
+  transactionId: string,
+): Promise<TransactionPayments> {
+  return invoke<TransactionPayments>("transaction_payments", {
+    transactionId,
+  });
 }
 
 /** Resolve a barcode the way a sale would. The core prices it, not this code. */

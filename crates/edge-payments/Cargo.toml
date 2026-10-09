@@ -1,0 +1,26 @@
+[package]
+name = "edge-payments"
+description = "Payment domain for PI.Edge: tenders, the payment/attempt state machines, settlement arithmetic, the provider port and a deterministic simulator. Knows nothing about SQLite, HTTP, terminals or any concrete provider."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Test-only hook that kills the process immediately after the provider has
+# answered and before the result can be persisted. It reproduces the exact
+# window ADR 020 exists for: the customer may have been charged and we have no
+# record of the outcome. Never compiled into a production binary.
+fault-injection = []
+
+# Pure Rust, like edge-domain and edge-catalog: no SQLite, no HTTP, no
+# transport, no clock, no provider SDK.
+[dependencies]
+edge-domain = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

@@ -20,6 +20,7 @@ edge-application = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
 edge-ipc = { workspace = true }
+edge-payments = { workspace = true }
 edge-protocol = { workspace = true, features = ["core-mapping"] }
 edge-storage = { workspace = true }
 clap = { workspace = true }
@@ -32,7 +33,12 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 edge-client = { workspace = true }
+# Enables the provider fault-injection hook for the whole test build, so a
+# daemon can be made to die between the provider call and the result
+# persistence (ADR 020). A production `cargo build` never has it.
+edge-payments = { workspace = true, features = ["fault-injection"] }
 tempfile = { workspace = true }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

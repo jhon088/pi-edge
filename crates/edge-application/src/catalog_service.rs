@@ -35,11 +35,12 @@ use crate::service::{
 };
 use crate::EdgeApplication;
 
-impl<S, C, I> EdgeApplication<S, C, I>
+impl<S, C, I, P> EdgeApplication<S, C, I, P>
 where
     S: EdgeStore,
     C: Clock,
     I: IdFactory,
+    P: edge_payments::PaymentProviderPort,
 {
     /// Open an import, or return the one already open for this content.
     pub fn begin_catalog_import(

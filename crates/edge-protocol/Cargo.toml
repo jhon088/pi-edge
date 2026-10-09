@@ -12,7 +12,7 @@ default = []
 # Conversions for the catalog *content* model: what a producer of snapshots
 # needs (the server, and the CLI importer standing in for it). Pure value
 # objects — no application layer, no storage.
-catalog-mapping = ["dep:edge-domain", "dep:edge-catalog"]
+catalog-mapping = ["dep:edge-domain", "dep:edge-catalog", "dep:edge-payments"]
 # Everything else: conversions to and from the application layer. Only the
 # daemon needs this; a UI client must not have it.
 core-mapping = ["catalog-mapping", "dep:edge-application"]
@@ -21,6 +21,7 @@ core-mapping = ["catalog-mapping", "dep:edge-application"]
 edge-application = { workspace = true, optional = true }
 edge-catalog = { workspace = true, optional = true }
 edge-domain = { workspace = true, optional = true }
+edge-payments = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

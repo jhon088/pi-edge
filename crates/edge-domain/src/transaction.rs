@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::DomainError;
 use crate::ids::{
-    BusinessDayId, CatalogSnapshotId, LineId, OperatorId, PaymentId, PriceBookId, ProductRef,
-    RegisterId, SessionId, StoreId, TransactionId,
+    BusinessDayId, CatalogSnapshotId, LineId, OperatorId, PriceBookId, ProductRef, RegisterId,
+    SessionId, StoreId, TransactionId,
 };
 use crate::money::{Currency, Money, MoneyError, PriceMode, Quantity, TaxRate};
-use crate::payment::Payment;
+use crate::payment::PaymentSummary;
 use crate::time::Timestamp;
 
 const AGGREGATE: &str = "RetailTransaction";
@@ -377,7 +377,9 @@ pub struct RetailTransactionState {
     pub totals: Totals,
     /// Promotions applied by the last evaluation.
     pub applied_promotions: Vec<AppliedPromotion>,
-    pub payments: Vec<Payment>,
+    /// Derived from the payment tables on load; never authoritative
+    /// (ADR 020).
+    pub payments: PaymentSummary,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub finalized_at: Option<Timestamp>,
@@ -419,7 +421,7 @@ impl RetailTransaction {
             next_line_number: 1,
             totals: Totals::zero(new.currency),
             applied_promotions: Vec::new(),
-            payments: Vec::new(),
+            payments: PaymentSummary::unpaid(new.currency),
             created_at: new.created_at,
             updated_at: new.created_at,
             finalized_at: None,
@@ -603,9 +605,20 @@ impl RetailTransaction {
         self.0.totals = Totals::zero(self.0.currency);
     }
 
+    /// The basket may only change while no payment is in a financially active
+    /// state (ADR 019). A locked basket is its own error: a UI reacts
+    /// differently to "pay or reverse first" than to "this sale is finished".
     fn require_mutable(&self, attempted: &'static str) -> Result<(), DomainError> {
+        if self.0.payments.blocks_basket {
+            return Err(DomainError::BasketLockedByPayment {
+                transaction_id: self.0.transaction_id.to_string(),
+            });
+        }
         match self.0.status {
             TransactionStatus::Open | TransactionStatus::Totalized => Ok(()),
+            TransactionStatus::PaymentInProgress => Err(DomainError::BasketLockedByPayment {
+                transaction_id: self.0.transaction_id.to_string(),
+            }),
             other => Err(DomainError::InvalidTransition {
                 aggregate: AGGREGATE,
                 from: other.as_str(),
@@ -636,13 +649,9 @@ impl RetailTransaction {
         Ok(totals)
     }
 
-    /// Sum of committed payments.
+    /// What the sale's payments have applied against its debt.
     pub fn paid_total(&self) -> Result<Money, DomainError> {
-        let mut total = Money::zero(self.0.currency);
-        for payment in self.0.payments.iter().filter(|p| p.is_committed()) {
-            total = total.checked_add(payment.amount)?;
-        }
-        Ok(total)
+        Ok(self.0.payments.committed_total)
     }
 
     /// Remaining amount owed (never negative).
@@ -651,46 +660,80 @@ impl RetailTransaction {
             .0
             .totals
             .grand_total
-            .checked_sub(self.paid_total()?)?
+            .checked_sub(self.0.payments.committed_total)?
             .clamp_non_negative())
     }
 
     /// Cash change owed to the customer (never negative).
+    ///
+    /// Change is a property of the tenders, not of the totals: a customer who
+    /// hands over a 200.00 note against a 116.00 sale is owed 84.00, and the
+    /// sale still only collected 116.00.
     pub fn change_due(&self) -> Result<Money, DomainError> {
-        Ok(self
-            .paid_total()?
-            .checked_sub(self.0.totals.grand_total)?
-            .clamp_non_negative())
+        Ok(self.0.payments.change_due)
     }
 
-    /// Commit a cash tender. Moves to `COMMITTED` once fully paid.
-    pub fn commit_cash_payment(
+    pub fn payments(&self) -> &PaymentSummary {
+        &self.0.payments
+    }
+
+    /// Whether the payment lifecycle forbids changing the basket (ADR 019).
+    pub fn basket_is_locked(&self) -> bool {
+        self.0.payments.blocks_basket
+            || matches!(
+                self.0.status,
+                TransactionStatus::Committed
+                    | TransactionStatus::ReceiptCompleted
+                    | TransactionStatus::Finalized
+                    | TransactionStatus::Cancelled
+            )
+    }
+
+    /// Adopt a freshly computed payment summary and move the sale's status to
+    /// match it.
+    ///
+    /// The transaction decides nothing about providers, attempts or tenders;
+    /// it only reads five numbers and two flags (ADR 020). Status follows:
+    /// nothing active leaves a priced sale `TOTALIZED`, an active payment that
+    /// has not covered the balance is `PAYMENT_IN_PROGRESS`, and a covered,
+    /// fully resolved sale is `COMMITTED`.
+    pub fn apply_payment_summary(
         &mut self,
-        payment_id: PaymentId,
-        amount: Money,
+        summary: PaymentSummary,
         now: Timestamp,
-    ) -> Result<Payment, DomainError> {
+    ) -> Result<(), DomainError> {
         match self.0.status {
-            TransactionStatus::Totalized | TransactionStatus::PaymentInProgress => {}
+            TransactionStatus::Totalized
+            | TransactionStatus::PaymentInProgress
+            | TransactionStatus::Committed => {}
             other => {
                 return Err(DomainError::InvalidTransition {
                     aggregate: AGGREGATE,
                     from: other.as_str(),
-                    attempted: "CASH_PAYMENT_COMMITTED",
+                    attempted: "PAYMENT_APPLIED",
                 })
             }
         }
-        self.require_currency(amount)?;
-        let payment = Payment::committed_cash(payment_id, self.0.transaction_id, amount, now)?;
-        self.0.payments.push(payment.clone());
-        let paid = self.paid_total()?;
-        self.0.status = if paid.is_at_least(&self.0.totals.grand_total)? {
+        self.require_currency(summary.committed_total)?;
+        self.0.payments = summary;
+        let covered = summary
+            .committed_total
+            .is_at_least(&self.0.totals.grand_total)?;
+        self.0.status = if !summary.blocks_basket {
+            // Every payment failed or was reversed: the sale is payable again.
+            TransactionStatus::Totalized
+        } else if covered && !summary.requires_resolution {
             TransactionStatus::Committed
         } else {
             TransactionStatus::PaymentInProgress
         };
         self.touch(now);
-        Ok(payment)
+        Ok(())
+    }
+
+    /// Rebuild the derived summary after a reload, without touching status.
+    pub fn restore_payment_summary(&mut self, summary: PaymentSummary) {
+        self.0.payments = summary;
     }
 
     /// Receipt printing/delivery finished. Optional in this milestone.
@@ -726,6 +769,11 @@ impl RetailTransaction {
                 required_minor: self.0.totals.grand_total.minor(),
                 paid_minor: paid.minor(),
             });
+        }
+        // A covered balance is not enough: an unresolved payment may be a
+        // charge we do not know about (ADR 018).
+        if self.0.payments.requires_resolution {
+            return Err(DomainError::UnresolvedPayment);
         }
         self.0.status = TransactionStatus::Finalized;
         self.0.finalized_at = Some(now);
@@ -1060,18 +1108,34 @@ mod tests {
         ));
     }
 
+    /// A payment summary as the payment engine would compute it. The sale
+    /// aggregate never builds one itself; it is told.
+    fn summary(committed: i64, tendered: i64, change: i64) -> PaymentSummary {
+        PaymentSummary {
+            committed_total: money(committed),
+            tendered_total: money(tendered),
+            change_due: money(change),
+            blocks_basket: true,
+            requires_resolution: false,
+        }
+    }
+
+    /// Exact payment: everything handed over was applied.
+    fn paid(committed: i64) -> PaymentSummary {
+        summary(committed, committed, 0)
+    }
+
     #[test]
     fn the_basket_cannot_change_once_payment_has_started() {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
-        tx.commit_cash_payment(
-            PaymentId::from_uuid(Uuid::from_u128(50)),
-            money(5_000),
-            ts(3),
-        )
-        .unwrap();
-        assert!(tx.remove_line(1, ts(4)).is_err());
+        tx.apply_payment_summary(paid(5_000), ts(3)).unwrap();
+        // A locked basket is its own code, not a generic bad transition.
+        assert!(matches!(
+            tx.remove_line(1, ts(4)).unwrap_err(),
+            DomainError::BasketLockedByPayment { .. }
+        ));
         assert!(tx
             .change_line_quantity(1, Quantity::from_units(2).unwrap(), ts(4))
             .is_err());
@@ -1102,13 +1166,7 @@ mod tests {
     fn rejects_payment_before_totalize() {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
-        let err = tx
-            .commit_cash_payment(
-                PaymentId::from_uuid(Uuid::from_u128(50)),
-                money(11_600),
-                ts(2),
-            )
-            .unwrap_err();
+        let err = tx.apply_payment_summary(paid(11_600), ts(2)).unwrap_err();
         assert!(matches!(err, DomainError::InvalidTransition { .. }));
     }
 
@@ -1117,12 +1175,7 @@ mod tests {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
-        tx.commit_cash_payment(
-            PaymentId::from_uuid(Uuid::from_u128(50)),
-            money(5_000),
-            ts(3),
-        )
-        .unwrap();
+        tx.apply_payment_summary(paid(5_000), ts(3)).unwrap();
         assert_eq!(tx.status(), TransactionStatus::PaymentInProgress);
         assert_eq!(tx.balance_due().unwrap(), money(6_600));
         assert_eq!(tx.change_due().unwrap(), money(0));
@@ -1130,12 +1183,7 @@ mod tests {
             tx.finalize(ts(4)).unwrap_err(),
             DomainError::InvalidTransition { .. }
         ));
-        tx.commit_cash_payment(
-            PaymentId::from_uuid(Uuid::from_u128(51)),
-            money(6_600),
-            ts(5),
-        )
-        .unwrap();
+        tx.apply_payment_summary(paid(11_600), ts(5)).unwrap();
         assert_eq!(tx.status(), TransactionStatus::Committed);
         assert_eq!(tx.balance_due().unwrap(), money(0));
     }
@@ -1145,12 +1193,12 @@ mod tests {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
-        tx.commit_cash_payment(
-            PaymentId::from_uuid(Uuid::from_u128(50)),
-            money(20_000),
-            ts(3),
-        )
-        .unwrap();
+        // 200.00 handed over against 116.00: the sale collects 116.00 and
+        // owes 84.00 back.
+        tx.apply_payment_summary(summary(11_600, 20_000, 8_400), ts(3))
+            .unwrap();
+        assert_eq!(tx.paid_total().unwrap(), money(11_600));
+        assert_eq!(tx.balance_due().unwrap(), money(0));
         assert_eq!(tx.change_due().unwrap(), money(8_400));
         tx.finalize(ts(4)).unwrap();
         assert_eq!(tx.status(), TransactionStatus::Finalized);
@@ -1158,15 +1206,45 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_positive_payment() {
+    fn an_unresolved_payment_blocks_finalization_even_when_the_balance_is_covered() {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
-        assert_eq!(
-            tx.commit_cash_payment(PaymentId::from_uuid(Uuid::from_u128(50)), money(0), ts(3))
-                .unwrap_err(),
-            DomainError::NonPositivePayment
-        );
+        tx.apply_payment_summary(
+            PaymentSummary {
+                requires_resolution: true,
+                ..paid(11_600)
+            },
+            ts(3),
+        )
+        .unwrap();
+        // Covered, but something out there may or may not have charged.
+        assert_eq!(tx.balance_due().unwrap(), money(0));
+        assert_eq!(tx.status(), TransactionStatus::PaymentInProgress);
+        assert!(matches!(
+            tx.finalize(ts(4)).unwrap_err(),
+            DomainError::InvalidTransition { .. }
+        ));
+    }
+
+    #[test]
+    fn a_fully_reversed_sale_becomes_payable_again() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        tx.totalize(ts(2)).unwrap();
+        tx.apply_payment_summary(paid(11_600), ts(3)).unwrap();
+        assert_eq!(tx.status(), TransactionStatus::Committed);
+        assert!(tx.basket_is_locked());
+
+        // Everything was reversed: nothing is active any more, so the sale is
+        // payable and the basket is editable again (ADR 019).
+        tx.apply_payment_summary(PaymentSummary::unpaid(MXN), ts(4))
+            .unwrap();
+        assert_eq!(tx.status(), TransactionStatus::Totalized);
+        assert_eq!(tx.balance_due().unwrap(), money(11_600));
+        assert!(!tx.basket_is_locked());
+        tx.remove_line(1, ts(5)).unwrap();
+        assert_eq!(tx.status(), TransactionStatus::Open);
     }
 
     #[test]
@@ -1174,12 +1252,7 @@ mod tests {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
-        tx.commit_cash_payment(
-            PaymentId::from_uuid(Uuid::from_u128(50)),
-            money(11_600),
-            ts(3),
-        )
-        .unwrap();
+        tx.apply_payment_summary(paid(11_600), ts(3)).unwrap();
         tx.finalize(ts(4)).unwrap();
         assert!(tx.add_line(line(1, 1, 0, 9), ts(5)).is_err());
         assert!(tx.totalize(ts(5)).is_err());
@@ -1193,12 +1266,7 @@ mod tests {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
-        tx.commit_cash_payment(
-            PaymentId::from_uuid(Uuid::from_u128(50)),
-            money(11_600),
-            ts(3),
-        )
-        .unwrap();
+        tx.apply_payment_summary(paid(11_600), ts(3)).unwrap();
         tx.mark_receipt_completed(ts(4)).unwrap();
         assert_eq!(tx.status(), TransactionStatus::ReceiptCompleted);
         tx.finalize(ts(5)).unwrap();

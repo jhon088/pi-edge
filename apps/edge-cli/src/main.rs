@@ -20,8 +20,9 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
-    AddItemRequestV1, ChangeQuantityRequestV1, CommitCashPaymentRequestV1, InitDeviceRequestV1,
-    OpenRegisterSessionRequestV1, ProductSelectorV1, RemoveItemRequestV1, PROTOCOL_VERSION,
+    AddItemRequestV1, ChangeQuantityRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1,
+    PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1, StartPaymentRequestV1,
+    TransactionRequestV1, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -179,10 +180,30 @@ enum Command {
     },
     /// Compute the official totals.
     Total,
-    /// Commit a cash tender in minor units.
-    PayCash {
+    /// Start a payment for the active sale.
+    ///
+    /// Cash settles immediately and may overpay, producing change. A card
+    /// goes through its provider and may come back unresolved, in which case
+    /// the only way forward is `reconcile-payment`.
+    StartPayment {
+        /// `CASH` or `CARD`.
+        #[arg(long, default_value = "CASH")]
+        tender: String,
+        /// What this tender covers, in minor units.
         #[arg(long)]
         amount: i64,
+    },
+    /// Every payment of the active sale, with its attempt history.
+    Payments,
+    /// Ask the provider what happened to an unresolved payment. Never charges.
+    ReconcilePayment {
+        #[arg(long = "payment")]
+        payment_id: String,
+    },
+    /// Undo a payment that must not remain applied.
+    ReversePayment {
+        #[arg(long = "payment")]
+        payment_id: String,
     },
     /// Finalize the sale (transaction + journal + outbox, atomically).
     FinalizeSale,
@@ -339,9 +360,33 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
         }
         Command::Lookup { product } => to_value(&client.lookup_product(product.to_selector()?)?),
         Command::Total => to_value(&client.totalize(request_id)?),
-        Command::PayCash { amount } => to_value(&client.commit_cash_payment(
-            CommitCashPaymentRequestV1 {
+        Command::StartPayment { tender, amount } => to_value(&client.start_payment(
+            StartPaymentRequestV1 {
+                tender_type: tender.to_uppercase(),
                 amount_minor: *amount,
+            },
+            request_id,
+        )?),
+        Command::Payments => {
+            // The active sale is the one a cashier is looking at; a payment
+            // listing for any other sale is an audit query, not a till action.
+            let state = client.get_edge_state()?;
+            let Some(transaction) = state.active_transaction else {
+                return Err(CliError::Input("no active sale".to_owned()));
+            };
+            to_value(&client.get_transaction_payments(TransactionRequestV1 {
+                transaction_id: transaction.transaction_id,
+            })?)
+        }
+        Command::ReconcilePayment { payment_id } => to_value(&client.reconcile_payment(
+            PaymentRequestV1 {
+                payment_id: payment_id.clone(),
+            },
+            request_id,
+        )?),
+        Command::ReversePayment { payment_id } => to_value(&client.reverse_payment(
+            PaymentRequestV1 {
+                payment_id: payment_id.clone(),
             },
             request_id,
         )?),

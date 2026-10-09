@@ -5,6 +5,7 @@
 
 use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
+use edge_payments::PaymentError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {
@@ -13,6 +14,9 @@ pub enum AppError {
 
     #[error(transparent)]
     Catalog(#[from] CatalogError),
+
+    #[error(transparent)]
+    Payment(#[from] PaymentError),
 
     #[error("storage failure: {0}")]
     Storage(String),
@@ -74,9 +78,17 @@ impl AppError {
             // broken invariant, so it gets its own code.
             AppError::Domain(DomainError::LineNotFound { .. })
             | AppError::Domain(DomainError::AdjustmentTargetMissing { .. }) => "LINE_NOT_FOUND",
+            // A frozen basket is not a broken invariant: the client has to
+            // pay or reverse first (ADR 019).
+            AppError::Domain(DomainError::BasketLockedByPayment { .. }) => {
+                "BASKET_LOCKED_BY_PAYMENT"
+            }
+            AppError::Domain(DomainError::UnresolvedPayment) => "PAYMENT_REQUIRES_RECONCILIATION",
             AppError::Domain(_) => "DOMAIN_RULE_VIOLATION",
             // The catalog context publishes its own codes.
             AppError::Catalog(error) => error.code(),
+            // The payment context publishes its own codes.
+            AppError::Payment(error) => error.code(),
             AppError::Storage(_) => "STORAGE_FAILURE",
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
             AppError::Serialization(_) => "SERIALIZATION_FAILURE",

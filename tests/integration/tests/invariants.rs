@@ -90,8 +90,9 @@ fn refuses_payment_on_a_transaction_that_is_not_totalized() {
     core.start_transaction(StartTransactionCommand::default())
         .unwrap();
     core.add_item(demo_item()).unwrap();
-    let result = core.commit_cash_payment(CommitCashPaymentCommand {
+    let result = core.start_payment(StartPaymentCommand {
         request_id: None,
+        tender_type: Tender::Cash,
         amount_minor: 11_600,
     });
     assert!(matches!(
@@ -109,11 +110,7 @@ fn refuses_to_finalize_an_underpaid_sale() {
     core.add_item(demo_item()).unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 1_000,
-    })
-    .unwrap();
+    pay_cash(&core, 1_000);
     let result = core.finalize_transaction(FinalizeTransactionCommand::default());
     assert!(matches!(
         result,

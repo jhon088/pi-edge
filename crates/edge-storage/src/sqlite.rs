@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use edge_application::ports::{DeviceProfile, EdgeStore, UnitOfWork};
+use edge_application::ports::{DeviceProfile, EdgeStore, PaymentUnitOfWork, UnitOfWork};
 use edge_application::AppError;
 use edge_domain::prelude::*;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
@@ -718,29 +718,9 @@ impl SqliteUnitOfWork<'_, '_> {
                 )
                 .map_err(sqlite_err)?;
         }
-        for payment in &state.payments {
-            self.tx
-                .execute(
-                    "INSERT INTO payments
-                         (payment_id, transaction_id, tender_type, amount_minor, currency,
-                          status, created_at, committed_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                     ON CONFLICT(payment_id) DO UPDATE SET
-                         status = excluded.status,
-                         committed_at = excluded.committed_at",
-                    params![
-                        payment.payment_id.to_string(),
-                        state.transaction_id.to_string(),
-                        payment.tender_type.as_str(),
-                        payment.amount.minor(),
-                        payment.amount.currency().code(),
-                        payment.status.as_str(),
-                        payment.created_at.to_rfc3339(),
-                        payment.committed_at.map(|ts| ts.to_rfc3339()),
-                    ],
-                )
-                .map_err(sqlite_err)?;
-        }
+        // Payments are not children of the sale: they belong to the payment
+        // context and are written by its own adapter (ADR 016). The sale only
+        // carries a derived summary, which is recomputed on load.
         self.write_promotions(state, now)
     }
 
@@ -846,12 +826,18 @@ impl SqliteUnitOfWork<'_, '_> {
         rows.into_iter().map(RawPromotion::into_domain).collect()
     }
 
-    fn load_transaction(&self, raw: RawTransaction) -> Result<RetailTransaction, AppError> {
+    fn load_transaction(&mut self, raw: RawTransaction) -> Result<RetailTransaction, AppError> {
         let transaction_id: TransactionId = parse_id(&raw.transaction_id)?;
         let lines = self.load_lines(&raw.transaction_id)?;
-        let payments = self.load_payments(&raw.transaction_id, transaction_id)?;
         let promotions = self.load_promotions(&raw.transaction_id)?;
-        raw.into_domain(lines, payments, promotions)
+        let grand_total = money(raw.grand_total_minor, parse_currency(&raw.currency)?);
+        let mut transaction = raw.into_domain(lines, promotions)?;
+        // The payment summary is derived, never stored on the sale: the
+        // payment tables are the single source of truth (ADR 020).
+        let views = self.list_transaction_payments(transaction_id)?;
+        let settlement = edge_payments::settle(&views, grand_total).map_err(AppError::Payment)?;
+        transaction.restore_payment_summary(settlement.summary());
+        Ok(transaction)
     }
 
     fn load_lines(&self, transaction_id: &str) -> Result<Vec<TransactionLine>, AppError> {
@@ -873,31 +859,6 @@ impl SqliteUnitOfWork<'_, '_> {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(sqlite_err)?;
         rows.into_iter().map(RawLine::into_domain).collect()
-    }
-
-    fn load_payments(
-        &self,
-        transaction_id: &str,
-        parsed_transaction_id: TransactionId,
-    ) -> Result<Vec<Payment>, AppError> {
-        let mut stmt = self
-            .tx
-            .prepare(
-                "SELECT payment_id, tender_type, amount_minor, currency, status,
-                        created_at, committed_at
-                 FROM payments
-                 WHERE transaction_id = ?1
-                 ORDER BY created_at ASC, payment_id ASC",
-            )
-            .map_err(sqlite_err)?;
-        let rows = stmt
-            .query_map(params![transaction_id], RawPayment::from_row)
-            .map_err(sqlite_err)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(sqlite_err)?;
-        rows.into_iter()
-            .map(|raw| raw.into_domain(parsed_transaction_id))
-            .collect()
     }
 }
 
@@ -1084,7 +1045,6 @@ impl RawTransaction {
     fn into_domain(
         self,
         lines: Vec<TransactionLine>,
-        payments: Vec<Payment>,
         applied_promotions: Vec<AppliedPromotion>,
     ) -> Result<RetailTransaction, AppError> {
         let currency = parse_currency(&self.currency)?;
@@ -1120,7 +1080,7 @@ impl RawTransaction {
                 tax_total: money(self.tax_total_minor, currency),
                 grand_total: money(self.grand_total_minor, currency),
             },
-            payments,
+            payments: PaymentSummary::unpaid(currency),
             created_at: parse_ts(&self.created_at)?,
             updated_at: parse_ts(&self.updated_at)?,
             finalized_at: parse_opt_ts(self.finalized_at)?,
@@ -1250,43 +1210,6 @@ impl RawLine {
             taxable_amount: money(self.taxable_amount_minor, currency),
             tax_amount: money(self.tax_amount_minor, currency),
             line_total: money(self.line_total_minor, currency),
-        })
-    }
-}
-
-struct RawPayment {
-    payment_id: String,
-    tender_type: String,
-    amount_minor: i64,
-    currency: String,
-    status: String,
-    created_at: String,
-    committed_at: Option<String>,
-}
-
-impl RawPayment {
-    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-        Ok(Self {
-            payment_id: row.get(0)?,
-            tender_type: row.get(1)?,
-            amount_minor: row.get(2)?,
-            currency: row.get(3)?,
-            status: row.get(4)?,
-            created_at: row.get(5)?,
-            committed_at: row.get(6)?,
-        })
-    }
-
-    fn into_domain(self, transaction_id: TransactionId) -> Result<Payment, AppError> {
-        let currency = parse_currency(&self.currency)?;
-        Ok(Payment {
-            payment_id: parse_id(&self.payment_id)?,
-            transaction_id,
-            tender_type: TenderType::parse(&self.tender_type).map_err(AppError::from)?,
-            amount: money(self.amount_minor, currency),
-            status: PaymentStatus::parse(&self.status).map_err(AppError::from)?,
-            created_at: parse_ts(&self.created_at)?,
-            committed_at: parse_opt_ts(self.committed_at)?,
         })
     }
 }

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use common::{client, demo_item, open_register, wait_until_connected, DaemonProcess, WatchProcess};
 use edge_client::{EdgeClient, EventListener};
-use edge_protocol::{CommitCashPaymentRequestV1, CoreStatusV1};
+use edge_protocol::{CoreStatusV1, StartPaymentRequestV1};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -28,7 +28,7 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     let info = cli.core_info().unwrap();
     assert_eq!(info.status, CoreStatusV1::Ready);
     assert_eq!(info.protocol_version, edge_protocol::PROTOCOL_VERSION);
-    assert_eq!(info.database_schema_version, 4);
+    assert_eq!(info.database_schema_version, 5);
     assert_eq!(info.pid, daemon.pid);
 
     open_register(&cli);
@@ -65,15 +65,20 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
 
     // --- the CLI carries on against the same runtime ----------------------
     let paid = cli
-        .commit_cash_payment(
-            CommitCashPaymentRequestV1 {
+        .start_payment(
+            StartPaymentRequestV1 {
+                tender_type: "CASH".to_owned(),
                 amount_minor: 20_000,
             },
             None,
         )
         .unwrap();
-    assert_eq!(paid.status, "COMMITTED");
-    assert_eq!(paid.change_due.formatted, "84.00");
+    assert_eq!(paid.transaction.status, "COMMITTED");
+    // 200.00 handed over against a 116.00 sale: 116.00 collected, 84.00 back.
+    assert_eq!(paid.payment.committed_amount.formatted, "116.00");
+    assert_eq!(paid.payment.change_due.formatted, "84.00");
+    assert_eq!(paid.transaction.change_due.formatted, "84.00");
+    assert!(paid.settlement.can_finalize);
 
     // --- restart the UI: it rebuilds everything from the daemon ------------
     let ui = client(&database, "tauri-pos");
@@ -81,7 +86,12 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     let active = rebuilt.active_transaction.as_ref().unwrap();
     assert_eq!(active.transaction_id, sale.transaction_id);
     assert_eq!(active.status, "COMMITTED");
-    assert_eq!(active.paid_total.formatted, "200.00");
+    // The sale collected 116.00; 200.00 is what the customer handed over.
+    assert_eq!(active.paid_total.formatted, "116.00");
+    assert_eq!(active.tendered_total.formatted, "200.00");
+    assert_eq!(active.change_due.formatted, "84.00");
+    assert!(active.basket_locked);
+    assert!(!active.requires_payment_resolution);
     assert_eq!(rebuilt.business_day.as_ref().unwrap().status, "OPEN");
     assert_eq!(rebuilt.session.as_ref().unwrap().register_id, "REG-001");
     assert_eq!(rebuilt.pending_outbox, 0);
@@ -109,7 +119,7 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
             "TRANSACTION_STARTED",
             "ITEM_ADDED",
             "TRANSACTION_TOTALIZED",
-            "CASH_PAYMENT_COMMITTED",
+            "PAYMENT_STARTED",
             "TRANSACTION_FINALIZED",
         ]
     );

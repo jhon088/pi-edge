@@ -202,11 +202,7 @@ fn a_scheduled_price_change_cannot_move_an_open_sale() {
     assert_eq!(totalized.state().totals.net_total.minor(), 20_000);
 
     // Close it out, then start a fresh sale: now the new price applies.
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 23_200,
-    })
-    .unwrap();
+    pay_cash(&core, 23_200);
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
 

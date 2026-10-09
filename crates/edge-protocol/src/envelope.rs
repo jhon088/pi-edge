@@ -106,7 +106,11 @@ pub enum OperationV1 {
     RemoveItem(RemoveItemRequestV1),
     ChangeQuantity(ChangeQuantityRequestV1),
     Totalize,
-    CommitCashPayment(CommitCashPaymentRequestV1),
+    StartPayment(StartPaymentRequestV1),
+    ReconcilePayment(PaymentRequestV1),
+    ReversePayment(PaymentRequestV1),
+    GetPayment(PaymentRequestV1),
+    GetTransactionPayments(TransactionRequestV1),
     FinalizeTransaction,
     CloseRegisterSession,
     CloseBusinessDay,
@@ -140,7 +144,11 @@ impl OperationV1 {
             OperationV1::RemoveItem(_) => "REMOVE_ITEM",
             OperationV1::ChangeQuantity(_) => "CHANGE_QUANTITY",
             OperationV1::Totalize => "TOTALIZE",
-            OperationV1::CommitCashPayment(_) => "COMMIT_CASH_PAYMENT",
+            OperationV1::StartPayment(_) => "START_PAYMENT",
+            OperationV1::ReconcilePayment(_) => "RECONCILE_PAYMENT",
+            OperationV1::ReversePayment(_) => "REVERSE_PAYMENT",
+            OperationV1::GetPayment(_) => "GET_PAYMENT",
+            OperationV1::GetTransactionPayments(_) => "GET_TRANSACTION_PAYMENTS",
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
             OperationV1::CloseRegisterSession => "CLOSE_REGISTER_SESSION",
             OperationV1::CloseBusinessDay => "CLOSE_BUSINESS_DAY",
@@ -165,7 +173,9 @@ impl OperationV1 {
                 | OperationV1::RemoveItem(_)
                 | OperationV1::ChangeQuantity(_)
                 | OperationV1::Totalize
-                | OperationV1::CommitCashPayment(_)
+                | OperationV1::StartPayment(_)
+                | OperationV1::ReconcilePayment(_)
+                | OperationV1::ReversePayment(_)
                 | OperationV1::FinalizeTransaction
                 | OperationV1::CloseRegisterSession
                 | OperationV1::CloseBusinessDay
@@ -257,6 +267,8 @@ pub enum ResultV1 {
     CatalogImport(CatalogImportStatusV1),
     CatalogSnapshot(CatalogSnapshotViewV1),
     ProductLookup(ProductLookupV1),
+    Payment(PaymentResultV1),
+    TransactionPayments(TransactionPaymentsV1),
 }
 
 impl ResultV1 {
@@ -276,6 +288,8 @@ impl ResultV1 {
             ResultV1::CatalogImport(_) => "CATALOG_IMPORT",
             ResultV1::CatalogSnapshot(_) => "CATALOG_SNAPSHOT",
             ResultV1::ProductLookup(_) => "PRODUCT_LOOKUP",
+            ResultV1::Payment(_) => "PAYMENT",
+            ResultV1::TransactionPayments(_) => "TRANSACTION_PAYMENTS",
         }
     }
 }
@@ -352,14 +366,15 @@ mod tests {
     fn request_envelope_is_flat_on_the_wire() {
         let envelope = RequestEnvelopeV1::new(
             Uuid::from_u128(1),
-            OperationV1::CommitCashPayment(CommitCashPaymentRequestV1 {
+            OperationV1::StartPayment(StartPaymentRequestV1 {
+                tender_type: "CASH".to_owned(),
                 amount_minor: 11_600,
             }),
         );
         let json = serde_json::to_string(&envelope).unwrap();
         assert_eq!(
             json,
-            r#"{"protocol_version":1,"request_id":"00000000-0000-0000-0000-000000000001","operation":"COMMIT_CASH_PAYMENT","payload":{"amount_minor":11600}}"#
+            r#"{"protocol_version":1,"request_id":"00000000-0000-0000-0000-000000000001","operation":"START_PAYMENT","payload":{"tender_type":"CASH","amount_minor":11600}}"#
         );
         assert_eq!(
             serde_json::from_str::<RequestEnvelopeV1>(&json).unwrap(),

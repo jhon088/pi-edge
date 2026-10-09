@@ -602,11 +602,7 @@ fn a_sale_keeps_the_promotions_of_the_snapshot_it_captured() {
     // which is to say none.
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 100_000,
-    })
-    .unwrap();
+    pay_cash(&core, 100_000);
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
     core.start_transaction(StartTransactionCommand::default())
@@ -627,11 +623,7 @@ fn what_a_sale_granted_outlives_the_snapshot_that_granted_it() {
     core.add_item(scan(BARCODE_A, 1)).unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 20_000,
-    })
-    .unwrap();
+    pay_cash(&core, 20_000);
     let finalized = core
         .finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
@@ -825,8 +817,9 @@ fn a_basket_change_on_a_totalized_sale_reopens_it_and_voids_the_totals() {
 
     // Paying now is refused until it is totalized again.
     assert_eq!(
-        core.commit_cash_payment(CommitCashPaymentCommand {
+        core.start_payment(StartPaymentCommand {
             request_id: None,
+            tender_type: Tender::Cash,
             amount_minor: 2_000,
         })
         .unwrap_err()
@@ -842,13 +835,11 @@ fn a_sale_in_payment_refuses_a_basket_change() {
     core.add_item(scan(BARCODE_A, 1)).unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 2_000,
-    })
-    .unwrap();
+    pay_cash(&core, 2_000);
 
-    // Once money has moved, the basket is closed to edits.
+    // Once money has moved, the basket is closed to edits — with its own code,
+    // because the way out is to reverse the payment, not to start a new sale
+    // (ADR 019).
     assert_eq!(
         core.remove_item(RemoveItemCommand {
             request_id: None,
@@ -856,7 +847,7 @@ fn a_sale_in_payment_refuses_a_basket_change() {
         })
         .unwrap_err()
         .kind(),
-        "INVALID_TRANSACTION_STATE"
+        "BASKET_LOCKED_BY_PAYMENT"
     );
     assert_eq!(
         core.change_quantity(ChangeQuantityCommand {
@@ -866,6 +857,6 @@ fn a_sale_in_payment_refuses_a_basket_change() {
         })
         .unwrap_err()
         .kind(),
-        "INVALID_TRANSACTION_STATE"
+        "BASKET_LOCKED_BY_PAYMENT"
     );
 }

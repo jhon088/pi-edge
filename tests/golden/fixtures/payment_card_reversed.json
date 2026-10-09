@@ -1,0 +1,89 @@
+{
+  "transaction_id": "00000000-0000-0000-0000-000000000008",
+  "payments": [
+    {
+      "payment_id": "00000000-0000-0000-0000-00000000000d",
+      "transaction_id": "00000000-0000-0000-0000-000000000008",
+      "tender_type": "CARD",
+      "provider_kind": "SIMULATOR",
+      "requested_amount": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "authorized_amount": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "committed_amount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "change_due": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "status": "REVERSED",
+      "attempts": [
+        {
+          "attempt_id": "00000000-0000-0000-0000-00000000000e",
+          "attempt_number": 1,
+          "status": "REVERSED",
+          "requested_amount": {
+            "minor": 11600,
+            "currency": "MXN",
+            "formatted": "116.00"
+          },
+          "authorized_amount": {
+            "minor": 11600,
+            "currency": "MXN",
+            "formatted": "116.00"
+          },
+          "provider_kind": "SIMULATOR",
+          "correlation_id": "00000000-0000-0000-0000-00000000000f",
+          "provider_reference": "SIM-000000000000",
+          "failure_code": null,
+          "unresolved": false,
+          "created_at": "2026-10-08T15:00:00.000000Z",
+          "updated_at": "2026-10-08T15:00:00.000000Z"
+        }
+      ],
+      "created_at": "2026-10-08T15:00:00.000000Z",
+      "updated_at": "2026-10-08T15:00:00.000000Z"
+    }
+  ],
+  "settlement": {
+    "amount_due": {
+      "minor": 11600,
+      "currency": "MXN",
+      "formatted": "116.00"
+    },
+    "committed_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "remaining_balance": {
+      "minor": 11600,
+      "currency": "MXN",
+      "formatted": "116.00"
+    },
+    "tendered_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "change_due": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "basket_locked": false,
+    "requires_resolution": false,
+    "requires_reconciliation": false,
+    "can_finalize": false
+  }
+}

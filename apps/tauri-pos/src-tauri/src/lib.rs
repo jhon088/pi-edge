@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
 use edge_protocol::{
     CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, ProductLookupV1, ProductSelectorV1,
+    TransactionPaymentsV1, TransactionRequestV1,
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -113,6 +114,24 @@ fn lookup_barcode(
         .map_err(BridgeError::from)
 }
 
+/// Every payment of one sale, with its attempt history.
+///
+/// A diagnostic read, nothing more: the bridge forwards the core's own
+/// projection and adds no financial reasoning of its own. There is
+/// deliberately no `start_payment`, `reconcile` or `reverse` command here —
+/// this window is read-only in this milestone, and those are exercised through
+/// the CLI.
+#[tauri::command]
+fn transaction_payments(
+    bridge: tauri::State<'_, EdgeBridge>,
+    transaction_id: String,
+) -> Result<TransactionPaymentsV1, BridgeError> {
+    bridge
+        .client
+        .get_transaction_payments(TransactionRequestV1 { transaction_id })
+        .map_err(BridgeError::from)
+}
+
 #[tauri::command]
 fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDto {
     let status = bridge.client.connection();
@@ -157,6 +176,7 @@ pub fn run() {
             edge_state,
             catalog_status,
             lookup_barcode,
+            transaction_payments,
             connection_status
         ])
         .run(tauri::generate_context!());

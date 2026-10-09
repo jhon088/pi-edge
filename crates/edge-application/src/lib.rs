@@ -11,6 +11,7 @@ pub mod adapters;
 pub mod catalog_service;
 pub mod commands;
 pub mod error;
+pub mod payment_service;
 pub mod ports;
 pub mod queries;
 pub mod service;
@@ -19,7 +20,8 @@ pub mod service;
 pub mod testing;
 
 pub use error::AppError;
-pub use ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
+pub use payment_service::PaymentOutcome;
+pub use ports::{Clock, DeviceProfile, EdgeStore, IdFactory, PaymentUnitOfWork, UnitOfWork};
 pub use service::EdgeApplication;
 
 /// Version of the headless core, surfaced to clients for diagnostics.

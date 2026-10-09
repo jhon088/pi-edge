@@ -16,6 +16,7 @@ mod catalog;
 pub mod error;
 pub mod lock;
 pub mod migrations;
+mod payments;
 pub mod sqlite;
 
 pub use error::StorageError;

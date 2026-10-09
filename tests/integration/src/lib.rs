@@ -9,7 +9,10 @@ use edge_application::testing::{
 use edge_application::EdgeApplication;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
+use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_storage::SqliteEdgeStore;
+
+pub use edge_payments::TenderType as Tender;
 
 pub type TestCore = EdgeApplication<SqliteEdgeStore, FixedClock, SequentialIdFactory>;
 
@@ -129,3 +132,31 @@ pub fn journal_types(core: &TestCore) -> Vec<String> {
         .map(|e| e.event_type.as_str().to_owned())
         .collect()
 }
+
+/// Cash tender through the payment engine, answering with the sale.
+///
+/// Cash has no provider, so this is one database transaction and the payment
+/// is committed when it returns.
+pub fn pay_cash(core: &TestCore, amount_minor: i64) -> RetailTransaction {
+    core.start_payment(StartPaymentCommand {
+        request_id: None,
+        tender_type: TenderType::Cash,
+        amount_minor,
+    })
+    .unwrap()
+    .transaction
+}
+
+/// Core whose card provider follows a script, for the paths a real terminal
+/// would produce: a refusal, and a call whose result is lost.
+pub fn scripted_core(script: SimulatorScript) -> ScriptedCore {
+    EdgeApplication::with_payment_provider(
+        SqliteEdgeStore::open_in_memory().unwrap(),
+        FixedClock::new(start_instant(), 1_000),
+        SequentialIdFactory::new(),
+        SimulatorPaymentProvider::new(script),
+    )
+}
+
+pub type ScriptedCore =
+    EdgeApplication<SqliteEdgeStore, FixedClock, SequentialIdFactory, SimulatorPaymentProvider>;

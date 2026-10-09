@@ -79,6 +79,67 @@ export interface AppliedPromotion {
   detail: string | null;
 }
 
+/** One concrete interaction with a payment provider. Append-only history. */
+export interface PaymentAttempt {
+  attempt_id: string;
+  attempt_number: number;
+  /** `CREATED`, `PROCESSING`, `AUTHORIZED`, `UNKNOWN`, `FAILED`, `REVERSAL_PENDING`, `REVERSED`. */
+  status: string;
+  requested_amount: Money;
+  authorized_amount: Money | null;
+  provider_kind: string;
+  /** Minted by the core before the provider call; what a reconciliation asks about. */
+  correlation_id: string;
+  /** The provider's own identifier. Never a card number or a terminal payload. */
+  provider_reference: string | null;
+  /** Stable refusal reason, e.g. `SIMULATED_DECLINED`. */
+  failure_code: string | null;
+  /** The outcome is still open, so the sale cannot finalize. */
+  unresolved: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One tender's intention to cover part of a sale. */
+export interface Payment {
+  payment_id: string;
+  transaction_id: string;
+  /** `CASH` or `CARD`. The processor is `provider_kind`, not a tender. */
+  tender_type: string;
+  provider_kind: string | null;
+  /** What this tender was asked for. For cash, what the customer handed over. */
+  requested_amount: Money;
+  authorized_amount: Money | null;
+  /** What is applied against the sale's debt. */
+  committed_amount: Money;
+  change_due: Money;
+  /** `CREATED`, `IN_PROGRESS`, `COMMITTED`, `FAILED` or `REVERSED`. */
+  status: string;
+  /** Empty for cash: there is no provider to interact with. */
+  attempts: PaymentAttempt[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** What a sale's payments mean for it. Computed entirely by the core. */
+export interface Settlement {
+  amount_due: Money;
+  committed_total: Money;
+  remaining_balance: Money;
+  tendered_total: Money;
+  change_due: Money;
+  basket_locked: boolean;
+  requires_resolution: boolean;
+  requires_reconciliation: boolean;
+  can_finalize: boolean;
+}
+
+export interface TransactionPayments {
+  transaction_id: string;
+  payments: Payment[];
+  settlement: Settlement;
+}
+
 export interface Totals {
   subtotal: Money;
   discount_total: Money;
@@ -99,9 +160,16 @@ export interface RetailTransaction {
   lines: TransactionLine[];
   applied_promotions: AppliedPromotion[];
   totals: Totals;
+  /** What the payments applied against the debt. */
   paid_total: Money;
+  /** What customers handed over, cash overpayment included. */
+  tendered_total: Money;
   balance_due: Money;
   change_due: Money;
+  /** The payment lifecycle forbids basket changes. */
+  basket_locked: boolean;
+  /** A payment outcome is still open, so the sale cannot finalize. */
+  requires_payment_resolution: boolean;
   created_at: string;
   finalized_at: string | null;
   version: number;

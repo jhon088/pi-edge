@@ -32,9 +32,19 @@ pub struct DaemonProcess {
 impl DaemonProcess {
     /// Start a daemon and wait for its readiness line.
     pub fn start(database: &Path) -> Self {
+        Self::start_with_payment_script(database, None)
+    }
+
+    /// Start a daemon whose card provider follows a script, so a declined or
+    /// lost provider call is reproducible over the real transport.
+    pub fn start_with_payment_script(database: &Path, script: Option<&str>) -> Self {
         let log_path = database.with_extension("daemon.log");
         let log = std::fs::File::create(&log_path).unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_edge-daemon"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_edge-daemon"));
+        if let Some(script) = script {
+            command.env("PI_EDGE_PAYMENT_SIM", script);
+        }
+        let mut child = command
             .arg("--db")
             .arg(database)
             .env("PI_EDGE_LOG", "debug")
@@ -69,6 +79,21 @@ impl DaemonProcess {
 
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// Wait for the process to be gone, for cases that expect it to die.
+    ///
+    /// A dropped connection and a reaped child are two different events, and
+    /// the first can be observed before the second.
+    pub fn wait_until_dead(&mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !self.is_alive() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
     }
 
     /// Simulate a power cut or a killed process.
@@ -164,6 +189,21 @@ impl WatchProcess {
 
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// Wait for the process to be gone, for cases that expect it to die.
+    ///
+    /// A dropped connection and a reaped child are two different events, and
+    /// the first can be observed before the second.
+    pub fn wait_until_dead(&mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !self.is_alive() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
     }
 }
 

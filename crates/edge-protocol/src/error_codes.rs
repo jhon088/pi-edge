@@ -23,6 +23,7 @@
 //! | `NO_ACTIVE_TRANSACTION` | the operation needs an active transaction |
 //! | `INVALID_TRANSACTION_STATE` | the aggregate refused the state transition |
 //! | `LINE_NOT_FOUND` | no line of the sale carries that line number |
+//! | `BASKET_LOCKED_BY_PAYMENT` | a payment is active; pay or reverse before editing |
 //! | `DOMAIN_RULE_VIOLATION` | another domain invariant was violated |
 //! | `CONCURRENT_MODIFICATION` | stale write detected |
 //! | `STORAGE_FAILURE` | the local database failed |
@@ -92,6 +93,35 @@ pub const CATALOG_SNAPSHOT_NOT_PENDING: &str = "CATALOG_SNAPSHOT_NOT_PENDING";
 pub const CATALOG_VERSION_CONFLICT: &str = "CATALOG_VERSION_CONFLICT";
 /// The snapshot lifecycle refused the transition.
 pub const CATALOG_INVALID_TRANSITION: &str = "CATALOG_INVALID_TRANSITION";
+
+// Payment codes, produced by the payment context.
+
+/// The payment or attempt id is unknown to this installation.
+pub const PAYMENT_NOT_FOUND: &str = "PAYMENT_NOT_FOUND";
+/// The payment state machine refused the transition.
+pub const PAYMENT_INVALID_STATE: &str = "PAYMENT_INVALID_STATE";
+/// The payment has already reached a resolved state.
+pub const PAYMENT_ALREADY_RESOLVED: &str = "PAYMENT_ALREADY_RESOLVED";
+/// A payment reached a provider and the result is unknown. The only way
+/// forward is an explicit reconciliation; nothing retries a charge (ADR 018).
+pub const PAYMENT_REQUIRES_RECONCILIATION: &str = "PAYMENT_REQUIRES_RECONCILIATION";
+/// Reversing this payment is not allowed from its current state.
+pub const PAYMENT_REVERSAL_NOT_ALLOWED: &str = "PAYMENT_REVERSAL_NOT_ALLOWED";
+/// A tender that may not overpay was asked for more than the remaining
+/// balance. Cash may overpay; a card may not.
+pub const PAYMENT_EXCEEDS_BALANCE: &str = "PAYMENT_EXCEEDS_BALANCE";
+/// A payment amount is not positive, or the balance is already covered.
+pub const PAYMENT_INVALID_AMOUNT: &str = "PAYMENT_INVALID_AMOUNT";
+/// The provider refused the payment.
+pub const PAYMENT_PROVIDER_DECLINED: &str = "PAYMENT_PROVIDER_DECLINED";
+/// The provider could not be reached. Distinct from an unknown *outcome*:
+/// this is produced only when nothing was sent.
+pub const PAYMENT_PROVIDER_UNAVAILABLE: &str = "PAYMENT_PROVIDER_UNAVAILABLE";
+/// A payment record failed validation at the boundary.
+pub const PAYMENT_INVALID_RECORD: &str = "PAYMENT_INVALID_RECORD";
+/// The basket cannot change because a payment is in a financially active
+/// state (ADR 019).
+pub const BASKET_LOCKED_BY_PAYMENT: &str = "BASKET_LOCKED_BY_PAYMENT";
 
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";

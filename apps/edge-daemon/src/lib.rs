@@ -32,6 +32,7 @@ use edge_application::ports::Clock;
 use edge_application::EdgeApplication;
 use edge_ipc::credentials::{FileCredentialProvider, LocalCredentialProvider};
 use edge_ipc::{DesktopLocalListener, EdgeListener, RuntimePaths};
+use edge_payments::{SimulatorPaymentProvider, SimulatorScript};
 use edge_protocol::{CoreStatusV1, PROTOCOL_VERSION};
 use edge_storage::{migrations, SingleWriterLock, SqliteEdgeStore};
 
@@ -93,7 +94,17 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
     let token = credentials.load_or_create()?;
 
     let store = SqliteEdgeStore::open(paths.database())?;
-    let core = Arc::new(EdgeApplication::new(store, SystemClock, UuidFactory));
+    // There is no real payment provider yet, so the runtime settles cards
+    // through the deterministic simulator. `PI_EDGE_PAYMENT_SIM` scripts it
+    // for development and for the end-to-end demo; reading it here, in the
+    // composition root, keeps the domain free of environment lookups.
+    let provider = payment_provider()?;
+    let core = Arc::new(EdgeApplication::with_payment_provider(
+        store,
+        SystemClock,
+        UuidFactory,
+        provider,
+    ));
     let state = Arc::new(state::DaemonState::new(migrations::target_version()));
 
     let endpoint = paths.endpoint()?;
@@ -222,3 +233,25 @@ fn register_signals(shutdown: &Arc<AtomicBool>) -> Result<(), DaemonError> {
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(shutdown))?;
     Ok(())
 }
+
+/// Build the payment provider from the environment.
+///
+/// Development-only switch. An unparseable script is a hard startup failure
+/// rather than a silent fallback: a till that behaves differently from what an
+/// operator configured is worse than one that refuses to start.
+fn payment_provider() -> Result<SimulatorPaymentProvider, DaemonError> {
+    let Some(spec) = std::env::var_os(PAYMENT_SIM_ENV) else {
+        return Ok(SimulatorPaymentProvider::approving());
+    };
+    let spec = spec.to_string_lossy().to_string();
+    let script = SimulatorScript::parse(&spec)
+        .map_err(|error| DaemonError::Configuration(error.to_string()))?;
+    tracing::warn!(
+        script = %spec,
+        "payment provider is a scripted simulator; not for production use"
+    );
+    Ok(SimulatorPaymentProvider::new(script))
+}
+
+/// Name of the development switch that scripts the payment simulator.
+pub const PAYMENT_SIM_ENV: &str = "PI_EDGE_PAYMENT_SIM";

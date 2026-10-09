@@ -31,12 +31,7 @@ fn completes_a_cash_sale_and_closes_the_day() {
     assert_eq!(transaction.state().totals.tax_total.minor(), 1_600);
     assert_eq!(transaction.state().totals.grand_total.minor(), 11_600);
 
-    let transaction = core
-        .commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 11_600,
-        })
-        .unwrap();
+    let transaction = pay_cash(&core, 11_600);
     assert_eq!(transaction.status(), TransactionStatus::Committed);
     assert_eq!(transaction.change_due().unwrap().minor(), 0);
     assert_eq!(transaction.balance_due().unwrap().minor(), 0);
@@ -66,7 +61,7 @@ fn completes_a_cash_sale_and_closes_the_day() {
             "TRANSACTION_STARTED",
             "ITEM_ADDED",
             "TRANSACTION_TOTALIZED",
-            "CASH_PAYMENT_COMMITTED",
+            "PAYMENT_STARTED",
             "TRANSACTION_FINALIZED",
         ]
     );
@@ -112,12 +107,7 @@ fn overpayment_returns_change_computed_by_the_core() {
     core.add_item(demo_item()).unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    let transaction = core
-        .commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 20_000,
-        })
-        .unwrap();
+    let transaction = pay_cash(&core, 20_000);
     assert_eq!(transaction.change_due().unwrap().minor(), 8_400);
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
@@ -133,23 +123,19 @@ fn splits_cash_payments_until_fully_paid() {
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
 
-    let partial = core
-        .commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 5_000,
-        })
-        .unwrap();
+    let partial = pay_cash(&core, 5_000);
     assert_eq!(partial.status(), TransactionStatus::PaymentInProgress);
     assert_eq!(partial.balance_due().unwrap().minor(), 6_600);
 
-    let completed = core
-        .commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 6_600,
-        })
-        .unwrap();
+    let completed = pay_cash(&core, 6_600);
     assert_eq!(completed.status(), TransactionStatus::Committed);
-    assert_eq!(completed.state().payments.len(), 2);
+    assert_eq!(completed.paid_total().unwrap().minor(), 11_600);
+    // Two tenders, both kept: the sale carries a summary, the payment context
+    // carries the records.
+    let (payments, settlement) = core.get_transaction_payments(completed.id()).unwrap();
+    assert_eq!(payments.len(), 2);
+    assert_eq!(settlement.committed_total.minor(), 11_600);
+    assert!(settlement.can_finalize());
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
 }
@@ -166,11 +152,7 @@ fn register_sequence_increments_per_register() {
         core.add_item(demo_item()).unwrap();
         core.totalize_transaction(TotalizeTransactionCommand::default())
             .unwrap();
-        core.commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 11_600,
-        })
-        .unwrap();
+        pay_cash(&core, 11_600);
         core.finalize_transaction(FinalizeTransactionCommand::default())
             .unwrap();
     }

@@ -84,8 +84,12 @@
       "formatted": "139.20"
     }
   },
-  "payments": [],
   "paid_total": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "tendered_total": {
     "minor": 0,
     "currency": "MXN",
     "formatted": "0.00"
@@ -100,6 +104,8 @@
     "currency": "MXN",
     "formatted": "0.00"
   },
+  "basket_locked": false,
+  "requires_payment_resolution": false,
   "created_at": "2026-10-15T00:00:00.000000Z",
   "updated_at": "2026-10-15T00:00:00.000000Z",
   "finalized_at": null,

@@ -8,6 +8,7 @@ use edge_catalog::{
     PriceEntry, ProductSelector, Promotion, SnapshotCounts, TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
+use edge_payments::{Payment, PaymentAttempt, PaymentView};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -193,7 +194,32 @@ pub trait CatalogUnitOfWork {
 /// A single durable unit of work. Every method runs inside one store
 /// transaction; dropping the unit of work without committing rolls everything
 /// back.
-pub trait UnitOfWork: CatalogUnitOfWork {
+/// Payment persistence.
+///
+/// A supertrait of [`UnitOfWork`], like the catalog, so a use case that moves
+/// money and a use case that prices a basket stay separate concerns while
+/// sharing one database transaction when they need to.
+pub trait PaymentUnitOfWork {
+    fn insert_payment(&mut self, payment: &Payment) -> Result<(), AppError>;
+    fn update_payment(&mut self, payment: &Payment) -> Result<(), AppError>;
+    fn find_payment(&mut self, payment_id: PaymentId) -> Result<Option<PaymentView>, AppError>;
+    /// Every payment of a sale with its attempt history, oldest first.
+    fn list_transaction_payments(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Vec<PaymentView>, AppError>;
+
+    fn insert_payment_attempt(&mut self, attempt: &PaymentAttempt) -> Result<(), AppError>;
+    fn update_payment_attempt(&mut self, attempt: &PaymentAttempt) -> Result<(), AppError>;
+    fn find_payment_attempt(
+        &mut self,
+        attempt_id: Uuid,
+    ) -> Result<Option<PaymentAttempt>, AppError>;
+    /// Next attempt number for a payment: `max + 1`, never reused.
+    fn next_attempt_number(&mut self, payment_id: PaymentId) -> Result<i64, AppError>;
+}
+
+pub trait UnitOfWork: CatalogUnitOfWork + PaymentUnitOfWork {
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;
     fn put_device_profile(
         &mut self,

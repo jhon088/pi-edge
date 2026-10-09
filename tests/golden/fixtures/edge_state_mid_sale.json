@@ -117,21 +117,12 @@
         "formatted": "116.00"
       }
     },
-    "payments": [
-      {
-        "payment_id": "00000000-0000-0000-0000-00000000000d",
-        "tender_type": "CASH",
-        "amount": {
-          "minor": 5000,
-          "currency": "MXN",
-          "formatted": "50.00"
-        },
-        "status": "COMMITTED",
-        "created_at": "2026-10-08T15:00:00.000000Z",
-        "committed_at": "2026-10-08T15:00:00.000000Z"
-      }
-    ],
     "paid_total": {
+      "minor": 5000,
+      "currency": "MXN",
+      "formatted": "50.00"
+    },
+    "tendered_total": {
       "minor": 5000,
       "currency": "MXN",
       "formatted": "50.00"
@@ -146,6 +137,8 @@
       "currency": "MXN",
       "formatted": "0.00"
     },
+    "basket_locked": true,
+    "requires_payment_resolution": false,
     "created_at": "2026-10-08T15:00:00.000000Z",
     "updated_at": "2026-10-08T15:00:00.000000Z",
     "finalized_at": null,

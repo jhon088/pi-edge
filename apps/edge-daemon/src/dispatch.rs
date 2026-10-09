@@ -18,11 +18,12 @@ use edge_application::commands::{
 use edge_application::{AppError, EdgeApplication, CORE_VERSION};
 use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, RetailTransaction};
+use edge_payments::{PaymentError, SimulatorPaymentProvider};
 use edge_protocol::{
     error_codes, BusinessDayV1, CatalogImportStatusV1, CatalogSnapshotViewV1, CatalogStatusV1,
-    CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1, OperationV1, PendingOutboxV1,
-    ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
-    RetailTransactionV1, PROTOCOL_VERSION,
+    CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1, OperationV1, PaymentResultV1,
+    PendingOutboxV1, ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1,
+    ResultV1, RetailTransactionV1, TransactionPaymentsV1, PROTOCOL_VERSION,
 };
 use edge_storage::SqliteEdgeStore;
 use uuid::Uuid;
@@ -34,6 +35,7 @@ pub type Core = EdgeApplication<
     SqliteEdgeStore,
     edge_application::adapters::SystemClock,
     edge_application::adapters::UuidFactory,
+    SimulatorPaymentProvider,
 >;
 
 /// Translates protocol operations into core calls.
@@ -229,12 +231,62 @@ impl Dispatcher {
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
             }
-            OperationV1::CommitCashPayment(payload) => {
-                let transaction = self
+            OperationV1::StartPayment(payload) => {
+                let command = payload
+                    .into_command(Some(request_id))
+                    .map_err(payment_error)?;
+                let outcome = self
                     .core
-                    .commit_cash_payment(payload.into_command(Some(request_id)))
+                    .start_payment(command)
                     .map_err(|e| self.app_error(e))?;
-                Ok(ResultV1::Transaction(dto(&transaction)?))
+                Ok(ResultV1::Payment(
+                    PaymentResultV1::from_domain(&outcome).map_err(|e| self.app_error(e))?,
+                ))
+            }
+            OperationV1::ReconcilePayment(payload) => {
+                let command = payload
+                    .into_reconcile(Some(request_id))
+                    .map_err(payment_error)?;
+                let outcome = self
+                    .core
+                    .reconcile_payment(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Payment(
+                    PaymentResultV1::from_domain(&outcome).map_err(|e| self.app_error(e))?,
+                ))
+            }
+            OperationV1::ReversePayment(payload) => {
+                let command = payload
+                    .into_reverse(Some(request_id))
+                    .map_err(payment_error)?;
+                let outcome = self
+                    .core
+                    .reverse_payment(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Payment(
+                    PaymentResultV1::from_domain(&outcome).map_err(|e| self.app_error(e))?,
+                ))
+            }
+            OperationV1::GetPayment(payload) => {
+                let payment_id = payload.payment_id().map_err(payment_error)?;
+                let outcome = self
+                    .core
+                    .get_payment(payment_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Payment(
+                    PaymentResultV1::from_domain(&outcome).map_err(|e| self.app_error(e))?,
+                ))
+            }
+            OperationV1::GetTransactionPayments(payload) => {
+                let transaction_id = payload.transaction_id().map_err(payment_error)?;
+                let (payments, settlement) = self
+                    .core
+                    .get_transaction_payments(transaction_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::TransactionPayments(
+                    TransactionPaymentsV1::from_domain(transaction_id, &payments, &settlement)
+                        .map_err(|e| self.app_error(e))?,
+                ))
             }
             OperationV1::FinalizeTransaction => {
                 let transaction = self
@@ -357,6 +409,10 @@ fn dto(transaction: &RetailTransaction) -> Result<RetailTransactionV1, ErrorV1> 
 
 /// Catalog failures already carry their own stable code.
 fn catalog_error(error: CatalogError) -> ErrorV1 {
+    ErrorV1::new(error.code(), error.to_string())
+}
+
+fn payment_error(error: PaymentError) -> ErrorV1 {
     ErrorV1::new(error.code(), error.to_string())
 }
 

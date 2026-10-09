@@ -57,6 +57,12 @@ pub enum DomainError {
     #[error("promotion target `{kind}` is not a valid target")]
     InvalidPromotionTarget { kind: String },
 
+    #[error("the basket of transaction `{transaction_id}` is locked by a payment")]
+    BasketLockedByPayment { transaction_id: String },
+
+    #[error("a payment of this sale has an unresolved outcome")]
+    UnresolvedPayment,
+
     #[error("unknown {kind} value `{value}`")]
     UnknownEnumValue { kind: &'static str, value: String },
 }

@@ -9,17 +9,19 @@
 //! typed error instead of reaching a use case.
 
 use edge_application::commands::{
-    AddItemCommand, BeginCatalogImportCommand, ChangeQuantityCommand, CommitCashPaymentCommand,
-    CommitCatalogImportCommand, InitDeviceCommand, OpenRegisterSessionCommand,
-    PutCatalogChunkCommand, RemoveItemCommand,
+    AddItemCommand, BeginCatalogImportCommand, ChangeQuantityCommand, CommitCatalogImportCommand,
+    InitDeviceCommand, OpenRegisterSessionCommand, PutCatalogChunkCommand, ReconcilePaymentCommand,
+    RemoveItemCommand, ReversePaymentCommand, StartPaymentCommand,
 };
 use edge_application::ports::DeviceProfile;
 use edge_application::queries::{
     CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState, PendingOutbox,
     ProductLookup,
 };
+use edge_application::{AppError, PaymentOutcome};
 use edge_catalog::CatalogError;
 use edge_domain::prelude::*;
+use edge_payments::{PaymentAttempt, PaymentError, PaymentView, Settlement, TenderType};
 use uuid::Uuid;
 
 use crate::content_mapping::{parse_snapshot_id, parse_timestamp};
@@ -107,15 +109,57 @@ impl From<&Totals> for TotalsV1 {
     }
 }
 
-impl From<&Payment> for PaymentV1 {
-    fn from(payment: &Payment) -> Self {
-        Self {
+impl PaymentV1 {
+    pub fn from_domain(view: &PaymentView) -> Result<Self, PaymentError> {
+        let payment = &view.payment;
+        Ok(Self {
             payment_id: payment.payment_id.to_string(),
+            transaction_id: payment.transaction_id.to_string(),
             tender_type: payment.tender_type.as_str().to_owned(),
-            amount: MoneyV1::from(&payment.amount),
+            provider_kind: payment.provider_kind.map(|kind| kind.as_str().to_owned()),
+            requested_amount: MoneyV1::from(&payment.requested_amount),
+            authorized_amount: payment.authorized_amount.as_ref().map(MoneyV1::from),
+            committed_amount: MoneyV1::from(&payment.committed_amount),
+            change_due: MoneyV1::from(&payment.change_due()?),
             status: payment.status.as_str().to_owned(),
+            attempts: view.attempts.iter().map(PaymentAttemptV1::from).collect(),
             created_at: payment.created_at.to_rfc3339(),
-            committed_at: payment.committed_at.map(|ts| ts.to_rfc3339()),
+            updated_at: payment.updated_at.to_rfc3339(),
+        })
+    }
+}
+
+impl From<&PaymentAttempt> for PaymentAttemptV1 {
+    fn from(attempt: &PaymentAttempt) -> Self {
+        Self {
+            attempt_id: attempt.attempt_id.to_string(),
+            attempt_number: attempt.attempt_number,
+            status: attempt.status.as_str().to_owned(),
+            requested_amount: MoneyV1::from(&attempt.requested_amount),
+            authorized_amount: attempt.authorized_amount.as_ref().map(MoneyV1::from),
+            provider_kind: attempt.provider_kind.as_str().to_owned(),
+            correlation_id: attempt.correlation_id.to_string(),
+            provider_reference: attempt.provider_reference.clone(),
+            failure_code: attempt.failure_code.clone(),
+            unresolved: attempt.status.is_unresolved(),
+            created_at: attempt.created_at.to_rfc3339(),
+            updated_at: attempt.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<&Settlement> for SettlementV1 {
+    fn from(settlement: &Settlement) -> Self {
+        Self {
+            amount_due: MoneyV1::from(&settlement.amount_due),
+            committed_total: MoneyV1::from(&settlement.committed_total),
+            remaining_balance: MoneyV1::from(&settlement.remaining_balance),
+            tendered_total: MoneyV1::from(&settlement.tendered_total),
+            change_due: MoneyV1::from(&settlement.change_due),
+            basket_locked: settlement.blocks_basket,
+            requires_resolution: settlement.requires_resolution,
+            requires_reconciliation: settlement.requires_reconciliation,
+            can_finalize: settlement.can_finalize(),
         }
     }
 }
@@ -145,10 +189,12 @@ impl RetailTransactionV1 {
                 .collect(),
             lines: state.lines.iter().map(TransactionLineV1::from).collect(),
             totals: TotalsV1::from(&state.totals),
-            payments: state.payments.iter().map(PaymentV1::from).collect(),
             paid_total: MoneyV1::from(&transaction.paid_total()?),
+            tendered_total: MoneyV1::from(&state.payments.tendered_total),
             balance_due: MoneyV1::from(&transaction.balance_due()?),
             change_due: MoneyV1::from(&transaction.change_due()?),
+            basket_locked: transaction.basket_is_locked(),
+            requires_payment_resolution: state.payments.requires_resolution,
             created_at: state.created_at.to_rfc3339(),
             updated_at: state.updated_at.to_rfc3339(),
             finalized_at: state.finalized_at.map(|ts| ts.to_rfc3339()),
@@ -280,12 +326,86 @@ impl ChangeQuantityRequestV1 {
     }
 }
 
-impl CommitCashPaymentRequestV1 {
-    pub fn into_command(self, request_id: Option<Uuid>) -> CommitCashPaymentCommand {
-        CommitCashPaymentCommand {
+impl StartPaymentRequestV1 {
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<StartPaymentCommand, PaymentError> {
+        Ok(StartPaymentCommand {
             request_id,
+            tender_type: TenderType::parse(&self.tender_type)?,
             amount_minor: self.amount_minor,
-        }
+        })
+    }
+}
+
+impl PaymentRequestV1 {
+    pub fn payment_id(&self) -> Result<PaymentId, PaymentError> {
+        self.payment_id
+            .parse()
+            .map_err(|_| PaymentError::InvalidRecord {
+                field: "payment_id",
+                reason: format!("`{}` is not a UUID", self.payment_id),
+            })
+    }
+
+    pub fn into_reconcile(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<ReconcilePaymentCommand, PaymentError> {
+        Ok(ReconcilePaymentCommand {
+            request_id,
+            payment_id: self.payment_id()?,
+        })
+    }
+
+    pub fn into_reverse(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<ReversePaymentCommand, PaymentError> {
+        Ok(ReversePaymentCommand {
+            request_id,
+            payment_id: self.payment_id()?,
+        })
+    }
+}
+
+impl TransactionRequestV1 {
+    pub fn transaction_id(&self) -> Result<TransactionId, PaymentError> {
+        self.transaction_id
+            .parse()
+            .map_err(|_| PaymentError::InvalidRecord {
+                field: "transaction_id",
+                reason: format!("`{}` is not a UUID", self.transaction_id),
+            })
+    }
+}
+
+impl PaymentResultV1 {
+    pub fn from_domain(outcome: &PaymentOutcome) -> Result<Self, AppError> {
+        Ok(Self {
+            payment: PaymentV1::from_domain(&outcome.payment).map_err(AppError::Payment)?,
+            transaction: RetailTransactionV1::from_domain(&outcome.transaction)?,
+            settlement: SettlementV1::from(&outcome.settlement),
+        })
+    }
+}
+
+impl TransactionPaymentsV1 {
+    pub fn from_domain(
+        transaction_id: TransactionId,
+        payments: &[PaymentView],
+        settlement: &Settlement,
+    ) -> Result<Self, AppError> {
+        Ok(Self {
+            transaction_id: transaction_id.to_string(),
+            payments: payments
+                .iter()
+                .map(PaymentV1::from_domain)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(AppError::Payment)?,
+            settlement: SettlementV1::from(settlement),
+        })
     }
 }
 

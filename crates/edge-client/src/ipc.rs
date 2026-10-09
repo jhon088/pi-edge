@@ -8,11 +8,11 @@ use edge_ipc::{DesktopLocalTransport, EdgeEventStream, EdgeTransport, IpcError};
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
     CatalogSnapshotRequestV1, CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1,
-    CommitCashPaymentRequestV1, CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1,
-    InitDeviceRequestV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
-    PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
+    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PaymentRequestV1,
+    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
     RegisterSessionV1, RemoveItemRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
-    RetailTransactionV1,
+    RetailTransactionV1, StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -318,15 +318,58 @@ impl EdgeClient for IpcEdgeClient {
         )
     }
 
-    fn commit_cash_payment(
+    fn start_payment(
         &self,
-        request: CommitCashPaymentRequestV1,
+        request: StartPaymentRequestV1,
         request_id: Option<Uuid>,
-    ) -> Result<RetailTransactionV1, ClientError> {
+    ) -> Result<PaymentResultV1, ClientError> {
         expect_result!(
-            self.call(OperationV1::CommitCashPayment(request), request_id)?,
-            ResultV1::Transaction,
-            "TRANSACTION"
+            self.call(OperationV1::StartPayment(request), request_id)?,
+            ResultV1::Payment,
+            "PAYMENT"
+        )
+    }
+
+    fn reconcile_payment(
+        &self,
+        request: PaymentRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<PaymentResultV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ReconcilePayment(request), request_id)?,
+            ResultV1::Payment,
+            "PAYMENT"
+        )
+    }
+
+    fn reverse_payment(
+        &self,
+        request: PaymentRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<PaymentResultV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ReversePayment(request), request_id)?,
+            ResultV1::Payment,
+            "PAYMENT"
+        )
+    }
+
+    fn get_payment(&self, request: PaymentRequestV1) -> Result<PaymentResultV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetPayment(request), None)?,
+            ResultV1::Payment,
+            "PAYMENT"
+        )
+    }
+
+    fn get_transaction_payments(
+        &self,
+        request: TransactionRequestV1,
+    ) -> Result<TransactionPaymentsV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetTransactionPayments(request), None)?,
+            ResultV1::TransactionPayments,
+            "TRANSACTION_PAYMENTS"
         )
     }
 

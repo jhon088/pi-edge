@@ -9,6 +9,7 @@ use edge_catalog::{
     SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
+use edge_payments::TenderType;
 use uuid::Uuid;
 
 /// Provision the local device identity (normally pushed by the server).
@@ -136,10 +137,32 @@ pub struct TotalizeTransactionCommand {
     pub request_id: Option<Uuid>,
 }
 
+/// Start a payment for the active sale.
+///
+/// Cash settles inside this command. A provider-backed tender records the
+/// payment and its first attempt durably, calls the provider, and records the
+/// result in a second transaction (ADR 020).
 #[derive(Debug, Clone)]
-pub struct CommitCashPaymentCommand {
+pub struct StartPaymentCommand {
     pub request_id: Option<Uuid>,
+    pub tender_type: TenderType,
+    /// What this tender is asked to cover, in minor units. For cash, what the
+    /// customer handed over.
     pub amount_minor: i64,
+}
+
+/// Ask the provider what happened to an unresolved attempt. Never charges.
+#[derive(Debug, Clone)]
+pub struct ReconcilePaymentCommand {
+    pub request_id: Option<Uuid>,
+    pub payment_id: PaymentId,
+}
+
+/// Undo a payment that must not remain applied (ADR 019).
+#[derive(Debug, Clone)]
+pub struct ReversePaymentCommand {
+    pub request_id: Option<Uuid>,
+    pub payment_id: PaymentId,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -19,7 +19,8 @@ The UI is a renderer and an intent emitter. Specifically:
   due and change due are computed by the core and shipped in
   `edge-protocol` DTOs as minor units **plus** a core-rendered string
   (`MoneyV1.formatted`), which clients display verbatim.
-* The UI never decides payment state. It calls `CommitCashPayment` and reads the
+* The UI never decides payment state. It calls the payment operation (then
+  `CommitCashPayment`; `StartPayment` since milestone 6) and reads the
   resulting status; `COMMITTED` vs `PAYMENT_IN_PROGRESS` is the core's verdict.
 * All durable transactional state belongs to the core. UI-local state is limited
   to view concerns (focus, scroll, which modal is open).

@@ -4,11 +4,12 @@ use std::fmt::Debug;
 
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
-    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCashPaymentRequestV1,
-    CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
-    JournalEventV1, OpenRegisterSessionRequestV1, PendingOutboxV1, ProductLookupV1,
-    ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1, RemoveItemRequestV1,
-    RetailTransactionV1,
+    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
+    CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1, JournalEventV1,
+    OpenRegisterSessionRequestV1, PaymentRequestV1, PaymentResultV1, PendingOutboxV1,
+    ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1,
+    RemoveItemRequestV1, RetailTransactionV1, StartPaymentRequestV1, TransactionPaymentsV1,
+    TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -78,11 +79,30 @@ pub trait EdgeClient: Debug + Send + Sync {
         request_id: Option<Uuid>,
     ) -> Result<RetailTransactionV1, ClientError>;
     fn totalize(&self, request_id: Option<Uuid>) -> Result<RetailTransactionV1, ClientError>;
-    fn commit_cash_payment(
+    /// Start a payment. Cash settles immediately; a card goes through its
+    /// provider and may come back unresolved.
+    fn start_payment(
         &self,
-        request: CommitCashPaymentRequestV1,
+        request: StartPaymentRequestV1,
         request_id: Option<Uuid>,
-    ) -> Result<RetailTransactionV1, ClientError>;
+    ) -> Result<PaymentResultV1, ClientError>;
+    /// Ask the provider what happened to an unresolved payment. Never charges.
+    fn reconcile_payment(
+        &self,
+        request: PaymentRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<PaymentResultV1, ClientError>;
+    /// Undo a payment that must not remain applied.
+    fn reverse_payment(
+        &self,
+        request: PaymentRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<PaymentResultV1, ClientError>;
+    fn get_payment(&self, request: PaymentRequestV1) -> Result<PaymentResultV1, ClientError>;
+    fn get_transaction_payments(
+        &self,
+        request: TransactionRequestV1,
+    ) -> Result<TransactionPaymentsV1, ClientError>;
     fn finalize_transaction(
         &self,
         request_id: Option<Uuid>,

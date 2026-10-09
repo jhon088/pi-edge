@@ -13,6 +13,7 @@ import {
   fetchConnection,
   fetchCoreInfo,
   fetchEdgeState,
+  fetchTransactionPayments,
   lookupBarcode,
   onStateChanged,
 } from "./api";
@@ -23,6 +24,7 @@ import type {
   CoreInfo,
   EdgeState,
   ProductLookup,
+  TransactionPayments,
 } from "./types";
 
 /** Fallback refresh while the core is unreachable, so the UI notices its return. */
@@ -33,6 +35,8 @@ interface Snapshot {
   info: CoreInfo | null;
   state: EdgeState | null;
   catalog: CatalogStatus | null;
+  /** Payments of the active sale, or null when there is no sale to ask about. */
+  payments: TransactionPayments | null;
   error: BridgeError | null;
 }
 
@@ -56,14 +60,23 @@ export default function App() {
           fetchEdgeState(),
           fetchCatalogStatus(),
         ]);
-        setSnapshot({ connection, info, state, catalog, error: null });
+        // Payments belong to a sale, so they are only asked for when one is
+        // open. The core owns the answer; nothing is derived here.
+        const active = state.active_transaction;
+        const payments = active
+          ? await fetchTransactionPayments(active.transaction_id)
+          : null;
+        setSnapshot({ connection, info, state, catalog, payments, error: null });
       } catch (failure) {
-        // The core is unreachable or refused: report it, invent nothing.
+        // The core is unreachable or refused: report it, invent nothing. In
+        // particular no stale financial state is kept — a payment total that
+        // might be wrong is worse than no total at all.
         setSnapshot({
           connection: await fetchConnection(),
           info: null,
           state: null,
           catalog: null,
+          payments: null,
           error: describeError(failure),
         });
       }
@@ -105,7 +118,7 @@ export default function App() {
     );
   }
 
-  const { connection, info, state, catalog, error } = snapshot;
+  const { connection, info, state, catalog, payments, error } = snapshot;
 
   return (
     <main className="app">
@@ -253,6 +266,19 @@ export default function App() {
           <ActiveTransaction transaction={state.active_transaction} />
         ) : (
           <p className="muted">No active transaction.</p>
+        )}
+      </Card>
+
+      <Card title="Payments">
+        {!connection.connected ? (
+          <p className="muted">
+            Core disconnected — no payment state is shown. Nothing here is
+            cached, so this screen can never display a stale balance.
+          </p>
+        ) : state?.active_transaction && payments ? (
+          <Payments payments={payments} />
+        ) : (
+          <p className="muted">No active transaction to collect.</p>
         )}
       </Card>
 
@@ -475,6 +501,117 @@ function ActiveTransaction({
       </div>
       <p className="muted">
         Every amount above was computed by the core and is displayed verbatim.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Read-only payment view.
+ *
+ * Every number comes from the core's settlement: this component chooses no
+ * amount, decides no status and offers no action. Paying, reconciling and
+ * reversing are exercised through the CLI in this milestone.
+ */
+function Payments({ payments }: { payments: TransactionPayments }) {
+  const { settlement } = payments;
+  return (
+    <>
+      <div className="row totals">
+        <Field label="Amount due" value={settlement.amount_due.formatted} />
+        <Field label="Applied" value={settlement.committed_total.formatted} />
+        <Field label="Remaining" value={settlement.remaining_balance.formatted} />
+        <Field label="Tendered" value={settlement.tendered_total.formatted} />
+        <Field label="Change due" value={settlement.change_due.formatted} />
+      </div>
+      <div className="row">
+        <Field label="Basket" value={settlement.basket_locked ? "LOCKED" : "EDITABLE"} />
+        <Field
+          label="Financial state"
+          value={
+            settlement.requires_reconciliation
+              ? "NEEDS RECONCILIATION"
+              : settlement.requires_resolution
+                ? "UNRESOLVED"
+                : "RESOLVED"
+          }
+        />
+        <Field label="Can finalize" value={settlement.can_finalize ? "YES" : "NO"} />
+      </div>
+
+      {payments.payments.length === 0 ? (
+        <p className="muted">Nothing tendered yet.</p>
+      ) : (
+        <table className="lines">
+          <thead>
+            <tr>
+              <th>Tender</th>
+              <th>Provider</th>
+              <th>Status</th>
+              <th className="num">Requested</th>
+              <th className="num">Applied</th>
+              <th className="num">Change</th>
+              <th>Created</th>
+              <th>Id</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payments.payments.map((payment) => (
+              <tr key={payment.payment_id}>
+                <td>{payment.tender_type}</td>
+                <td className="mono">{payment.provider_kind ?? "—"}</td>
+                <td>{payment.status}</td>
+                <td className="num">{payment.requested_amount.formatted}</td>
+                <td className="num">{payment.committed_amount.formatted}</td>
+                <td className="num">{payment.change_due.formatted}</td>
+                <td className="muted">{payment.created_at}</td>
+                <td className="mono">{payment.payment_id}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {payments.payments.some((payment) => payment.attempts.length > 0) ? (
+        <table className="lines">
+          <thead>
+            <tr>
+              <th className="num">#</th>
+              <th>Attempt status</th>
+              <th className="num">Requested</th>
+              <th className="num">Authorized</th>
+              <th>Provider ref</th>
+              <th>Failure</th>
+              <th>Open</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payments.payments.flatMap((payment) =>
+              payment.attempts.map((attempt) => (
+                <tr key={attempt.attempt_id}>
+                  <td className="num">{attempt.attempt_number}</td>
+                  <td>{attempt.status}</td>
+                  <td className="num">{attempt.requested_amount.formatted}</td>
+                  <td className="num">
+                    {attempt.authorized_amount?.formatted ?? "—"}
+                  </td>
+                  {/* The provider's own reference. No card data ever reaches
+                      the core, so there is nothing here to redact. */}
+                  <td className="mono">{attempt.provider_reference ?? "—"}</td>
+                  <td className="mono">{attempt.failure_code ?? "—"}</td>
+                  <td>{attempt.unresolved ? "YES" : "no"}</td>
+                  <td className="muted">{attempt.updated_at}</td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      ) : null}
+
+      <p className="muted">
+        Every amount above was computed by the core and is displayed verbatim.
+        This window issues no payment commands.
       </p>
     </>
   );

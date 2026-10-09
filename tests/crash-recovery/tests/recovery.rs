@@ -19,11 +19,7 @@ fn recovers_an_in_flight_sale_after_the_process_dies() {
         core.add_item(demo_item()).unwrap();
         core.totalize_transaction(TotalizeTransactionCommand::default())
             .unwrap();
-        core.commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 5_000,
-        })
-        .unwrap();
+        pay_cash(&core, 5_000);
         let state = core.get_edge_state().unwrap();
         let journal = journal_types(&core);
         // The application object (and its connection) is dropped here.
@@ -55,11 +51,7 @@ fn recovers_an_in_flight_sale_after_the_process_dies() {
     // ... and the recovered sale can still be completed.
     let transaction = recovered.active_transaction.unwrap();
     assert_eq!(transaction.balance_due().unwrap().minor(), 6_600);
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 6_600,
-    })
-    .unwrap();
+    pay_cash(&core, 6_600);
     let finalized = core
         .finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
@@ -82,11 +74,7 @@ fn a_finalized_sale_stays_finalized_across_restarts() {
         core.add_item(demo_item()).unwrap();
         core.totalize_transaction(TotalizeTransactionCommand::default())
             .unwrap();
-        core.commit_cash_payment(CommitCashPaymentCommand {
-            request_id: None,
-            amount_minor: 11_600,
-        })
-        .unwrap();
+        pay_cash(&core, 11_600);
         core.finalize_transaction(FinalizeTransactionCommand::default())
             .unwrap()
             .id()

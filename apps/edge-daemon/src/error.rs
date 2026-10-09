@@ -18,6 +18,8 @@ pub enum DaemonError {
     App(#[from] AppError),
     #[error("io failure: {0}")]
     Io(#[from] std::io::Error),
+    #[error("invalid configuration: {0}")]
+    Configuration(String),
 }
 
 impl DaemonError {

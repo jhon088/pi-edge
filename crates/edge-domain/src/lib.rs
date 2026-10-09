@@ -37,7 +37,7 @@ pub mod prelude {
         Currency, Money, MoneyError, Percentage, PriceMode, Quantity, TaxRate, TaxedAmount,
     };
     pub use crate::outbox::{OutboxEvent, OutboxEventType, OutboxStatus};
-    pub use crate::payment::{Payment, PaymentStatus, TenderType};
+    pub use crate::payment::PaymentSummary;
     pub use crate::session::{
         NewRegisterSession, RegisterSession, RegisterSessionState, RegisterSessionStatus,
     };

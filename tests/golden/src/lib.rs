@@ -19,6 +19,7 @@ use edge_catalog::promotions::{
 use edge_catalog::scope::CatalogScope;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
+use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_storage::SqliteEdgeStore;
 use serde_json::Value;
 
@@ -390,4 +391,61 @@ pub fn assert_tax_identity(transaction: &RetailTransaction) {
         .map(|applied| applied.amount.minor())
         .sum();
     assert_eq!(reported, discount, "adjustments must sum to the discounts");
+}
+
+/// Cash tender through the payment engine, answering with the sale.
+pub fn pay_cash(core: &GoldenCore, amount_minor: i64) -> RetailTransaction {
+    core.start_payment(StartPaymentCommand {
+        request_id: None,
+        tender_type: TenderType::Cash,
+        amount_minor,
+    })
+    .unwrap()
+    .transaction
+}
+
+pub type ScriptedGoldenCore =
+    EdgeApplication<SqliteEdgeStore, FixedClock, SequentialIdFactory, SimulatorPaymentProvider>;
+
+/// Golden core whose card provider follows a script.
+pub fn scripted_golden_core(script: SimulatorScript) -> ScriptedGoldenCore {
+    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(FROZEN_AT)
+        .unwrap()
+        .with_timezone(&Utc);
+    EdgeApplication::with_payment_provider(
+        SqliteEdgeStore::open_in_memory().unwrap(),
+        FixedClock::frozen(instant),
+        SequentialIdFactory::new(),
+        SimulatorPaymentProvider::new(script),
+    )
+}
+
+/// Import and activate a catalog on a scripted core, then open the register.
+pub fn open_scripted_register(core: &ScriptedGoldenCore, catalog: &CatalogFixture) {
+    core.init_device(InitDeviceCommand {
+        tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
+        store_id: StoreId::new("STORE-DEMO").unwrap(),
+        currency: Currency::Mxn,
+    })
+    .unwrap();
+    catalog.activate(core).unwrap();
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor: 100_000,
+    })
+    .unwrap();
+}
+
+/// Scan on a scripted core.
+pub fn scripted_scan(core: &ScriptedGoldenCore, barcode: &str, quantity_thousandths: i64) {
+    core.add_item(AddItemCommand {
+        request_id: None,
+        selector: ProductSelector::Barcode(Barcode::new(barcode).unwrap()),
+        quantity: Quantity::from_thousandths(quantity_thousandths).unwrap(),
+    })
+    .unwrap();
 }

@@ -32,7 +32,8 @@ the active sale, the journal and the outbox live in the daemon.
 | --- | --- |
 | `crates/edge-domain` | pure rules, value objects, invariants, state machines. No SQLite, HTTP, Tauri, Android, filesystem or clock |
 | `crates/edge-application` | use cases, queries, ports. Knows the domain and the port traits, never an adapter |
-| `crates/edge-catalog` | local projection of the product master: versioned snapshots, lookup, price books and price/tax resolution. Pure Rust |
+| `crates/edge-catalog` | local projection of the product master: versioned snapshots, lookup, price books, price/tax resolution and the promotion engine. Pure Rust |
+| `crates/edge-payments` | tenders, the payment and attempt state machines, settlement arithmetic, the provider port and a deterministic simulator. Pure Rust: no SQLite, no HTTP, no provider SDK |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
 | `crates/edge-ipc` | the only crate that knows what a socket or a pipe is: `EdgeTransport`, JSON Lines framing, local credentials |
@@ -42,7 +43,48 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 5 (promotions engine V1)
+## Status — milestone 6 (payment engine V1)
+
+Done: payments are a bounded context with a real lifecycle. A **`Payment`** is
+one tender's intention to cover part of a sale; a **`PaymentAttempt`** is one
+concrete interaction with a provider, and attempts are append-only, so a
+retry, a timeout or a reconciliation never erases history (ADR 016).
+
+```text
+Transaction ──amount due──> Payment Engine ──> PaymentProviderPort
+                              CASH   (no provider, no attempts)
+                              CARD   (provider-backed, 1..n attempts)
+```
+
+* **`CASH` and `CARD`**, mixed freely. Cash may overpay and produce change; a
+  card may not exceed the remaining balance.
+* **`UNKNOWN` is a first-class outcome.** A charge whose result was lost is
+  never assumed failed and never retried automatically: it blocks the sale and
+  the basket until an explicit reconciliation *queries* the provider
+  (ADR 018).
+* **Durable before the provider call.** The payment and its attempt are
+  committed, with a correlation id, before anything is sent — so a process
+  death can never leave a charged customer with no local record (ADR 020).
+* **Reversal, not refund.** An authorization that must not remain applied is
+  reversed, which un-applies the money and returns the sale to payable
+  (ADR 019).
+* **The basket freezes** the moment a payment becomes financially active:
+  `AddItem`, `RemoveItem` and `ChangeQuantity` answer
+  `BASKET_LOCKED_BY_PAYMENT`.
+
+```bash
+edge-cli start-payment --tender CASH --amount 30000
+edge-cli start-payment --tender CARD --amount 70000
+edge-cli payments
+edge-cli reconcile-payment --payment <id>   # queries; never charges
+edge-cli reverse-payment   --payment <id>
+```
+
+There is no real provider yet: `CARD` settles through a deterministic
+`SimulatorPaymentProvider`. Mercado Pago will be a *provider of `CARD`*, never
+a tender of its own.
+
+## Previously — milestone 5 (promotions engine V1)
 
 Done: a deterministic, offline, snapshot-bound **basket** promotion engine.
 Promotions arrive upstream in the catalog snapshot — PI.Edge never creates one —
@@ -78,8 +120,9 @@ Tauri screen.
 
 Not built yet, deliberately: HTTP catalog sync, ERP integration, coupons,
 loyalty, customer-specific pricing, product groups and categories, quantity
-breaks, inventory, refunds, Mercado Pago, CFDI, iMin adapters, Android service,
-updater, telemetry, production UI.
+breaks, inventory, commercial refunds, real Mercado Pago, physical terminals,
+CFDI, iMin adapters, Android service, updater, telemetry, production checkout
+UI, PCI cardholder data handling.
 
 ## Requirements
 
@@ -110,7 +153,9 @@ cargo run -p edge-cli -- add-item --barcode 7501000000059 --qty-thousandths 350
 cargo run -p edge-cli -- change-qty --line 1 --qty 3
 cargo run -p edge-cli -- remove-item --line 3
 cargo run -p edge-cli -- total
-cargo run -p edge-cli -- pay-cash --amount 11600
+cargo run -p edge-cli -- start-payment --tender CASH --amount 30000
+cargo run -p edge-cli -- start-payment --tender CARD --amount 70000
+cargo run -p edge-cli -- payments
 cargo run -p edge-cli -- finalize-sale
 cargo run -p edge-cli -- get-state
 cargo run -p edge-cli -- close-session
@@ -120,8 +165,9 @@ cargo run -p edge-cli -- close-business-day
 cd apps/tauri-pos && pnpm install && PI_EDGE_DB=../../data/pi-edge.db pnpm tauri dev
 ```
 
-Extras: `remove-item --line N`, `change-qty --line N --qty N`, `core-info`,
-`active-sale`, `journal --limit N`, `outbox --limit N`,
+Extras: `remove-item --line N`, `change-qty --line N --qty N`,
+`reconcile-payment --payment <id>`, `reverse-payment --payment <id>`,
+`core-info`, `active-sale`, `journal --limit N`, `outbox --limit N`,
 `watch` (live core events), `catalog-status`, `import-status --snapshot <id>`,
 `activate-catalog`, `abort-catalog`, `lookup --barcode|--sku|--product`,
 `--format json`, `--db <path>` (or `PI_EDGE_DB`), `--request-id <uuid>` for
@@ -226,6 +272,53 @@ All amounts are **minor units** (`10000` = 100.00 MXN) and tax rates are
 Each client command is a separate process, and the daemon is yet another, so
 the walkthrough itself proves nothing important lives in a client's memory.
 
+## Payments
+
+A payment is not a field on a sale; it is its own aggregate with its own state
+machine (ADR 017):
+
+```text
+Payment   CREATED ──> IN_PROGRESS ──> COMMITTED ──> REVERSED
+                          └──────────> FAILED
+
+Attempt   CREATED ──> PROCESSING ──┬──> AUTHORIZED ──> REVERSAL_PENDING ──> REVERSED
+                                   ├──> FAILED
+                                   └──> UNKNOWN ──┬──> AUTHORIZED
+                                                  └──> FAILED
+```
+
+Three amounts are kept apart on purpose:
+
+| Amount | Meaning |
+| --- | --- |
+| `requested` | what this tender was asked for — for cash, what the customer handed over |
+| `authorized` | what the provider approved (card only) |
+| `committed` | what is applied against the sale's debt |
+
+So a 200.00 note against a 116.00 sale gives `requested 200.00`,
+`committed 116.00`, `change 84.00` — and the sale reports collecting 116.00,
+not 200.00.
+
+**Unresolved means blocked.** While any attempt is `PROCESSING`, `UNKNOWN` or
+`REVERSAL_PENDING`:
+
+* the sale cannot finalize,
+* no equivalent charge may be started,
+* the basket stays frozen,
+* the only way forward is `reconcile-payment`, which queries and never charges.
+
+`PROCESSING` counts as unresolved, which is why a process that dies around a
+provider call needs no startup repair: the stored state already says "we asked
+and we do not know".
+
+**Nothing here stores cardholder data.** The provider port carries amounts,
+correlation ids and stable status codes. There is no column, field or event for
+a PAN, a CVV, track data or a terminal payload.
+
+For development, `PI_EDGE_PAYMENT_SIM` scripts the simulator — for example
+`default:approve,amount:70000=unknown,query:approve`. The daemon refuses to
+start on an unparseable script rather than falling back silently.
+
 ## Runtime layout
 
 Derived from the database path, so one database means one runtime:
@@ -270,10 +363,14 @@ arithmetic are denied outside tests.
 | `apps/edge-daemon/tests/promotions.rs` | the promotion surface over real IPC: adjustments on the transaction DTO, `remove-item`/`change-qty`, `AMBIGUOUS_PROMOTION`, promotions in the chunked import, count mismatch, a promotion naming a product from another chunk |
 | `tests/integration/tests/pricing.rs` | base price, store override, other store's book ignored, inactive book ignored, priority within a scope, future and expired prices, no price, ambiguous price, overlapping schedules, both price modes, price book in the journal, import-time validation |
 | `tests/integration/tests/snapshot_switching.rs` | an open sale keeps its prices across activations; the next sale uses the new catalog; exactly one `ACTIVE` |
-| `tests/golden` | deterministic protocol output for known sales, both price modes, rounding boundaries, and one case per promotion kind — percentage, fixed, buy-N-get-M, stacked with a basket threshold, exclusive, tax-inclusive (frozen clock, sequential ids). Regenerate with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests` |
+| `tests/golden` | deterministic protocol output for known sales, both price modes, rounding boundaries, one case per promotion kind, and one per payment shape — cash exact, cash with change, mixed tender, card unknown, card reconciled, card reversed, partial settlement (frozen clock, sequential ids, scripted provider). Regenerate with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests` |
 | `apps/edge-daemon/tests/catalog_import.rs` | chunked import over real IPC: many chunks, idempotent replay, chunk conflict, missing chunk, bad hash, malformed record, daemon killed mid-import and resumed, atomic activation, CLI importer end to end |
 | `apps/edge-daemon/tests/milestone_lifecycle.rs` | two clients over one real daemon; UI killed → core survives; core killed → clients degrade safely and reconnect; second runtime refused |
 | `apps/edge-daemon/tests/auth.rs` | handshake surface: good, wrong, missing and malformed credentials; per-connection authentication; the credential never reaches a log or an error |
+| `tests/integration/tests/payments.rs` | the payment engine on real SQLite: cash exact/partial/overpaid, card approved/declined/unknown, mixed tender, card cannot overpay, reconcile to authorized and to failed, reversal, unconfirmed reversal, idempotent replay of start/reconcile/reverse, basket freeze, journal exactly once, pricing and promotions untouched by paying |
+| `crates/edge-payments` unit tests | tender rules, both state machines, settlement arithmetic, cash/card split, unresolved propagation, deterministic simulator |
+| `tests/crash-recovery/tests/payment_recovery.rs` | `UNKNOWN`, `PROCESSING`, `AUTHORIZED`, committed cash, partial mixed tender and a pending reversal all rebuilt by a brand new application object; a restart never decides an outcome |
+| `apps/edge-daemon/tests/payments.rs` | the payment surface over real IPC, plus a daemon **killed between the provider call and the result persistence**: the attempt comes back unresolved, never failed, with no second charge |
 | `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on |
 
 ## Non-negotiable boundaries
@@ -283,7 +380,10 @@ arithmetic are denied outside tests.
 * The core does not depend on Tauri or Android. The Tauri app is excluded from
   the Cargo workspace so this cannot regress by accident.
 * A UI never opens SQLite, never computes official totals, never decides
-  payment state, and never issues a command while disconnected.
+  payment state, and never issues a command while disconnected. The diagnostic
+  window shows payments read-only and issues no payment command.
+* PI.Edge never receives cardholder data. No PAN, CVV, track data or terminal
+  payload is stored, logged or journalled.
 * PI.Edge never creates product master data or promotions, and no client may
   state a price, a tax rate, a discount or a product description.
 * All durable transactional state belongs to the core.

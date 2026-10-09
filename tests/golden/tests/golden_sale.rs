@@ -19,11 +19,7 @@ fn golden_single_line_cash_sale() {
     scan(&core, BARCODE_16, 1_000);
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 20_000,
-    })
-    .unwrap();
+    pay_cash(&core, 20_000);
     let finalized = core
         .finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
@@ -174,11 +170,7 @@ fn golden_edge_state_mid_sale() {
     scan(&core, BARCODE_16, 1_000);
     core.totalize_transaction(TotalizeTransactionCommand::default())
         .unwrap();
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 5_000,
-    })
-    .unwrap();
+    pay_cash(&core, 5_000);
 
     let state = core.get_edge_state().unwrap();
     let dto = EdgeStateV1::from_domain(&state).unwrap();

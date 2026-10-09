@@ -107,14 +107,87 @@ pub struct TotalsV1 {
     pub grand_total: MoneyV1,
 }
 
+/// One tender's intention to cover part of a sale, with its attempt history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentV1 {
     pub payment_id: String,
+    pub transaction_id: String,
+    /// `CASH` or `CARD`. The processor is `provider_kind`, not a tender.
     pub tender_type: String,
-    pub amount: MoneyV1,
+    /// Set exactly for tenders settled through a provider.
+    pub provider_kind: Option<String>,
+    /// What this tender was asked to cover. For cash, what the customer
+    /// handed over.
+    pub requested_amount: MoneyV1,
+    /// What the provider approved, when it has answered.
+    pub authorized_amount: Option<MoneyV1>,
+    /// What is applied against the sale's debt.
+    pub committed_amount: MoneyV1,
+    /// What comes back to the customer for this tender.
+    pub change_due: MoneyV1,
+    /// `CREATED`, `IN_PROGRESS`, `COMMITTED`, `FAILED` or `REVERSED`.
     pub status: String,
+    /// Empty for cash: there is no provider to interact with.
+    pub attempts: Vec<PaymentAttemptV1>,
     pub created_at: String,
-    pub committed_at: Option<String>,
+    pub updated_at: String,
+}
+
+/// One concrete interaction with a provider. Append-only history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaymentAttemptV1 {
+    pub attempt_id: String,
+    pub attempt_number: i64,
+    /// `CREATED`, `PROCESSING`, `AUTHORIZED`, `UNKNOWN`, `FAILED`,
+    /// `REVERSAL_PENDING` or `REVERSED`.
+    pub status: String,
+    pub requested_amount: MoneyV1,
+    pub authorized_amount: Option<MoneyV1>,
+    pub provider_kind: String,
+    /// Minted by the core before the provider was called; what a
+    /// reconciliation asks about.
+    pub correlation_id: String,
+    pub provider_reference: Option<String>,
+    /// Stable refusal reason. Never a raw provider payload.
+    pub failure_code: Option<String>,
+    /// The financial outcome is still open, so the sale cannot finalize.
+    pub unresolved: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What a sale's payments mean for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementV1 {
+    pub amount_due: MoneyV1,
+    pub committed_total: MoneyV1,
+    pub remaining_balance: MoneyV1,
+    /// What customers handed over, cash overpayment included.
+    pub tendered_total: MoneyV1,
+    pub change_due: MoneyV1,
+    /// The basket cannot change while this is true.
+    pub basket_locked: bool,
+    /// A payment has an open outcome, so the sale cannot finalize.
+    pub requires_resolution: bool,
+    /// The way out is an explicit provider query.
+    pub requires_reconciliation: bool,
+    pub can_finalize: bool,
+}
+
+/// What every payment command answers with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaymentResultV1 {
+    pub payment: PaymentV1,
+    pub transaction: RetailTransactionV1,
+    pub settlement: SettlementV1,
+}
+
+/// Every payment of one sale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionPaymentsV1 {
+    pub transaction_id: String,
+    pub payments: Vec<PaymentV1>,
+    pub settlement: SettlementV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,13 +212,21 @@ pub struct RetailTransactionV1 {
     /// that produced it is gone.
     pub applied_promotions: Vec<AppliedPromotionV1>,
     pub totals: TotalsV1,
-    pub payments: Vec<PaymentV1>,
-    /// Derived by the core: committed payments.
+    /// Derived by the core: what the payments applied against the debt. The
+    /// payments themselves are a separate query — a sale does not own them
+    /// (ADR 016).
     pub paid_total: MoneyV1,
+    /// Derived by the core: what customers handed over, overpayment included.
+    pub tendered_total: MoneyV1,
     /// Derived by the core: what is still owed.
     pub balance_due: MoneyV1,
     /// Derived by the core: cash owed back to the customer.
     pub change_due: MoneyV1,
+    /// Derived by the core: the payment lifecycle forbids basket changes.
+    pub basket_locked: bool,
+    /// Derived by the core: a payment outcome is still open, so the sale
+    /// cannot finalize until it is reconciled.
+    pub requires_payment_resolution: bool,
     pub created_at: String,
     pub updated_at: String,
     pub finalized_at: Option<String>,
@@ -577,9 +658,26 @@ pub struct CatalogSnapshotRequestV1 {
     pub snapshot_id: String,
 }
 
+/// Start a payment. The core decides what the tender may cover.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommitCashPaymentRequestV1 {
+pub struct StartPaymentRequestV1 {
+    /// `CASH` or `CARD`.
+    pub tender_type: String,
+    /// What this tender is asked to cover, in minor units. For cash, what the
+    /// customer handed over.
     pub amount_minor: i64,
+}
+
+/// Address one existing payment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaymentRequestV1 {
+    pub payment_id: String,
+}
+
+/// Address one sale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionRequestV1 {
+    pub transaction_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

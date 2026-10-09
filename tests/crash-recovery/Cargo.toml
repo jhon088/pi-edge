@@ -11,6 +11,7 @@ license.workspace = true
 edge-application = { workspace = true, features = ["testing"] }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
+edge-payments = { workspace = true }
 edge-storage = { workspace = true, features = ["fault-injection"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }

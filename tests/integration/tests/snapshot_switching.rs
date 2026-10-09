@@ -61,11 +61,7 @@ fn an_open_sale_keeps_the_prices_of_the_snapshot_it_captured() {
     assert_eq!(totalized.state().totals.net_total.minor(), 20_000);
     assert_eq!(totalized.state().totals.grand_total.minor(), 23_200);
 
-    core.commit_cash_payment(CommitCashPaymentCommand {
-        request_id: None,
-        amount_minor: 23_200,
-    })
-    .unwrap();
+    pay_cash(&core, 23_200);
     let finalized = core
         .finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();

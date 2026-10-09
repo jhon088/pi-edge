@@ -14,6 +14,7 @@ use edge_catalog::basket::{
 };
 use edge_catalog::{resolve_price, resolve_sale_line, CatalogSnapshot, PricingContext};
 use edge_domain::prelude::*;
+use edge_payments::{PaymentProviderPort, SimulatorPaymentProvider};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
@@ -26,21 +27,51 @@ use crate::queries::{EdgeState, PendingOutbox};
 use crate::CORE_VERSION;
 
 /// Headless POS core.
+///
+/// `P` is the payment provider the composition root chose. It is a type
+/// parameter rather than a trait object so the core stays monomorphic and a
+/// test can script a provider without any dynamic dispatch (ADR 020).
 #[derive(Debug)]
-pub struct EdgeApplication<S, C, I> {
+pub struct EdgeApplication<S, C, I, P = SimulatorPaymentProvider> {
     store: S,
     pub(crate) clock: C,
     pub(crate) ids: I,
+    pub(crate) payments: P,
 }
 
-impl<S, C, I> EdgeApplication<S, C, I>
+impl<S, C, I> EdgeApplication<S, C, I, SimulatorPaymentProvider>
 where
     S: EdgeStore,
     C: Clock,
     I: IdFactory,
 {
+    /// Core with an approving payment simulator. There is no real provider
+    /// yet, so this is what every composition root uses today; a scripted one
+    /// goes through [`EdgeApplication::with_payment_provider`].
     pub fn new(store: S, clock: C, ids: I) -> Self {
-        Self { store, clock, ids }
+        Self::with_payment_provider(store, clock, ids, SimulatorPaymentProvider::approving())
+    }
+}
+
+impl<S, C, I, P> EdgeApplication<S, C, I, P>
+where
+    S: EdgeStore,
+    C: Clock,
+    I: IdFactory,
+    P: PaymentProviderPort,
+{
+    pub fn with_payment_provider(store: S, clock: C, ids: I, payments: P) -> Self {
+        Self {
+            store,
+            clock,
+            ids,
+            payments,
+        }
+    }
+
+    /// The provider this core settles provider-backed tenders through.
+    pub fn payment_provider(&self) -> &P {
+        &self.payments
     }
 
     /// Access to the store, for adapters that need the same transaction
@@ -586,61 +617,6 @@ where
         Ok(transaction)
     }
 
-    pub fn commit_cash_payment(
-        &self,
-        cmd: CommitCashPaymentCommand,
-    ) -> Result<RetailTransaction, AppError> {
-        let now = self.clock.now();
-        let payment_id = PaymentId::from_uuid(self.ids.new_uuid());
-        let event_id = self.new_event_id();
-
-        let transaction = self.store.transact(move |uow| {
-            idempotent(uow, cmd.request_id, "CommitCashPayment", now, |uow| {
-                let device = require_device(uow)?;
-                let day = require_open_business_day(uow, &device.store_id)?;
-                let session = require_single_open_session(uow, day.id())?;
-                let mut transaction = require_active_transaction(uow, session.id())?;
-                let payment = transaction.commit_cash_payment(
-                    payment_id,
-                    Money::from_minor(cmd.amount_minor, device.currency),
-                    now,
-                )?;
-                uow.update_transaction(&transaction, now)?;
-                let ctx = EventContext {
-                    device: &device,
-                    register_id: Some(&transaction.state().register_id),
-                    business_day_id: Some(day.id()),
-                    session_id: Some(session.id()),
-                    transaction_id: Some(transaction.id()),
-                    operator_id: Some(&transaction.state().operator_id),
-                };
-                uow.append_journal(&journal_event(
-                    event_id,
-                    JournalEventType::CashPaymentCommitted,
-                    transaction.id().to_string(),
-                    &ctx,
-                    now,
-                    json!({
-                        "payment_id": payment.payment_id.to_string(),
-                        "tender_type": payment.tender_type.as_str(),
-                        "amount_minor": payment.amount.minor(),
-                        "paid_total_minor": transaction.paid_total()?.minor(),
-                        "balance_due_minor": transaction.balance_due()?.minor(),
-                        "change_due_minor": transaction.change_due()?.minor(),
-                        "transaction_status": transaction.status().as_str(),
-                    }),
-                ))?;
-                Ok(transaction)
-            })
-        })?;
-        tracing::info!(
-            transaction_id = %transaction.id(),
-            status = transaction.status().as_str(),
-            "cash payment committed"
-        );
-        Ok(transaction)
-    }
-
     /// Finalize the sale. The transaction, its journal event and its outbox
     /// event are written in the same SQLite transaction; a crash before commit
     /// leaves none of them behind.
@@ -973,7 +949,7 @@ pub(crate) fn require_open_business_day(
         .ok_or(AppError::NoOpenBusinessDay)
 }
 
-fn require_business_day_open(day: &BusinessDay) -> Result<(), AppError> {
+pub(crate) fn require_business_day_open(day: &BusinessDay) -> Result<(), AppError> {
     if day.is_open() {
         Ok(())
     } else {
@@ -983,7 +959,7 @@ fn require_business_day_open(day: &BusinessDay) -> Result<(), AppError> {
     }
 }
 
-fn require_single_open_session(
+pub(crate) fn require_single_open_session(
     uow: &mut dyn UnitOfWork,
     business_day_id: BusinessDayId,
 ) -> Result<RegisterSession, AppError> {
@@ -995,7 +971,7 @@ fn require_single_open_session(
     }
 }
 
-fn require_session_open(session: &RegisterSession) -> Result<(), AppError> {
+pub(crate) fn require_session_open(session: &RegisterSession) -> Result<(), AppError> {
     if session.is_open() {
         Ok(())
     } else {
@@ -1045,7 +1021,7 @@ pub(crate) fn require_sale_pricing(
     Ok((snapshot, captured))
 }
 
-fn require_active_transaction(
+pub(crate) fn require_active_transaction(
     uow: &mut dyn UnitOfWork,
     session_id: SessionId,
 ) -> Result<RetailTransaction, AppError> {

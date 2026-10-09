@@ -1,0 +1,31 @@
+{
+  "amount_due": {
+    "minor": 11600,
+    "currency": "MXN",
+    "formatted": "116.00"
+  },
+  "committed_total": {
+    "minor": 5000,
+    "currency": "MXN",
+    "formatted": "50.00"
+  },
+  "remaining_balance": {
+    "minor": 6600,
+    "currency": "MXN",
+    "formatted": "66.00"
+  },
+  "tendered_total": {
+    "minor": 5000,
+    "currency": "MXN",
+    "formatted": "50.00"
+  },
+  "change_due": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "basket_locked": true,
+  "requires_resolution": false,
+  "requires_reconciliation": false,
+  "can_finalize": false
+}
