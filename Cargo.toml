@@ -15,6 +15,7 @@ license = "UNLICENSED"
 
 [workspace.dependencies]
 # Internal crates (strict dependency direction, see docs/ADR/001-headless-core.md)
+edge-cash = { path = "crates/edge-cash" }
 edge-catalog = { path = "crates/edge-catalog" }
 edge-domain = { path = "crates/edge-domain" }
 edge-application = { path = "crates/edge-application" }
@@ -22,7 +23,6 @@ edge-storage = { path = "crates/edge-storage" }
 edge-protocol = { path = "crates/edge-protocol" }
 edge-ipc = { path = "crates/edge-ipc" }
 edge-client = { path = "crates/edge-client" }
-edge-hardware-api = { path = "crates/edge-hardware-api" }
 edge-payments = { path = "crates/edge-payments" }
 
 # External

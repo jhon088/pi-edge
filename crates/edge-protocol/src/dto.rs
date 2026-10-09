@@ -658,6 +658,147 @@ pub struct CatalogSnapshotRequestV1 {
     pub snapshot_id: String,
 }
 
+// ------------------------------------------------------------ cash management
+
+/// One drawer movement. Append-only: there is no update DTO (ADR 021).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashMovementV1 {
+    pub movement_id: String,
+    /// `OPENING_FLOAT`, `CASH_SALE`, `CASH_IN`, `CASH_OUT` or `SAFE_DROP`.
+    pub movement_type: String,
+    /// `IN` or `OUT`. Explicit, never the sign of the amount.
+    pub direction: String,
+    /// What the drawer gained or lost. Never negative.
+    pub amount: MoneyV1,
+    /// `CASH_SALE` only: what the customer handed over.
+    pub tendered: Option<MoneyV1>,
+    /// `CASH_SALE` only: what went back.
+    pub change: Option<MoneyV1>,
+    /// The payment or safe drop that caused it.
+    pub source_ref: Option<String>,
+    pub reason_code: Option<String>,
+    pub approval_id: Option<String>,
+    pub operator_id: String,
+    pub created_at: String,
+}
+
+/// What a drawer should contain, and the figures that explain it.
+///
+/// An operational read. A cashier's pre-close path receives
+/// [`SessionCloseRequirementsV1`] instead, which cannot carry an amount at all
+/// (ADR 022).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashPositionV1 {
+    pub session_id: String,
+    pub register_id: String,
+    pub operator_id: String,
+    pub session_status: String,
+    pub opening_float: MoneyV1,
+    /// Net cash from committed cash sales: what stayed in the drawer.
+    pub cash_sales: MoneyV1,
+    pub cash_in: MoneyV1,
+    pub cash_out: MoneyV1,
+    /// Approved drops only. A pending drop has moved nothing.
+    pub safe_drops: MoneyV1,
+    /// Derived from the movements, never stored.
+    pub expected_cash: MoneyV1,
+    /// Audit only: what customers handed over in cash.
+    pub tendered_total: MoneyV1,
+    /// Audit only: what went back as change.
+    pub change_total: MoneyV1,
+    pub movements: Vec<CashMovementV1>,
+    pub pending_safe_drops: Vec<SafeDropV1>,
+}
+
+/// A request to move money to the safe, and its decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeDropV1 {
+    pub safe_drop_id: String,
+    pub approval_id: String,
+    pub amount: MoneyV1,
+    pub reason_code: String,
+    /// `PENDING_APPROVAL`, `APPROVED` or `REJECTED`. A pending drop has not
+    /// reduced expected cash.
+    pub status: String,
+    pub requested_by: String,
+    pub requested_at: String,
+    pub approved_by: Option<String>,
+    pub approved_at: Option<String>,
+}
+
+/// What a session still needs before it can close.
+///
+/// **This type must never gain a field that reveals expected cash** — not the
+/// figure, not a movement list, not a running total. A contract test asserts
+/// that its rendered JSON contains neither the words nor the amount (ADR 022).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCloseRequirementsV1 {
+    pub session_id: String,
+    pub currency: String,
+    /// A count of movements. Never an amount.
+    pub movement_count: i64,
+    /// Everything standing in the way, together.
+    pub blockers: Vec<String>,
+    pub requires_declaration: bool,
+}
+
+/// What a close produced, once the declaration is durable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCloseResultV1 {
+    pub session_id: String,
+    /// `DECLARED` or `FORCED`.
+    pub closure_kind: String,
+    /// Absent for a forced close: no count was taken.
+    pub declared_cash: Option<MoneyV1>,
+    /// The ledger figure used at this close, materialised for audit.
+    pub expected_at_close: MoneyV1,
+    /// `declared − expected`. Absent exactly when the count is.
+    pub variance: Option<MoneyV1>,
+    /// `BALANCED`, `SHORTAGE`, `OVERAGE` or `UNDECLARED`, so an unknown
+    /// variance never renders as zero.
+    pub variance_label: String,
+}
+
+/// Record a manual drawer movement. A blank reason is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashMovementRequestV1 {
+    pub amount_minor: i64,
+    pub reason_code: String,
+}
+
+/// Decide a pending safe drop.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApproveSafeDropRequestV1 {
+    pub safe_drop_id: String,
+    /// The approving identity. Must not be the requester.
+    pub approver: String,
+    #[serde(default = "default_true")]
+    pub approve: bool,
+}
+
+/// Declare the counted cash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclareClosingCashRequestV1 {
+    pub counted_minor: i64,
+}
+
+/// Continue a closed session under a new one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReopenSessionRequestV1 {
+    pub session_id: String,
+    pub reason: String,
+    /// Who takes over. May differ from the previous operator.
+    pub operator_id: String,
+}
+
+/// End the day over open sessions, under an explicit policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForceCloseBusinessDayRequestV1 {
+    pub reason: String,
+    /// Who or what ordered it.
+    pub actor: String,
+}
+
 /// Start a payment. The core decides what the tender may cover.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartPaymentRequestV1 {

@@ -112,7 +112,15 @@ pub enum OperationV1 {
     GetPayment(PaymentRequestV1),
     GetTransactionPayments(TransactionRequestV1),
     FinalizeTransaction,
-    CloseRegisterSession,
+    GetCashPosition,
+    CashIn(CashMovementRequestV1),
+    CashOut(CashMovementRequestV1),
+    RequestSafeDrop(CashMovementRequestV1),
+    ApproveSafeDrop(ApproveSafeDropRequestV1),
+    RequestSessionClose,
+    DeclareClosingCash(DeclareClosingCashRequestV1),
+    ReopenSession(ReopenSessionRequestV1),
+    ForceCloseBusinessDay(ForceCloseBusinessDayRequestV1),
     CloseBusinessDay,
 
     // catalog import: open, stream, close, put in force
@@ -150,7 +158,15 @@ impl OperationV1 {
             OperationV1::GetPayment(_) => "GET_PAYMENT",
             OperationV1::GetTransactionPayments(_) => "GET_TRANSACTION_PAYMENTS",
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
-            OperationV1::CloseRegisterSession => "CLOSE_REGISTER_SESSION",
+            OperationV1::GetCashPosition => "GET_CASH_POSITION",
+            OperationV1::CashIn(_) => "CASH_IN",
+            OperationV1::CashOut(_) => "CASH_OUT",
+            OperationV1::RequestSafeDrop(_) => "REQUEST_SAFE_DROP",
+            OperationV1::ApproveSafeDrop(_) => "APPROVE_SAFE_DROP",
+            OperationV1::RequestSessionClose => "REQUEST_SESSION_CLOSE",
+            OperationV1::DeclareClosingCash(_) => "DECLARE_CLOSING_CASH",
+            OperationV1::ReopenSession(_) => "REOPEN_SESSION",
+            OperationV1::ForceCloseBusinessDay(_) => "FORCE_CLOSE_BUSINESS_DAY",
             OperationV1::CloseBusinessDay => "CLOSE_BUSINESS_DAY",
             OperationV1::BeginCatalogImport(_) => "BEGIN_CATALOG_IMPORT",
             OperationV1::PutCatalogChunk(_) => "PUT_CATALOG_CHUNK",
@@ -177,7 +193,14 @@ impl OperationV1 {
                 | OperationV1::ReconcilePayment(_)
                 | OperationV1::ReversePayment(_)
                 | OperationV1::FinalizeTransaction
-                | OperationV1::CloseRegisterSession
+                | OperationV1::CashIn(_)
+                | OperationV1::CashOut(_)
+                | OperationV1::RequestSafeDrop(_)
+                | OperationV1::ApproveSafeDrop(_)
+                | OperationV1::RequestSessionClose
+                | OperationV1::DeclareClosingCash(_)
+                | OperationV1::ReopenSession(_)
+                | OperationV1::ForceCloseBusinessDay(_)
                 | OperationV1::CloseBusinessDay
                 | OperationV1::BeginCatalogImport(_)
                 | OperationV1::PutCatalogChunk(_)
@@ -269,6 +292,10 @@ pub enum ResultV1 {
     ProductLookup(ProductLookupV1),
     Payment(PaymentResultV1),
     TransactionPayments(TransactionPaymentsV1),
+    CashPosition(CashPositionV1),
+    SafeDrop(SafeDropV1),
+    SessionCloseRequirements(SessionCloseRequirementsV1),
+    SessionCloseResult(SessionCloseResultV1),
 }
 
 impl ResultV1 {
@@ -290,6 +317,10 @@ impl ResultV1 {
             ResultV1::ProductLookup(_) => "PRODUCT_LOOKUP",
             ResultV1::Payment(_) => "PAYMENT",
             ResultV1::TransactionPayments(_) => "TRANSACTION_PAYMENTS",
+            ResultV1::CashPosition(_) => "CASH_POSITION",
+            ResultV1::SafeDrop(_) => "SAFE_DROP",
+            ResultV1::SessionCloseRequirements(_) => "SESSION_CLOSE_REQUIREMENTS",
+            ResultV1::SessionCloseResult(_) => "SESSION_CLOSE_RESULT",
         }
     }
 }

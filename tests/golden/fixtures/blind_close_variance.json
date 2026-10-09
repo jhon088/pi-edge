@@ -1,0 +1,20 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "closure_kind": "DECLARED",
+  "declared_cash": {
+    "minor": 109100,
+    "currency": "MXN",
+    "formatted": "1091.00"
+  },
+  "expected_at_close": {
+    "minor": 111600,
+    "currency": "MXN",
+    "formatted": "1116.00"
+  },
+  "variance": {
+    "minor": -2500,
+    "currency": "MXN",
+    "formatted": "-25.00"
+  },
+  "variance_label": "SHORTAGE"
+}

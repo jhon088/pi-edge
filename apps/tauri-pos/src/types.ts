@@ -175,6 +175,69 @@ export interface RetailTransaction {
   version: number;
 }
 
+/** One drawer movement. Append-only: there is no update. */
+export interface CashMovement {
+  movement_id: string;
+  /** `OPENING_FLOAT`, `CASH_SALE`, `CASH_IN`, `CASH_OUT`, `SAFE_DROP`. */
+  movement_type: string;
+  /** `IN` or `OUT`. Explicit, never the sign of the amount. */
+  direction: string;
+  amount: Money;
+  /** `CASH_SALE` only: what the customer handed over. */
+  tendered: Money | null;
+  /** `CASH_SALE` only: what went back. */
+  change: Money | null;
+  /** The payment or safe drop that caused it. */
+  source_ref: string | null;
+  reason_code: string | null;
+  approval_id: string | null;
+  operator_id: string;
+  created_at: string;
+}
+
+/** A request to move money to the safe, and its decision. */
+export interface SafeDrop {
+  safe_drop_id: string;
+  approval_id: string;
+  amount: Money;
+  reason_code: string;
+  /** `PENDING_APPROVAL`, `APPROVED` or `REJECTED`. Pending moves nothing. */
+  status: string;
+  requested_by: string;
+  requested_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+}
+
+/**
+ * What the drawer should contain.
+ *
+ * An operational view. A cashier's close path never receives this: it gets a
+ * payload with no amount in it at all, and the expected figure appears only
+ * after the count is declared.
+ */
+export interface CashPosition {
+  session_id: string;
+  register_id: string;
+  operator_id: string;
+  session_status: string;
+  opening_float: Money;
+  /** Net cash from committed cash sales: what stayed in the drawer. */
+  cash_sales: Money;
+  cash_in: Money;
+  cash_out: Money;
+  /** Approved drops only. */
+  safe_drops: Money;
+  /** Derived from the movements, never stored. */
+  expected_cash: Money;
+  /** Audit only: what customers handed over in cash. */
+  tendered_total: Money;
+  /** Audit only: what went back as change. */
+  change_total: Money;
+  movements: CashMovement[];
+  pending_safe_drops: SafeDrop[];
+}
+
 export interface EdgeState {
   protocol_version: number;
   core_version: string;

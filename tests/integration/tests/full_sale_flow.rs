@@ -80,8 +80,17 @@ fn completes_a_cash_sale_and_closes_the_day() {
         serde_json::json!(11_600)
     );
 
-    core.close_register_session(CloseRegisterSessionCommand::default())
+    // The blind close: request, then declare. 1000.00 float + 116.00 cash.
+    core.request_session_close(RequestSessionCloseCommand::default())
         .unwrap();
+    let closed = core
+        .declare_closing_cash(DeclareClosingCashCommand {
+            request_id: None,
+            counted_minor: 111_600,
+        })
+        .unwrap();
+    assert_eq!(closed.expected_at_close.minor(), 111_600);
+    assert_eq!(closed.variance.map(|v| v.minor()), Some(0));
     let day = core
         .close_business_day(CloseBusinessDayCommand::default())
         .unwrap();

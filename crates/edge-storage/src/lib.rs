@@ -12,6 +12,7 @@
 //! * one OS-level runtime lock per installation ([`lock`]), so exactly one
 //!   process ever makes decisions about a register.
 
+mod cash;
 mod catalog;
 pub mod error;
 pub mod lock;

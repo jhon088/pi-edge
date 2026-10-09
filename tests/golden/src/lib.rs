@@ -449,3 +449,40 @@ pub fn scripted_scan(core: &ScriptedGoldenCore, barcode: &str, quantity_thousand
     })
     .unwrap();
 }
+
+/// Open the register with an explicit float, for the cash goldens.
+pub fn open_register_with_float(core: &GoldenCore, opening_cash_minor: i64) {
+    core.init_device(InitDeviceCommand {
+        tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
+        store_id: StoreId::new("STORE-DEMO").unwrap(),
+        currency: Currency::Mxn,
+    })
+    .unwrap();
+    golden_catalog(1).activate(core).unwrap();
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor,
+    })
+    .unwrap();
+}
+
+/// A finished cash sale of the 16% product: 116.00, tendered `tendered_minor`.
+pub fn golden_cash_sale(core: &GoldenCore, tendered_minor: i64) {
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    scan(core, BARCODE_16, 1_000);
+    core.totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    core.start_payment(StartPaymentCommand {
+        request_id: None,
+        tender_type: TenderType::Cash,
+        amount_minor: tendered_minor,
+    })
+    .unwrap();
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap();
+}

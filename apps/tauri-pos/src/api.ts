@@ -11,6 +11,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   BridgeError,
+  CashPosition,
   CatalogStatus,
   ConnectionStatus,
   CoreInfo,
@@ -67,6 +68,16 @@ export function fetchTransactionPayments(
   return invoke<TransactionPayments>("transaction_payments", {
     transactionId,
   });
+}
+
+/**
+ * What the drawer should contain, and the movements that explain it.
+ *
+ * Read-only, and *not* the cashier's pre-close payload: the blind close uses a
+ * separate operation whose answer carries no amount at all.
+ */
+export function fetchCashPosition(): Promise<CashPosition> {
+  return invoke<CashPosition>("cash_position");
 }
 
 /** Resolve a barcode the way a sale would. The core prices it, not this code. */

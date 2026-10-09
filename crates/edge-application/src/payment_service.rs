@@ -15,19 +15,19 @@ use edge_domain::prelude::*;
 use edge_payments::{
     settle, split_tender, AttemptStatus, NewPayment, NewPaymentAttempt, Payment, PaymentAttempt,
     PaymentError, PaymentProviderPort, PaymentStatus, PaymentView, ProviderOutcome, ProviderQuery,
-    ProviderRequest, ProviderReversal, ReversalOutcome, Settlement,
+    ProviderRequest, ProviderReversal, ReversalOutcome, Settlement, TenderType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::commands::{ReconcilePaymentCommand, ReversePaymentCommand, StartPaymentCommand};
-use crate::error::AppError;
-use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
-use crate::service::{
+use crate::context::{
     idempotent, journal_event, require_active_transaction, require_device,
     require_open_business_day, require_single_open_session, EventContext,
 };
+use crate::error::AppError;
+use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
 use crate::EdgeApplication;
 
 /// What a payment command answers with: the payment, its attempts, and what
@@ -62,6 +62,7 @@ where
         let payment_id = PaymentId::from_uuid(self.ids.new_uuid());
         let attempt_id = self.ids.new_uuid();
         let correlation_id = self.ids.new_uuid();
+        let cash_movement_id = self.ids.new_uuid();
         let event_id = EventId::from_uuid(self.ids.new_uuid());
         let tender = cmd.tender_type;
         let provider_kind = tender.uses_provider().then(|| self.payments.kind());
@@ -124,6 +125,26 @@ where
                 uow.insert_payment(&payment)?;
                 if let Some(attempt) = &attempt {
                     uow.insert_payment_attempt(attempt)?;
+                }
+                if payment.status == PaymentStatus::Committed
+                    && payment.tender_type == TenderType::Cash
+                {
+                    // The drawer moves in the same transaction as the payment
+                    // that moved it, keyed by the payment id, so a replay
+                    // cannot move it twice (ADR 021).
+                    crate::cash_service::record_cash_sale(
+                        uow,
+                        cash_movement_id,
+                        context.day.id(),
+                        &context.session,
+                        crate::cash_service::CashSale {
+                            payment_id: payment.payment_id,
+                            tendered: payment.requested_amount,
+                            committed: payment.committed_amount,
+                            change: split.change,
+                        },
+                        now,
+                    )?;
                 }
                 let mut context = context;
                 context.apply_settlement(uow, now)?;

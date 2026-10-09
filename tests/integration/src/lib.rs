@@ -160,3 +160,51 @@ pub fn scripted_core(script: SimulatorScript) -> ScriptedCore {
 
 pub type ScriptedCore =
     EdgeApplication<SqliteEdgeStore, FixedClock, SequentialIdFactory, SimulatorPaymentProvider>;
+
+/// Open a register with an explicit float, so cash tests can state the figure
+/// they reason about.
+pub fn open_register_with_float(core: &TestCore, opening_cash_minor: i64) {
+    init_device(core);
+    activate_demo_catalog(core);
+    core.open_business_day(OpenBusinessDayCommand::default())
+        .unwrap();
+    core.open_register_session(OpenRegisterSessionCommand {
+        request_id: None,
+        register_id: RegisterId::new("REG-001").unwrap(),
+        operator_id: OperatorId::new("CASHIER-001").unwrap(),
+        opening_cash_minor,
+    })
+    .unwrap();
+}
+
+/// A finished cash sale of the demo product: 116.00, tendered `tendered_minor`.
+pub fn cash_sale(core: &TestCore, tendered_minor: i64) {
+    core.start_transaction(StartTransactionCommand::default())
+        .unwrap();
+    core.add_item(demo_item()).unwrap();
+    core.totalize_transaction(TotalizeTransactionCommand::default())
+        .unwrap();
+    core.start_payment(StartPaymentCommand {
+        request_id: None,
+        tender_type: TenderType::Cash,
+        amount_minor: tendered_minor,
+    })
+    .unwrap();
+    core.finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap();
+}
+
+/// A supervisor identity, distinct from the demo cashier.
+pub fn supervisor() -> OperatorId {
+    OperatorId::new("SUPERVISOR-01").unwrap()
+}
+
+/// A lifetime that believes it is two days later, for business-day identity.
+pub fn core_two_days_later(path: &std::path::Path) -> TestCore {
+    let instant = start_instant() + chrono::Duration::days(2);
+    EdgeApplication::new(
+        SqliteEdgeStore::open(path).unwrap(),
+        FixedClock::new(instant, 1_000),
+        SequentialIdFactory::starting_at(5_000),
+    )
+}

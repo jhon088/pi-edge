@@ -41,6 +41,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0005_payments",
         sql: include_str!("../migrations/0005_payments.sql"),
     },
+    Migration {
+        version: 6,
+        name: "0006_cash_management",
+        sql: include_str!("../migrations/0006_cash_management.sql"),
+    },
 ];
 
 /// Schema version this binary expects.
@@ -123,6 +128,79 @@ mod tests {
             .unwrap();
         assert_eq!(count, MIGRATIONS.len() as i64);
         assert_eq!(target_version(), MIGRATIONS.len() as i64);
+    }
+
+    /// The cash ledger and the close declarations are evidence, not working
+    /// state. The domain refuses to edit them and the adapter has no statement
+    /// that could; these triggers make it impossible rather than merely
+    /// unimplemented (ADR 021, ADR 022).
+    #[test]
+    fn the_cash_ledger_and_close_declarations_are_immutable_in_the_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        apply(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO business_days
+                 (business_day_id, tenant_id, store_id, status, opened_at, version,
+                  created_at, updated_at)
+             VALUES ('day', 'T', 'S', 'OPEN', 'now', 1, 'now', 'now');
+             INSERT INTO register_sessions
+                 (session_id, business_day_id, register_id, operator_id, status,
+                  opening_cash_minor, currency, opened_at, version, created_at, updated_at)
+             VALUES ('s1', 'day', 'R', 'O', 'OPEN', 0, 'MXN', 'now', 1, 'now', 'now');
+             INSERT INTO cash_movements
+                 (movement_id, business_day_id, session_id, register_id, operator_id,
+                  movement_type, direction, amount_minor, currency, created_at)
+             VALUES ('m1', 'day', 's1', 'R', 'O', 'OPENING_FLOAT', 'IN', 1000, 'MXN', 'now');
+             INSERT INTO session_close_declarations
+                 (declaration_id, session_id, closure_kind, declared_minor, expected_minor,
+                  variance_minor, currency, declared_by, declared_at)
+             VALUES ('d1', 's1', 'DECLARED', 1000, 1000, 0, 'MXN', 'O', 'now');",
+        )
+        .unwrap();
+
+        for sql in [
+            "UPDATE cash_movements SET amount_minor = 1 WHERE movement_id = 'm1'",
+            "DELETE FROM cash_movements WHERE movement_id = 'm1'",
+            "UPDATE session_close_declarations SET declared_minor = 1 WHERE declaration_id = 'd1'",
+        ] {
+            let refused = conn.execute(sql, []).is_err();
+            assert!(refused, "the database must refuse `{sql}`");
+        }
+
+        // The rows are exactly as they were written.
+        let amount: i64 = conn
+            .query_row(
+                "SELECT amount_minor FROM cash_movements WHERE movement_id = 'm1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(amount, 1000);
+    }
+
+    /// A cash sale states what stayed in the drawer, and the tender audit has
+    /// to agree with it (ADR 021).
+    #[test]
+    fn the_database_refuses_an_unbalanced_cash_sale() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        apply(&conn).unwrap();
+        let insert = |amount: i64, tendered: i64, change: i64| {
+            conn.execute(
+                "INSERT INTO cash_movements
+                     (movement_id, business_day_id, session_id, register_id, operator_id,
+                      movement_type, direction, amount_minor, currency, tendered_minor,
+                      change_minor, source_ref, created_at)
+                 VALUES (?1, 'day', 's1', 'R', 'O', 'CASH_SALE', 'IN', ?2, 'MXN', ?3, ?4,
+                         ?1, 'now')",
+                rusqlite::params![format!("m{amount}-{tendered}"), amount, tendered, change],
+            )
+        };
+        // 200 tendered, 84 back, 116 stays: balanced.
+        assert!(insert(11_600, 20_000, 8_400).is_ok());
+        // Anything else is refused.
+        assert!(insert(11_600, 20_000, 1_000).is_err());
     }
 
     #[test]

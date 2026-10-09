@@ -3,6 +3,7 @@
 //! These are plain application-level views. Wire formatting lives in
 //! `edge-protocol`.
 
+use edge_cash::{CashMovement, CashPosition, SafeDrop};
 use edge_catalog::{
     CatalogProduct, CatalogSnapshot, ImportProgress, ResolvedPrice, SnapshotCounts, TaxProfile,
 };
@@ -69,4 +70,36 @@ pub struct ProductLookup {
     pub price: Option<ResolvedPrice>,
     /// Stable code explaining a missing price, e.g. `PRICE_NOT_FOUND`.
     pub price_issue: Option<String>,
+}
+
+/// What a drawer should contain, and the movements that explain it.
+///
+/// An operational read. The cashier's pre-close path uses
+/// [`edge_cash::SessionCloseRequirements`] instead, which cannot carry an
+/// amount at all (ADR 022).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashPositionView {
+    pub session_id: SessionId,
+    pub register_id: RegisterId,
+    pub operator_id: OperatorId,
+    pub session_status: RegisterSessionStatus,
+    pub position: CashPosition,
+    pub movements: Vec<CashMovement>,
+    /// Requested drops nobody has decided yet. They have moved no money.
+    pub pending_safe_drops: Vec<SafeDrop>,
+}
+
+/// What a close produced, once the declaration is durable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCloseResult {
+    pub session_id: SessionId,
+    pub closure_kind: ClosureKind,
+    /// Absent for a forced close: no count was taken.
+    pub declared_cash: Option<Money>,
+    pub expected_at_close: Money,
+    /// `declared − expected`. Absent exactly when the count is.
+    pub variance: Option<Money>,
+    /// `BALANCED`, `SHORTAGE`, `OVERAGE` or `UNDECLARED` — so a report never
+    /// renders an unknown variance as zero.
+    pub variance_label: String,
 }

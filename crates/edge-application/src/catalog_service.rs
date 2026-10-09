@@ -27,12 +27,12 @@ use crate::commands::{
     AbortCatalogImportCommand, ActivateCatalogSnapshotCommand, BeginCatalogImportCommand,
     CommitCatalogImportCommand, PutCatalogChunkCommand,
 };
+use crate::context::{
+    idempotent, journal_event, require_device, require_open_business_day, EventContext,
+};
 use crate::error::AppError;
 use crate::ports::{Clock, EdgeStore, IdFactory, StoredChunk, UnitOfWork};
 use crate::queries::{CatalogImportStatus, CatalogSnapshotView, CatalogStatus, ProductLookup};
-use crate::service::{
-    idempotent, journal_event, require_device, require_open_business_day, EventContext,
-};
 use crate::EdgeApplication;
 
 impl<S, C, I, P> EdgeApplication<S, C, I, P>

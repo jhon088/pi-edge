@@ -223,6 +223,7 @@ name = "edge-application"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "edge-cash",
  "edge-catalog",
  "edge-domain",
  "edge-payments",
@@ -230,6 +231,17 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "edge-cash"
+version = "0.1.0"
+dependencies = [
+ "edge-domain",
+ "serde",
+ "serde_json",
+ "thiserror",
  "uuid",
 ]
 
@@ -277,6 +289,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "edge-application",
+ "edge-cash",
  "edge-catalog",
  "edge-domain",
  "edge-payments",
@@ -292,6 +305,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "edge-application",
+ "edge-cash",
  "edge-catalog",
  "edge-client",
  "edge-domain",
@@ -325,6 +339,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "edge-application",
+ "edge-cash",
  "edge-catalog",
  "edge-domain",
  "edge-payments",
@@ -334,19 +349,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "edge-hardware-api"
-version = "0.1.0"
-dependencies = [
- "edge-domain",
- "thiserror",
-]
-
-[[package]]
 name = "edge-integration-tests"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "edge-application",
+ "edge-cash",
  "edge-catalog",
  "edge-domain",
  "edge-payments",
@@ -387,6 +395,7 @@ name = "edge-protocol"
 version = "0.1.0"
 dependencies = [
  "edge-application",
+ "edge-cash",
  "edge-catalog",
  "edge-domain",
  "edge-payments",
@@ -400,6 +409,7 @@ name = "edge-storage"
 version = "0.1.0"
 dependencies = [
  "edge-application",
+ "edge-cash",
  "edge-catalog",
  "edge-domain",
  "edge-payments",

@@ -63,6 +63,9 @@ pub enum DomainError {
     #[error("a payment of this sale has an unresolved outcome")]
     UnresolvedPayment,
 
+    #[error("a {field} is required and must not be blank")]
+    MissingReason { field: &'static str },
+
     #[error("unknown {kind} value `{value}`")]
     UnknownEnumValue { kind: &'static str, value: String },
 }

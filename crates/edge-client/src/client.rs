@@ -3,13 +3,15 @@
 use std::fmt::Debug;
 
 use edge_protocol::{
-    AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
-    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
-    CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1, JournalEventV1,
-    OpenRegisterSessionRequestV1, PaymentRequestV1, PaymentResultV1, PendingOutboxV1,
-    ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1,
-    RemoveItemRequestV1, RetailTransactionV1, StartPaymentRequestV1, TransactionPaymentsV1,
-    TransactionRequestV1,
+    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayV1,
+    CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
+    CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1,
+    DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
+    InitDeviceRequestV1, JournalEventV1, OpenRegisterSessionRequestV1, PaymentRequestV1,
+    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RetailTransactionV1,
+    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
+    TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -107,7 +109,52 @@ pub trait EdgeClient: Debug + Send + Sync {
         &self,
         request_id: Option<Uuid>,
     ) -> Result<RetailTransactionV1, ClientError>;
-    fn close_session(&self, request_id: Option<Uuid>) -> Result<RegisterSessionV1, ClientError>;
+    // ------------------------------------------------------- cash management
+
+    /// What the drawer should contain, and the movements that explain it.
+    fn cash_position(&self) -> Result<CashPositionV1, ClientError>;
+    fn cash_in(
+        &self,
+        request: CashMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CashPositionV1, ClientError>;
+    fn cash_out(
+        &self,
+        request: CashMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CashPositionV1, ClientError>;
+    /// Ask for a safe drop. Moves no money on its own.
+    fn request_safe_drop(
+        &self,
+        request: CashMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<SafeDropV1, ClientError>;
+    fn approve_safe_drop(
+        &self,
+        request: ApproveSafeDropRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<SafeDropV1, ClientError>;
+    /// Begin a close. The answer never carries the expected cash (ADR 022).
+    fn request_session_close(
+        &self,
+        request_id: Option<Uuid>,
+    ) -> Result<SessionCloseRequirementsV1, ClientError>;
+    /// Declare the counted cash. Only now does the core reveal the variance.
+    fn declare_closing_cash(
+        &self,
+        request: DeclareClosingCashRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<SessionCloseResultV1, ClientError>;
+    fn reopen_session(
+        &self,
+        request: ReopenSessionRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RegisterSessionV1, ClientError>;
+    fn force_close_business_day(
+        &self,
+        request: ForceCloseBusinessDayRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<BusinessDayV1, ClientError>;
     fn close_business_day(&self, request_id: Option<Uuid>) -> Result<BusinessDayV1, ClientError>;
 
     // catalog import: open, stream, close, put in force

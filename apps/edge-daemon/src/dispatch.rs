@@ -12,18 +12,20 @@ use std::sync::Arc;
 
 use edge_application::commands::{
     AbortCatalogImportCommand, ActivateCatalogSnapshotCommand, CloseBusinessDayCommand,
-    CloseRegisterSessionCommand, FinalizeTransactionCommand, OpenBusinessDayCommand,
+    FinalizeTransactionCommand, OpenBusinessDayCommand, RequestSessionCloseCommand,
     StartTransactionCommand, TotalizeTransactionCommand,
 };
 use edge_application::{AppError, EdgeApplication, CORE_VERSION};
+use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, RetailTransaction};
 use edge_payments::{PaymentError, SimulatorPaymentProvider};
 use edge_protocol::{
-    error_codes, BusinessDayV1, CatalogImportStatusV1, CatalogSnapshotViewV1, CatalogStatusV1,
-    CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1, OperationV1, PaymentResultV1,
-    PendingOutboxV1, ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1,
-    ResultV1, RetailTransactionV1, TransactionPaymentsV1, PROTOCOL_VERSION,
+    error_codes, BusinessDayV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
+    CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1, OperationV1,
+    PaymentResultV1, PendingOutboxV1, ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1,
+    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
+    SessionCloseResultV1, TransactionPaymentsV1, PROTOCOL_VERSION,
 };
 use edge_storage::SqliteEdgeStore;
 use uuid::Uuid;
@@ -33,8 +35,8 @@ use crate::state::DaemonState;
 /// The concrete core the daemon owns.
 pub type Core = EdgeApplication<
     SqliteEdgeStore,
-    edge_application::adapters::SystemClock,
-    edge_application::adapters::UuidFactory,
+    edge_application::SystemClock,
+    edge_application::UuidFactory,
     SimulatorPaymentProvider,
 >;
 
@@ -297,14 +299,78 @@ impl Dispatcher {
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
             }
-            OperationV1::CloseRegisterSession => {
-                let session = self
+            OperationV1::GetCashPosition => {
+                let view = self
                     .core
-                    .close_register_session(CloseRegisterSessionCommand {
+                    .get_cash_position()
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CashPosition(CashPositionV1::from(&view)))
+            }
+            OperationV1::CashIn(payload) => {
+                let view = self
+                    .core
+                    .cash_in(payload.into_cash_in(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CashPosition(CashPositionV1::from(&view)))
+            }
+            OperationV1::CashOut(payload) => {
+                let view = self
+                    .core
+                    .cash_out(payload.into_cash_out(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::CashPosition(CashPositionV1::from(&view)))
+            }
+            OperationV1::RequestSafeDrop(payload) => {
+                let drop = self
+                    .core
+                    .request_safe_drop(payload.into_safe_drop(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SafeDrop(SafeDropV1::from(&drop)))
+            }
+            OperationV1::ApproveSafeDrop(payload) => {
+                let command = payload.into_command(Some(request_id)).map_err(cash_error)?;
+                let drop = self
+                    .core
+                    .approve_safe_drop(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SafeDrop(SafeDropV1::from(&drop)))
+            }
+            OperationV1::RequestSessionClose => {
+                // The answer deliberately carries no expected cash: the blind
+                // close is a property of this contract (ADR 022).
+                let requirements = self
+                    .core
+                    .request_session_close(RequestSessionCloseCommand {
                         request_id: Some(request_id),
                     })
                     .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SessionCloseRequirements(
+                    SessionCloseRequirementsV1::from(&requirements),
+                ))
+            }
+            OperationV1::DeclareClosingCash(payload) => {
+                let result = self
+                    .core
+                    .declare_closing_cash(payload.into_command(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SessionCloseResult(SessionCloseResultV1::from(
+                    &result,
+                )))
+            }
+            OperationV1::ReopenSession(payload) => {
+                let command = payload.into_command(Some(request_id)).map_err(cash_error)?;
+                let session = self
+                    .core
+                    .reopen_session(command)
+                    .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::RegisterSession(RegisterSessionV1::from(&session)))
+            }
+            OperationV1::ForceCloseBusinessDay(payload) => {
+                let day = self
+                    .core
+                    .force_close_business_day(payload.into_command(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::BusinessDay(BusinessDayV1::from(&day)))
             }
             OperationV1::BeginCatalogImport(payload) => {
                 let command = payload
@@ -413,6 +479,10 @@ fn catalog_error(error: CatalogError) -> ErrorV1 {
 }
 
 fn payment_error(error: PaymentError) -> ErrorV1 {
+    ErrorV1::new(error.code(), error.to_string())
+}
+
+fn cash_error(error: CashError) -> ErrorV1 {
     ErrorV1::new(error.code(), error.to_string())
 }
 

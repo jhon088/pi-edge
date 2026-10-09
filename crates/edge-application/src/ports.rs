@@ -3,6 +3,8 @@
 //! Adapters (SQLite, hardware, sync, UI transport) implement these; the
 //! application never depends on an adapter crate.
 
+use chrono::Utc;
+use edge_cash::{Approval, CashMovement, CloseDeclaration, MovementType, SafeDrop};
 use edge_catalog::{
     CatalogBarcode, CatalogProduct, CatalogSnapshot, ImportProgress, PriceBook, PriceCandidate,
     PriceEntry, ProductSelector, Promotion, SnapshotCounts, TaxProfile, TaxProfileCode,
@@ -219,7 +221,56 @@ pub trait PaymentUnitOfWork {
     fn next_attempt_number(&mut self, payment_id: PaymentId) -> Result<i64, AppError>;
 }
 
-pub trait UnitOfWork: CatalogUnitOfWork + PaymentUnitOfWork {
+/// Cash persistence.
+///
+/// The ledger is append-only, so there is no `update_cash_movement` and there
+/// never will be: a correction is a new movement (ADR 021). Declarations are
+/// evidence, so there is no update for those either.
+pub trait CashUnitOfWork {
+    fn insert_cash_movement(&mut self, movement: &CashMovement) -> Result<(), AppError>;
+    /// Every movement of a session, oldest first.
+    fn list_cash_movements(&mut self, session_id: SessionId)
+        -> Result<Vec<CashMovement>, AppError>;
+    /// Whether a cause has already moved this drawer, so a replay cannot.
+    fn find_cash_movement_by_source(
+        &mut self,
+        session_id: SessionId,
+        movement_type: MovementType,
+        source_ref: &str,
+    ) -> Result<Option<CashMovement>, AppError>;
+
+    fn insert_approval(&mut self, approval: &Approval) -> Result<(), AppError>;
+    fn update_approval(&mut self, approval: &Approval) -> Result<(), AppError>;
+    fn find_approval(&mut self, approval_id: Uuid) -> Result<Option<Approval>, AppError>;
+
+    fn insert_safe_drop(&mut self, drop: &SafeDrop) -> Result<(), AppError>;
+    fn update_safe_drop(&mut self, drop: &SafeDrop) -> Result<(), AppError>;
+    fn find_safe_drop(&mut self, safe_drop_id: Uuid) -> Result<Option<SafeDrop>, AppError>;
+    /// Drops still waiting on a decision. They block a session close and a
+    /// business-day close: the money's location is unknown.
+    fn list_pending_safe_drops(&mut self, session_id: SessionId)
+        -> Result<Vec<SafeDrop>, AppError>;
+
+    fn insert_close_declaration(&mut self, declaration: &CloseDeclaration) -> Result<(), AppError>;
+    fn find_close_declaration(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<Option<CloseDeclaration>, AppError>;
+
+    /// Sessions of a day, closed ones included, oldest first. A register
+    /// accumulates a chain of them (ADR 023).
+    fn list_sessions_for_day(
+        &mut self,
+        business_day_id: BusinessDayId,
+    ) -> Result<Vec<RegisterSession>, AppError>;
+    /// One session by id, in any state. Needed to reopen a closed one.
+    fn find_register_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<Option<RegisterSession>, AppError>;
+}
+
+pub trait UnitOfWork: CatalogUnitOfWork + PaymentUnitOfWork + CashUnitOfWork {
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;
     fn put_device_profile(
         &mut self,
@@ -303,4 +354,30 @@ pub trait EdgeStore {
     fn transact<T, F>(&self, work: F) -> Result<T, AppError>
     where
         F: FnOnce(&mut dyn UnitOfWork) -> Result<T, AppError>;
+}
+
+// ----------------------------------------------- built-in port implementations
+//
+// The two ports every use case needs have exactly one production
+// implementation each, and neither carries a dependency worth isolating. They
+// live beside the traits they implement rather than in a file of their own.
+
+/// Wall-clock time in UTC.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Timestamp {
+        Timestamp::from_datetime(Utc::now())
+    }
+}
+
+/// Random UUID v4 factory for public ids.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UuidFactory;
+
+impl IdFactory for UuidFactory {
+    fn new_uuid(&self) -> Uuid {
+        Uuid::new_v4()
+    }
 }

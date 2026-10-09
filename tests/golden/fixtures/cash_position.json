@@ -1,0 +1,125 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "session_status": "OPEN",
+  "opening_float": {
+    "minor": 100000,
+    "currency": "MXN",
+    "formatted": "1000.00"
+  },
+  "cash_sales": {
+    "minor": 11600,
+    "currency": "MXN",
+    "formatted": "116.00"
+  },
+  "cash_in": {
+    "minor": 50000,
+    "currency": "MXN",
+    "formatted": "500.00"
+  },
+  "cash_out": {
+    "minor": 10000,
+    "currency": "MXN",
+    "formatted": "100.00"
+  },
+  "safe_drops": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "expected_cash": {
+    "minor": 151600,
+    "currency": "MXN",
+    "formatted": "1516.00"
+  },
+  "tendered_total": {
+    "minor": 20000,
+    "currency": "MXN",
+    "formatted": "200.00"
+  },
+  "change_total": {
+    "minor": 8400,
+    "currency": "MXN",
+    "formatted": "84.00"
+  },
+  "movements": [
+    {
+      "movement_id": "00000000-0000-0000-0000-000000000007",
+      "movement_type": "OPENING_FLOAT",
+      "direction": "IN",
+      "amount": {
+        "minor": 100000,
+        "currency": "MXN",
+        "formatted": "1000.00"
+      },
+      "tendered": null,
+      "change": null,
+      "source_ref": null,
+      "reason_code": null,
+      "approval_id": null,
+      "operator_id": "CASHIER-001",
+      "created_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-000000000011",
+      "movement_type": "CASH_SALE",
+      "direction": "IN",
+      "amount": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "tendered": {
+        "minor": 20000,
+        "currency": "MXN",
+        "formatted": "200.00"
+      },
+      "change": {
+        "minor": 8400,
+        "currency": "MXN",
+        "formatted": "84.00"
+      },
+      "source_ref": "00000000-0000-0000-0000-00000000000e",
+      "reason_code": null,
+      "approval_id": null,
+      "operator_id": "CASHIER-001",
+      "created_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-000000000015",
+      "movement_type": "CASH_IN",
+      "direction": "IN",
+      "amount": {
+        "minor": 50000,
+        "currency": "MXN",
+        "formatted": "500.00"
+      },
+      "tendered": null,
+      "change": null,
+      "source_ref": null,
+      "reason_code": "CHANGE_FUND",
+      "approval_id": null,
+      "operator_id": "CASHIER-001",
+      "created_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-000000000017",
+      "movement_type": "CASH_OUT",
+      "direction": "OUT",
+      "amount": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "tendered": null,
+      "change": null,
+      "source_ref": null,
+      "reason_code": "PETTY_CASH",
+      "approval_id": null,
+      "operator_id": "CASHIER-001",
+      "created_at": "2026-10-08T15:00:00.000000Z"
+    }
+  ],
+  "pending_safe_drops": []
+}

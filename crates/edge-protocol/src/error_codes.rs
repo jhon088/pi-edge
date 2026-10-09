@@ -123,6 +123,34 @@ pub const PAYMENT_INVALID_RECORD: &str = "PAYMENT_INVALID_RECORD";
 /// state (ADR 019).
 pub const BASKET_LOCKED_BY_PAYMENT: &str = "BASKET_LOCKED_BY_PAYMENT";
 
+// Cash management codes, produced by the cash context.
+
+/// A cash amount is not positive, or a declaration is negative.
+pub const CASH_INVALID_AMOUNT: &str = "CASH_INVALID_AMOUNT";
+/// A movement contradicts its own type: the wrong direction, or a cash sale
+/// whose tender audit does not balance against what stayed in the drawer.
+pub const CASH_INVALID_MOVEMENT: &str = "CASH_INVALID_MOVEMENT";
+/// An operator-initiated movement arrived with no reason. An unexplained
+/// drawer movement is not an audit trail.
+pub const CASH_REASON_REQUIRED: &str = "CASH_REASON_REQUIRED";
+/// A cash record failed validation at the boundary.
+pub const CASH_INVALID_RECORD: &str = "CASH_INVALID_RECORD";
+/// The safe drop is not in a state that allows this decision.
+pub const SAFE_DROP_INVALID_STATE: &str = "SAFE_DROP_INVALID_STATE";
+/// Nobody approves their own safe drop.
+pub const SAFE_DROP_SELF_APPROVAL: &str = "SAFE_DROP_SELF_APPROVAL";
+pub const SAFE_DROP_NOT_FOUND: &str = "SAFE_DROP_NOT_FOUND";
+/// A declaration arrived before a close was requested. The ordering is what
+/// makes the close blind.
+pub const SESSION_DECLARATION_REQUIRED: &str = "SESSION_DECLARATION_REQUIRED";
+/// This close attempt already has a declaration. Declarations are evidence,
+/// not working state.
+pub const SESSION_ALREADY_DECLARED: &str = "SESSION_ALREADY_DECLARED";
+/// The session cannot close yet; the message names every blocker.
+pub const SESSION_CLOSE_BLOCKED: &str = "SESSION_CLOSE_BLOCKED";
+/// The business day cannot close yet; the message names every blocker.
+pub const BUSINESS_DAY_CLOSE_BLOCKED: &str = "BUSINESS_DAY_CLOSE_BLOCKED";
+
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";
 /// A request arrived before a successful handshake.

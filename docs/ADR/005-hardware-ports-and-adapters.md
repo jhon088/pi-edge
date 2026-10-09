@@ -1,6 +1,8 @@
 # ADR 005 — Hardware lives behind ports and adapters
 
 Status: accepted · 2026-10-08
+Amended in milestone 7: the decision stands, the crate does not. See
+*Amendment* at the end.
 
 ## Context
 
@@ -40,3 +42,20 @@ Rules:
   reconciliation) rather than being hidden behind a blocking call. That is extra
   work at integration time and the reason refunds/terminal payments are not in
   this milestone.
+
+## Amendment (milestone 7)
+
+The rule above is unchanged: hardware will sit behind ports injected at the
+composition root, and no device call will ever be made from UI code or from
+inside a use case.
+
+What changed is when the traits get written. `edge-hardware-api` shipped as a
+crate of port traits with **no implementation and no consumer** — nothing
+depended on it, nothing implemented it, nothing injected it. Seven milestones
+later that was still true, so it was removed.
+
+A trait with no implementation does not constrain anything; it only looks like
+it does. The real shape of `PrinterPort` will be decided by the first printer
+we actually talk to, and writing it beforehand guarantees it is wrong in ways
+nobody can see yet. The boundary is recorded here and in `CLAUDE.md`, and the
+port arrives with the adapter.

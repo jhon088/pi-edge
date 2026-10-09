@@ -28,7 +28,7 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     let info = cli.core_info().unwrap();
     assert_eq!(info.status, CoreStatusV1::Ready);
     assert_eq!(info.protocol_version, edge_protocol::PROTOCOL_VERSION);
-    assert_eq!(info.database_schema_version, 5);
+    assert_eq!(info.database_schema_version, 6);
     assert_eq!(info.pid, daemon.pid);
 
     open_register(&cli);
@@ -129,7 +129,47 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     assert_eq!(outbox.events[0].status, "PENDING");
 
     // --- close the register and the day -----------------------------------
-    assert_eq!(ui.close_session(None).unwrap().status, "CLOSED");
+    // A session now closes blind: ask what is needed, then declare the count.
+    // The requirements payload must not reveal what the drawer should hold.
+    let requirements = ui.request_session_close(None).unwrap();
+    assert!(requirements.blockers.is_empty());
+    assert!(requirements.requires_declaration);
+    // Structural check, not a visual one: the payload has no amount-bearing
+    // key and no value equal to the expected figure (ADR 022). Ids are
+    // excluded from the scan — a UUID can contain any digits by chance.
+    let rendered = serde_json::to_value(&requirements).unwrap();
+    let object = rendered.as_object().expect("an object");
+    for key in object.keys() {
+        assert!(
+            !["expected_cash", "expected", "amount", "total", "movements"].contains(&key.as_str()),
+            "the pre-close payload must not carry `{key}`"
+        );
+    }
+    for (key, value) in object {
+        if key == "session_id" {
+            continue;
+        }
+        let rendered = value.to_string();
+        for forbidden in ["111600", "1116.00", "100000", "1000.00"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "`{key}` must not reveal the expected cash: {rendered}"
+            );
+        }
+    }
+    // 1000.00 float + 116.00 collected in cash = 1116.00 expected.
+    let closed = ui
+        .declare_closing_cash(
+            edge_protocol::DeclareClosingCashRequestV1 {
+                counted_minor: 111_600,
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(closed.closure_kind, "DECLARED");
+    assert_eq!(closed.expected_at_close.formatted, "1116.00");
+    assert_eq!(closed.variance.as_ref().unwrap().minor, 0);
+    assert_eq!(closed.variance_label, "BALANCED");
     assert_eq!(ui.close_business_day(None).unwrap().status, "CLOSED");
     let closed = cli.get_edge_state().unwrap();
     assert!(closed.business_day.is_none());

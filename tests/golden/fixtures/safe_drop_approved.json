@@ -1,0 +1,15 @@
+{
+  "safe_drop_id": "00000000-0000-0000-0000-000000000009",
+  "approval_id": "00000000-0000-0000-0000-00000000000a",
+  "amount": {
+    "minor": 80000,
+    "currency": "MXN",
+    "formatted": "800.00"
+  },
+  "reason_code": "DRAWER_LIMIT",
+  "status": "APPROVED",
+  "requested_by": "CASHIER-001",
+  "requested_at": "2026-10-08T15:00:00.000000Z",
+  "approved_by": "SUPERVISOR-01",
+  "approved_at": "2026-10-08T15:00:00.000000Z"
+}

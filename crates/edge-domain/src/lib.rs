@@ -16,7 +16,6 @@ pub mod ids;
 pub mod journal;
 pub mod money;
 pub mod outbox;
-pub mod payment;
 pub mod session;
 pub mod time;
 pub mod transaction;
@@ -37,15 +36,15 @@ pub mod prelude {
         Currency, Money, MoneyError, Percentage, PriceMode, Quantity, TaxRate, TaxedAmount,
     };
     pub use crate::outbox::{OutboxEvent, OutboxEventType, OutboxStatus};
-    pub use crate::payment::PaymentSummary;
     pub use crate::session::{
-        NewRegisterSession, RegisterSession, RegisterSessionState, RegisterSessionStatus,
+        ClosureKind, NewRegisterSession, RegisterSession, RegisterSessionState,
+        RegisterSessionStatus,
     };
     pub use crate::time::{TimeError, Timestamp};
     pub use crate::transaction::{
-        AppliedPromotion, LineDiscount, NewLineInput, NewRetailTransaction, PricingCapture,
-        PromotionOutcome, PromotionTarget, RetailTransaction, RetailTransactionState, Totals,
-        TransactionLine, TransactionStatus,
+        AppliedPromotion, LineDiscount, NewLineInput, NewRetailTransaction, PaymentSummary,
+        PricingCapture, PromotionOutcome, PromotionTarget, RetailTransaction,
+        RetailTransactionState, Totals, TransactionLine, TransactionStatus,
     };
 }
 

@@ -181,7 +181,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
         let raw = self
             .tx
             .query_row(
-                "SELECT business_day_id, tenant_id, store_id, status, opened_at, closed_at, version
+                "SELECT business_day_id, tenant_id, store_id, status, opened_at, closed_at, version,
+                        closure_kind, close_reason, closed_by
                  FROM business_days
                  WHERE store_id = ?1 AND status <> 'CLOSED'
                  ORDER BY opened_at DESC
@@ -198,7 +199,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
         let raw = self
             .tx
             .query_row(
-                "SELECT business_day_id, tenant_id, store_id, status, opened_at, closed_at, version
+                "SELECT business_day_id, tenant_id, store_id, status, opened_at, closed_at, version,
+                        closure_kind, close_reason, closed_by
                  FROM business_days WHERE business_day_id = ?1",
                 params![id.to_string()],
                 RawBusinessDay::from_row,
@@ -237,7 +239,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .tx
             .execute(
                 "UPDATE business_days
-                 SET status = ?2, closed_at = ?3, version = ?4, updated_at = ?5
+                 SET status = ?2, closed_at = ?3, version = ?4, updated_at = ?5,
+                     closure_kind = ?6, close_reason = ?7, closed_by = ?8
                  WHERE business_day_id = ?1 AND version < ?4",
                 params![
                     state.business_day_id.to_string(),
@@ -245,6 +248,9 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.closed_at.map(|ts| ts.to_rfc3339()),
                     state.version,
                     now.to_rfc3339(),
+                    state.closure_kind.map(ClosureKind::as_str),
+                    state.close_reason,
+                    state.closed_by,
                 ],
             )
             .map_err(sqlite_err)?;
@@ -265,7 +271,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .tx
             .prepare(
                 "SELECT session_id, business_day_id, register_id, operator_id, status,
-                        opening_cash_minor, currency, opened_at, closed_at, version
+                        opening_cash_minor, currency, opened_at, closed_at, version,
+                        closure_kind, close_declaration_id, reopened_from_session_id
                  FROM register_sessions
                  WHERE business_day_id = ?1 AND status <> 'CLOSED'
                  ORDER BY opened_at ASC",
@@ -287,7 +294,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .tx
             .query_row(
                 "SELECT session_id, business_day_id, register_id, operator_id, status,
-                        opening_cash_minor, currency, opened_at, closed_at, version
+                        opening_cash_minor, currency, opened_at, closed_at, version,
+                        closure_kind, close_declaration_id, reopened_from_session_id
                  FROM register_sessions
                  WHERE register_id = ?1 AND status <> 'CLOSED'
                  LIMIT 1",
@@ -310,8 +318,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                 "INSERT INTO register_sessions
                      (session_id, business_day_id, register_id, operator_id, status,
                       opening_cash_minor, currency, opened_at, closed_at, version,
-                      created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                      reopened_from_session_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
                 params![
                     state.session_id.to_string(),
                     state.business_day_id.to_string(),
@@ -323,6 +331,7 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.opened_at.to_rfc3339(),
                     state.closed_at.map(|ts| ts.to_rfc3339()),
                     state.version,
+                    state.reopened_from_session_id.map(|id| id.to_string()),
                     now.to_rfc3339(),
                 ],
             )
@@ -340,7 +349,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .tx
             .execute(
                 "UPDATE register_sessions
-                 SET status = ?2, closed_at = ?3, version = ?4, updated_at = ?5
+                 SET status = ?2, closed_at = ?3, version = ?4, updated_at = ?5,
+                     closure_kind = ?6, close_declaration_id = ?7
                  WHERE session_id = ?1 AND version < ?4",
                 params![
                     state.session_id.to_string(),
@@ -348,6 +358,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.closed_at.map(|ts| ts.to_rfc3339()),
                     state.version,
                     now.to_rfc3339(),
+                    state.closure_kind.map(ClosureKind::as_str),
+                    state.close_declaration_id.map(|id| id.to_string()),
                 ],
             )
             .map_err(sqlite_err)?;
@@ -916,6 +928,9 @@ struct RawBusinessDay {
     opened_at: String,
     closed_at: Option<String>,
     version: i64,
+    closure_kind: Option<String>,
+    close_reason: Option<String>,
+    closed_by: Option<String>,
 }
 
 impl RawBusinessDay {
@@ -928,6 +943,9 @@ impl RawBusinessDay {
             opened_at: row.get(4)?,
             closed_at: row.get(5)?,
             version: row.get(6)?,
+            closure_kind: row.get(7)?,
+            close_reason: row.get(8)?,
+            closed_by: row.get(9)?,
         })
     }
 
@@ -939,12 +957,27 @@ impl RawBusinessDay {
             status: BusinessDayStatus::parse(&self.status).map_err(AppError::from)?,
             opened_at: parse_ts(&self.opened_at)?,
             closed_at: parse_opt_ts(self.closed_at)?,
+            closure_kind: self
+                .closure_kind
+                .as_deref()
+                .map(ClosureKind::parse)
+                .transpose()
+                .map_err(AppError::from)?,
+            close_reason: self.close_reason,
+            closed_by: self.closed_by,
             version: self.version,
         }))
     }
 }
 
-struct RawSession {
+/// Columns every session query selects. One projection, shared with the cash
+/// adapter, so the two can never disagree about a session's shape.
+pub(crate) const SESSION_COLUMNS: &str =
+    "session_id, business_day_id, register_id, operator_id, status, opening_cash_minor, \
+     currency, opened_at, closed_at, version, closure_kind, close_declaration_id, \
+     reopened_from_session_id";
+
+pub(crate) struct RawSession {
     session_id: String,
     business_day_id: String,
     register_id: String,
@@ -955,10 +988,13 @@ struct RawSession {
     opened_at: String,
     closed_at: Option<String>,
     version: i64,
+    closure_kind: Option<String>,
+    close_declaration_id: Option<String>,
+    reopened_from_session_id: Option<String>,
 }
 
 impl RawSession {
-    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+    pub(crate) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             session_id: row.get(0)?,
             business_day_id: row.get(1)?,
@@ -970,10 +1006,13 @@ impl RawSession {
             opened_at: row.get(7)?,
             closed_at: row.get(8)?,
             version: row.get(9)?,
+            closure_kind: row.get(10)?,
+            close_declaration_id: row.get(11)?,
+            reopened_from_session_id: row.get(12)?,
         })
     }
 
-    fn into_domain(self) -> Result<RegisterSession, AppError> {
+    pub(crate) fn into_domain(self) -> Result<RegisterSession, AppError> {
         let currency = parse_currency(&self.currency)?;
         Ok(RegisterSession::rehydrate(RegisterSessionState {
             session_id: parse_id(&self.session_id)?,
@@ -984,9 +1023,30 @@ impl RawSession {
             opening_cash: money(self.opening_cash_minor, currency),
             opened_at: parse_ts(&self.opened_at)?,
             closed_at: parse_opt_ts(self.closed_at)?,
+            closure_kind: self
+                .closure_kind
+                .as_deref()
+                .map(ClosureKind::parse)
+                .transpose()
+                .map_err(AppError::from)?,
+            close_declaration_id: self
+                .close_declaration_id
+                .as_deref()
+                .map(parse_uuid_field)
+                .transpose()?,
+            reopened_from_session_id: self
+                .reopened_from_session_id
+                .as_deref()
+                .map(parse_id)
+                .transpose()?,
             version: self.version,
         }))
     }
+}
+
+/// A UUID column that is not an opaque domain id.
+pub(crate) fn parse_uuid_field(value: &str) -> Result<Uuid, AppError> {
+    Uuid::parse_str(value).map_err(|_| AppError::Storage(format!("`{value}` is not a UUID")))
 }
 
 struct RawTransaction {

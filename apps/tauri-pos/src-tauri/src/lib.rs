@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 
 use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
 use edge_protocol::{
-    CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, ProductLookupV1, ProductSelectorV1,
-    TransactionPaymentsV1, TransactionRequestV1,
+    CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, ProductLookupV1,
+    ProductSelectorV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -132,6 +132,21 @@ fn transaction_payments(
         .map_err(BridgeError::from)
 }
 
+/// What the drawer should contain, and the movements that explain it.
+///
+/// A diagnostic read. There is deliberately no command here for cash in, cash
+/// out, a safe drop, a close or a reopen: this window is read-only in this
+/// milestone and those are exercised through the CLI.
+///
+/// Note what this is *not*: it is not the payload a cashier's close path uses.
+/// That one is `SessionCloseRequirementsV1`, which cannot carry an amount at
+/// all (ADR 022). This window shows the expected cash because it is an
+/// operational view, not a count sheet.
+#[tauri::command]
+fn cash_position(bridge: tauri::State<'_, EdgeBridge>) -> Result<CashPositionV1, BridgeError> {
+    bridge.client.cash_position().map_err(BridgeError::from)
+}
+
 #[tauri::command]
 fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDto {
     let status = bridge.client.connection();
@@ -177,6 +192,7 @@ pub fn run() {
             catalog_status,
             lookup_barcode,
             transaction_payments,
+            cash_position,
             connection_status
         ])
         .run(tauri::generate_context!());

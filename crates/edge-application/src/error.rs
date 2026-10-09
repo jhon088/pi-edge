@@ -3,6 +3,7 @@
 //! Cross-aggregate invariants get their own variant so that clients (CLI, UI,
 //! future daemon) can react programmatically instead of matching on strings.
 
+use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
 use edge_payments::PaymentError;
@@ -17,6 +18,15 @@ pub enum AppError {
 
     #[error(transparent)]
     Payment(#[from] PaymentError),
+
+    #[error(transparent)]
+    Cash(#[from] CashError),
+
+    #[error("the session cannot close yet: {}", blockers.join(", "))]
+    SessionCloseBlocked { blockers: Vec<String> },
+
+    #[error("the business day cannot close yet: {}", blockers.join(", "))]
+    BusinessDayCloseBlocked { blockers: Vec<String> },
 
     #[error("storage failure: {0}")]
     Storage(String),
@@ -89,6 +99,10 @@ impl AppError {
             AppError::Catalog(error) => error.code(),
             // The payment context publishes its own codes.
             AppError::Payment(error) => error.code(),
+            // The cash context publishes its own codes.
+            AppError::Cash(error) => error.code(),
+            AppError::SessionCloseBlocked { .. } => "SESSION_CLOSE_BLOCKED",
+            AppError::BusinessDayCloseBlocked { .. } => "BUSINESS_DAY_CLOSE_BLOCKED",
             AppError::Storage(_) => "STORAGE_FAILURE",
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
             AppError::Serialization(_) => "SERIALIZATION_FAILURE",

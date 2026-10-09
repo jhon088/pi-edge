@@ -15,12 +15,13 @@ use edge_catalog::basket::{
 use edge_catalog::{resolve_price, resolve_sale_line, CatalogSnapshot, PricingContext};
 use edge_domain::prelude::*;
 use edge_payments::{PaymentProviderPort, SimulatorPaymentProvider};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::commands::*;
+use crate::context::{
+    idempotent, journal_event, require_active_transaction, require_device,
+    require_open_business_day, require_single_open_session, EventContext,
+};
 use crate::error::AppError;
 use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
 use crate::queries::{EdgeState, PendingOutbox};
@@ -163,6 +164,7 @@ where
     ) -> Result<RegisterSession, AppError> {
         let now = self.clock.now();
         let session_id = SessionId::from_uuid(self.ids.new_uuid());
+        let opening_float_movement_id = self.ids.new_uuid();
         let event_id = self.new_event_id();
 
         let session = self.store.transact(move |uow| {
@@ -177,6 +179,7 @@ where
                     });
                 }
                 let session = RegisterSession::open(NewRegisterSession {
+                    reopened_from_session_id: None,
                     session_id,
                     business_day_id: day.id(),
                     register_id: cmd.register_id.clone(),
@@ -185,6 +188,15 @@ where
                     opened_at: now,
                 })?;
                 uow.insert_register_session(&session, now)?;
+                // The float becomes the ledger's first movement, so the drawer
+                // is explained by the ledger alone (ADR 021).
+                crate::cash_service::record_opening_float(
+                    uow,
+                    opening_float_movement_id,
+                    &day,
+                    &session,
+                    now,
+                )?;
                 let ctx = EventContext {
                     device: &device,
                     register_id: Some(&cmd.register_id),
@@ -683,65 +695,10 @@ where
         Ok(transaction)
     }
 
-    pub fn close_register_session(
-        &self,
-        cmd: CloseRegisterSessionCommand,
-    ) -> Result<RegisterSession, AppError> {
-        let now = self.clock.now();
-        let journal_event_id = self.new_event_id();
-        let outbox_event_id = self.new_event_id();
-
-        let session = self.store.transact(move |uow| {
-            idempotent(uow, cmd.request_id, "CloseRegisterSession", now, |uow| {
-                let device = require_device(uow)?;
-                let day = require_open_business_day(uow, &device.store_id)?;
-                let mut session = require_single_open_session(uow, day.id())?;
-                if let Some(active) = uow.find_active_transaction(session.id())? {
-                    return Err(AppError::SessionHasActiveTransaction {
-                        transaction_id: active.id().to_string(),
-                    });
-                }
-                session.close(now)?;
-                uow.update_register_session(&session, now)?;
-                let ctx = EventContext {
-                    device: &device,
-                    register_id: Some(&session.state().register_id),
-                    business_day_id: Some(day.id()),
-                    session_id: Some(session.id()),
-                    transaction_id: None,
-                    operator_id: Some(&session.state().operator_id),
-                };
-                uow.append_journal(&journal_event(
-                    journal_event_id,
-                    JournalEventType::SessionClosed,
-                    session.id().to_string(),
-                    &ctx,
-                    now,
-                    json!({
-                        "closed_at": now.to_rfc3339(),
-                        "opening_cash_minor": session.state().opening_cash.minor(),
-                    }),
-                ))?;
-                let payload = serde_json::to_value(session.state())
-                    .map_err(|e| AppError::Serialization(e.to_string()))?;
-                uow.enqueue_outbox(&OutboxEvent::pending(
-                    outbox_event_id,
-                    OutboxEventType::RegisterSessionClosed,
-                    session.id().to_string(),
-                    session.state().version,
-                    device.tenant_id.clone(),
-                    device.store_id.clone(),
-                    Some(session.state().register_id.clone()),
-                    Some(day.id()),
-                    now,
-                    payload,
-                ))?;
-                Ok(session)
-            })
-        })?;
-        tracing::info!(session_id = %session.id(), "register session closed");
-        Ok(session)
-    }
+    // `close_register_session` is gone. A session now closes through the blind
+    // close in `cash_service.rs`: `request_session_close` then
+    // `declare_closing_cash` (ADR 022). A single-shot close would let a client
+    // finish a till without ever counting it.
 
     pub fn close_business_day(
         &self,
@@ -755,11 +712,24 @@ where
             idempotent(uow, cmd.request_id, "CloseBusinessDay", now, |uow| {
                 let device = require_device(uow)?;
                 let mut day = require_open_business_day(uow, &device.store_id)?;
-                let open_sessions = uow.find_open_sessions(day.id())?;
-                if !open_sessions.is_empty() {
-                    return Err(AppError::BusinessDayHasOpenSessions {
-                        count: open_sessions.len(),
-                    });
+                // Everything standing in the way, named together: a drawer
+                // nobody counted, a count nobody declared, a sale in progress,
+                // money whose fate or location is unknown (ADR 024).
+                let mut blockers = Vec::new();
+                for session in uow.find_open_sessions(day.id())? {
+                    blockers.push(format!(
+                        "{}:{}",
+                        if session.is_close_requested() {
+                            "SESSION_AWAITING_DECLARATION"
+                        } else {
+                            "OPEN_SESSION"
+                        },
+                        session.id()
+                    ));
+                    blockers.extend(crate::cash_service::close_blockers(uow, &session)?);
+                }
+                if !blockers.is_empty() {
+                    return Err(AppError::BusinessDayCloseBlocked { blockers });
                 }
                 day.close(now)?;
                 uow.update_business_day(&day, now)?;
@@ -874,82 +844,7 @@ where
     }
 }
 
-// -------------------------------------------------------------------- helpers
-
-/// Replay guard. The lookup, the work and the result record all happen inside
-/// the caller's transaction, so a crash can never record a command whose
-/// effects were rolled back.
-pub(crate) fn idempotent<T, F>(
-    uow: &mut dyn UnitOfWork,
-    request_id: Option<Uuid>,
-    command_type: &'static str,
-    now: Timestamp,
-    work: F,
-) -> Result<T, AppError>
-where
-    T: Serialize + DeserializeOwned,
-    F: FnOnce(&mut dyn UnitOfWork) -> Result<T, AppError>,
-{
-    let Some(request_id) = request_id else {
-        return work(uow);
-    };
-    if let Some(recorded) = uow.find_command_result(request_id)? {
-        tracing::info!(%request_id, command_type, "replaying recorded command result");
-        return serde_json::from_str(&recorded).map_err(|e| AppError::Serialization(e.to_string()));
-    }
-    let outcome = work(&mut *uow)?;
-    let serialized =
-        serde_json::to_string(&outcome).map_err(|e| AppError::Serialization(e.to_string()))?;
-    uow.record_command_result(request_id, command_type, &serialized, now)?;
-    Ok(outcome)
-}
-
-pub(crate) struct EventContext<'a> {
-    pub(crate) device: &'a DeviceProfile,
-    pub(crate) register_id: Option<&'a RegisterId>,
-    pub(crate) business_day_id: Option<BusinessDayId>,
-    pub(crate) session_id: Option<SessionId>,
-    pub(crate) transaction_id: Option<TransactionId>,
-    pub(crate) operator_id: Option<&'a OperatorId>,
-}
-
-pub(crate) fn journal_event(
-    event_id: EventId,
-    event_type: JournalEventType,
-    aggregate_id: String,
-    ctx: &EventContext<'_>,
-    now: Timestamp,
-    payload_json: serde_json::Value,
-) -> JournalEvent {
-    JournalEvent {
-        event_id,
-        event_type,
-        aggregate_id,
-        tenant_id: ctx.device.tenant_id.clone(),
-        store_id: ctx.device.store_id.clone(),
-        register_id: ctx.register_id.cloned(),
-        business_day_id: ctx.business_day_id,
-        session_id: ctx.session_id,
-        transaction_id: ctx.transaction_id,
-        operator_id: ctx.operator_id.cloned(),
-        occurred_at: now,
-        payload_json,
-    }
-}
-
-pub(crate) fn require_device(uow: &mut dyn UnitOfWork) -> Result<DeviceProfile, AppError> {
-    uow.device_profile()?.ok_or(AppError::DeviceNotInitialized)
-}
-
-pub(crate) fn require_open_business_day(
-    uow: &mut dyn UnitOfWork,
-    store_id: &StoreId,
-) -> Result<BusinessDay, AppError> {
-    uow.find_open_business_day(store_id)?
-        .ok_or(AppError::NoOpenBusinessDay)
-}
-
-pub(crate) fn require_business_day_open(day: &BusinessDay) -> Result<(), AppError> {
+fn require_business_day_open(day: &BusinessDay) -> Result<(), AppError> {
     if day.is_open() {
         Ok(())
     } else {
@@ -959,19 +854,7 @@ pub(crate) fn require_business_day_open(day: &BusinessDay) -> Result<(), AppErro
     }
 }
 
-pub(crate) fn require_single_open_session(
-    uow: &mut dyn UnitOfWork,
-    business_day_id: BusinessDayId,
-) -> Result<RegisterSession, AppError> {
-    let mut sessions = uow.find_open_sessions(business_day_id)?;
-    match sessions.len() {
-        0 => Err(AppError::NoOpenRegisterSession),
-        1 => Ok(sessions.remove(0)),
-        count => Err(AppError::AmbiguousOpenSession { count }),
-    }
-}
-
-pub(crate) fn require_session_open(session: &RegisterSession) -> Result<(), AppError> {
+fn require_session_open(session: &RegisterSession) -> Result<(), AppError> {
     if session.is_open() {
         Ok(())
     } else {
@@ -982,7 +865,7 @@ pub(crate) fn require_session_open(session: &RegisterSession) -> Result<(), AppE
 }
 
 /// The snapshot a new sale must capture.
-pub(crate) fn require_active_catalog(
+fn require_active_catalog(
     uow: &mut dyn UnitOfWork,
     store_id: &StoreId,
 ) -> Result<CatalogSnapshot, AppError> {
@@ -996,7 +879,7 @@ pub(crate) fn require_active_catalog(
 ///
 /// The snapshot is reloaded by id and required to still be usable: an import in
 /// flight can never price a line, and a superseded snapshot still can.
-pub(crate) fn require_sale_pricing(
+fn require_sale_pricing(
     uow: &mut dyn UnitOfWork,
     transaction: &RetailTransaction,
 ) -> Result<(CatalogSnapshot, PricingCapture), AppError> {
@@ -1021,14 +904,6 @@ pub(crate) fn require_sale_pricing(
     Ok((snapshot, captured))
 }
 
-pub(crate) fn require_active_transaction(
-    uow: &mut dyn UnitOfWork,
-    session_id: SessionId,
-) -> Result<RetailTransaction, AppError> {
-    uow.find_active_transaction(session_id)?
-        .ok_or(AppError::NoActiveTransaction)
-}
-
 /// Re-evaluate every promotion against the whole basket and write the result
 /// onto the transaction. Returns how many promotions applied.
 ///
@@ -1036,7 +911,7 @@ pub(crate) fn require_active_transaction(
 /// invalidated on every basket change, and getting that wrong means charging a
 /// customer the wrong amount. Idempotent by construction — the same basket and
 /// the same snapshot produce the same adjustments, with the same ids.
-pub(crate) fn evaluate_basket_promotions(
+fn evaluate_basket_promotions(
     uow: &mut dyn UnitOfWork,
     device: &DeviceProfile,
     transaction: &mut RetailTransaction,

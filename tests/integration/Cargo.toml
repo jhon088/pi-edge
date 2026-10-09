@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 edge-application = { workspace = true, features = ["testing"] }
+edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
 edge-payments = { workspace = true }

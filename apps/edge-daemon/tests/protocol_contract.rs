@@ -3,15 +3,18 @@
 //! Clients branch on these strings, so a rename in the core must not silently
 //! change what a UI sees. `edge-protocol` cannot depend on `edge-application`,
 //! which is why the equality is asserted here instead of in a type.
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use edge_application::AppError;
+use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, MoneyError};
 use edge_payments::PaymentError;
 use edge_protocol::{
-    error_codes, AddItemRequestV1, ChangeQuantityRequestV1, OperationV1, PaymentRequestV1,
-    ProductSelectorV1, RemoveItemRequestV1, StartPaymentRequestV1, TransactionRequestV1,
+    error_codes, AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1,
+    ChangeQuantityRequestV1, DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1,
+    OperationV1, PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1, ReopenSessionRequestV1,
+    SessionCloseRequirementsV1, StartPaymentRequestV1, TransactionRequestV1,
 };
 
 #[test]
@@ -253,4 +256,184 @@ fn payment_operations_have_stable_names() {
     ] {
         assert!(!operation.is_command());
     }
+}
+
+#[test]
+fn cash_codes_are_stable() {
+    for (error, expected) in [
+        (
+            CashError::NonPositiveAmount { minor: 0 },
+            error_codes::CASH_INVALID_AMOUNT,
+        ),
+        (
+            CashError::WrongDirection {
+                movement_type: "CASH_SALE",
+                expected: "IN",
+                actual: "OUT",
+            },
+            error_codes::CASH_INVALID_MOVEMENT,
+        ),
+        (
+            CashError::UnbalancedCashSale {
+                amount_minor: 1,
+                tendered_minor: 2,
+                change_minor: 3,
+            },
+            error_codes::CASH_INVALID_MOVEMENT,
+        ),
+        (
+            CashError::MissingReason {
+                field: "reason_code",
+            },
+            error_codes::CASH_REASON_REQUIRED,
+        ),
+        (
+            CashError::InvalidSafeDropTransition {
+                safe_drop_id: "d".to_owned(),
+                from: "REJECTED",
+                attempted: "APPROVED",
+            },
+            error_codes::SAFE_DROP_INVALID_STATE,
+        ),
+        (
+            CashError::SelfApproval,
+            error_codes::SAFE_DROP_SELF_APPROVAL,
+        ),
+        (
+            CashError::SafeDropNotFound {
+                safe_drop_id: "d".to_owned(),
+            },
+            error_codes::SAFE_DROP_NOT_FOUND,
+        ),
+        (
+            CashError::DeclarationRequired,
+            error_codes::SESSION_DECLARATION_REQUIRED,
+        ),
+        (
+            CashError::AlreadyDeclared,
+            error_codes::SESSION_ALREADY_DECLARED,
+        ),
+        (
+            CashError::InvalidRecord {
+                field: "movement_id",
+                reason: "not a uuid".to_owned(),
+            },
+            error_codes::CASH_INVALID_RECORD,
+        ),
+    ] {
+        assert_eq!(error.code(), expected);
+        assert_eq!(AppError::Cash(error).kind(), expected);
+    }
+
+    // The two blocker errors name what is in the way rather than refusing
+    // opaquely, and have their own codes.
+    assert_eq!(
+        AppError::SessionCloseBlocked {
+            blockers: vec!["PENDING_SAFE_DROP:x".to_owned()],
+        }
+        .kind(),
+        error_codes::SESSION_CLOSE_BLOCKED
+    );
+    assert_eq!(
+        AppError::BusinessDayCloseBlocked {
+            blockers: vec!["OPEN_SESSION:x".to_owned()],
+        }
+        .kind(),
+        error_codes::BUSINESS_DAY_CLOSE_BLOCKED
+    );
+}
+
+#[test]
+fn cash_operations_have_stable_names() {
+    let movement = CashMovementRequestV1 {
+        amount_minor: 1_000,
+        reason_code: "R".to_owned(),
+    };
+    for (operation, expected, is_command) in [
+        (OperationV1::GetCashPosition, "GET_CASH_POSITION", false),
+        (OperationV1::CashIn(movement.clone()), "CASH_IN", true),
+        (OperationV1::CashOut(movement.clone()), "CASH_OUT", true),
+        (
+            OperationV1::RequestSafeDrop(movement),
+            "REQUEST_SAFE_DROP",
+            true,
+        ),
+        (
+            OperationV1::ApproveSafeDrop(ApproveSafeDropRequestV1 {
+                safe_drop_id: "d".to_owned(),
+                approver: "SUPERVISOR-01".to_owned(),
+                approve: true,
+            }),
+            "APPROVE_SAFE_DROP",
+            true,
+        ),
+        (
+            OperationV1::RequestSessionClose,
+            "REQUEST_SESSION_CLOSE",
+            true,
+        ),
+        (
+            OperationV1::DeclareClosingCash(DeclareClosingCashRequestV1 {
+                counted_minor: 1_000,
+            }),
+            "DECLARE_CLOSING_CASH",
+            true,
+        ),
+        (
+            OperationV1::ReopenSession(ReopenSessionRequestV1 {
+                session_id: "s".to_owned(),
+                reason: "recount".to_owned(),
+                operator_id: "CASHIER-002".to_owned(),
+            }),
+            "REOPEN_SESSION",
+            true,
+        ),
+        (
+            OperationV1::ForceCloseBusinessDay(ForceCloseBusinessDayRequestV1 {
+                reason: "central EOD".to_owned(),
+                actor: "OPERATIONS".to_owned(),
+            }),
+            "FORCE_CLOSE_BUSINESS_DAY",
+            true,
+        ),
+    ] {
+        assert_eq!(operation.name(), expected);
+        assert_eq!(operation.is_command(), is_command, "{expected}");
+    }
+
+    // The one-shot session close is gone: a till cannot be finished without
+    // being counted (ADR 022).
+    let names: Vec<&str> = vec![
+        "REQUEST_SESSION_CLOSE",
+        "DECLARE_CLOSING_CASH",
+        "FORCE_CLOSE_BUSINESS_DAY",
+    ];
+    assert!(!names.contains(&"CLOSE_REGISTER_SESSION"));
+}
+
+/// The structural half of the blind close, pinned at the contract level: the
+/// pre-close type has no field that could carry an amount (ADR 022).
+#[test]
+fn the_pre_close_dto_has_no_amount_bearing_field() {
+    let rendered = serde_json::to_value(SessionCloseRequirementsV1 {
+        session_id: "11111111-1111-1111-1111-111111111111".to_owned(),
+        currency: "MXN".to_owned(),
+        movement_count: 7,
+        blockers: Vec::new(),
+        requires_declaration: true,
+    })
+    .unwrap();
+    let object = rendered.as_object().expect("an object");
+    assert_eq!(
+        object.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec![
+            "session_id",
+            "currency",
+            "movement_count",
+            "blockers",
+            "requires_declaration"
+        ],
+        "adding a field here needs a deliberate review: it is the payload a \
+         cashier sees before counting the drawer"
+    );
 }

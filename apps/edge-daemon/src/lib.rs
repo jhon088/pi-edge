@@ -27,9 +27,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use edge_application::adapters::{SystemClock, UuidFactory};
 use edge_application::ports::Clock;
 use edge_application::EdgeApplication;
+use edge_application::{SystemClock, UuidFactory};
 use edge_ipc::credentials::{FileCredentialProvider, LocalCredentialProvider};
 use edge_ipc::{DesktopLocalListener, EdgeListener, RuntimePaths};
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript};

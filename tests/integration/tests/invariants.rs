@@ -138,9 +138,23 @@ fn refuses_to_close_a_session_with_an_active_transaction() {
     open_register(&core);
     core.start_transaction(StartTransactionCommand::default())
         .unwrap();
+    // A close is now two steps, and the first one reports what is in the way
+    // rather than refusing outright — an operator sees the whole list.
+    let requirements = core
+        .request_session_close(RequestSessionCloseCommand::default())
+        .unwrap();
+    assert!(requirements
+        .blockers
+        .iter()
+        .any(|blocker| blocker.starts_with("ACTIVE_TRANSACTION:")));
+    assert!(!requirements.can_declare());
+    // And declaring is refused while a blocker stands.
     assert!(matches!(
-        core.close_register_session(CloseRegisterSessionCommand::default()),
-        Err(AppError::SessionHasActiveTransaction { .. })
+        core.declare_closing_cash(DeclareClosingCashCommand {
+            request_id: None,
+            counted_minor: 100_000,
+        }),
+        Err(AppError::Cash(_)) | Err(AppError::SessionCloseBlocked { .. })
     ));
 }
 
@@ -148,10 +162,16 @@ fn refuses_to_close_a_session_with_an_active_transaction() {
 fn refuses_to_close_a_business_day_with_open_sessions() {
     let core = in_memory_core();
     open_register(&core);
-    assert!(matches!(
-        core.close_business_day(CloseBusinessDayCommand::default()),
-        Err(AppError::BusinessDayHasOpenSessions { count: 1 })
-    ));
+    let error = core
+        .close_business_day(CloseBusinessDayCommand::default())
+        .unwrap_err();
+    assert_eq!(error.kind(), "BUSINESS_DAY_CLOSE_BLOCKED");
+    match error {
+        AppError::BusinessDayCloseBlocked { blockers } => {
+            assert!(blockers.iter().any(|b| b.starts_with("OPEN_SESSION:")));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

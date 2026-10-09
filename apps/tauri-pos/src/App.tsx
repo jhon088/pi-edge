@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   describeError,
+  fetchCashPosition,
   fetchCatalogStatus,
   fetchConnection,
   fetchCoreInfo,
@@ -19,6 +20,7 @@ import {
 } from "./api";
 import type {
   BridgeError,
+  CashPosition,
   CatalogStatus,
   ConnectionStatus,
   CoreInfo,
@@ -37,6 +39,8 @@ interface Snapshot {
   catalog: CatalogStatus | null;
   /** Payments of the active sale, or null when there is no sale to ask about. */
   payments: TransactionPayments | null;
+  /** The drawer of the open session, or null when no session is open. */
+  cash: CashPosition | null;
   error: BridgeError | null;
 }
 
@@ -66,7 +70,10 @@ export default function App() {
         const payments = active
           ? await fetchTransactionPayments(active.transaction_id)
           : null;
-        setSnapshot({ connection, info, state, catalog, payments, error: null });
+        // The drawer belongs to a session, so it is only asked for when one is
+        // open. Every figure in it is the core's.
+        const cash = state.session ? await fetchCashPosition() : null;
+        setSnapshot({ connection, info, state, catalog, payments, cash, error: null });
       } catch (failure) {
         // The core is unreachable or refused: report it, invent nothing. In
         // particular no stale financial state is kept — a payment total that
@@ -77,6 +84,7 @@ export default function App() {
           state: null,
           catalog: null,
           payments: null,
+          cash: null,
           error: describeError(failure),
         });
       }
@@ -118,7 +126,7 @@ export default function App() {
     );
   }
 
-  const { connection, info, state, catalog, payments, error } = snapshot;
+  const { connection, info, state, catalog, payments, cash, error } = snapshot;
 
   return (
     <main className="app">
@@ -266,6 +274,19 @@ export default function App() {
           <ActiveTransaction transaction={state.active_transaction} />
         ) : (
           <p className="muted">No active transaction.</p>
+        )}
+      </Card>
+
+      <Card title="Cash drawer">
+        {!connection.connected ? (
+          <p className="muted">
+            Core disconnected — no cash position is shown. Nothing here is
+            cached, so this screen can never display a stale drawer.
+          </p>
+        ) : cash ? (
+          <CashDrawer cash={cash} />
+        ) : (
+          <p className="muted">No open session, so no drawer to report.</p>
         )}
       </Card>
 
@@ -501,6 +522,103 @@ function ActiveTransaction({
       </div>
       <p className="muted">
         Every amount above was computed by the core and is displayed verbatim.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Read-only cash view.
+ *
+ * Every figure is the core's: this component derives nothing and offers no
+ * action. Cash in, cash out, safe drops, closes and reopens are exercised
+ * through the CLI in this milestone.
+ *
+ * This is an *operational* view, so it does show the expected cash. The
+ * cashier's close path never receives that figure — the blind close is
+ * enforced by a separate operation whose payload cannot carry an amount.
+ */
+function CashDrawer({ cash }: { cash: CashPosition }) {
+  return (
+    <>
+      <div className="row totals">
+        <Field label="Opening float" value={cash.opening_float.formatted} />
+        <Field label="Cash sales" value={cash.cash_sales.formatted} />
+        <Field label="Cash in" value={cash.cash_in.formatted} />
+        <Field label="Cash out" value={cash.cash_out.formatted} />
+        <Field label="Safe drops" value={cash.safe_drops.formatted} />
+        <Field label="Expected cash" value={cash.expected_cash.formatted} />
+      </div>
+      <div className="row">
+        <Field label="Register" value={cash.register_id} />
+        <Field label="Operator" value={cash.operator_id} />
+        <Field label="Session" value={cash.session_status} />
+        <Field label="Tendered (audit)" value={cash.tendered_total.formatted} />
+        <Field label="Change given (audit)" value={cash.change_total.formatted} />
+      </div>
+
+      {cash.pending_safe_drops.length > 0 ? (
+        <table className="lines">
+          <thead>
+            <tr>
+              <th>Pending safe drop</th>
+              <th className="num">Amount</th>
+              <th>Reason</th>
+              <th>Requested by</th>
+              <th>Requested at</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cash.pending_safe_drops.map((drop) => (
+              <tr key={drop.safe_drop_id}>
+                <td className="mono">{drop.safe_drop_id}</td>
+                <td className="num">{drop.amount.formatted}</td>
+                <td className="mono">{drop.reason_code}</td>
+                <td>{drop.requested_by}</td>
+                <td className="muted">{drop.requested_at}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      {cash.movements.length === 0 ? (
+        <p className="muted">No movements yet.</p>
+      ) : (
+        <table className="lines">
+          <thead>
+            <tr>
+              <th>Movement</th>
+              <th>Dir</th>
+              <th className="num">Amount</th>
+              <th className="num">Tendered</th>
+              <th className="num">Change</th>
+              <th>Reason</th>
+              <th>Operator</th>
+              <th>At</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cash.movements.map((movement) => (
+              <tr key={movement.movement_id}>
+                <td className="mono">{movement.movement_type}</td>
+                <td>{movement.direction}</td>
+                <td className="num">{movement.amount.formatted}</td>
+                <td className="num">{movement.tendered?.formatted ?? "—"}</td>
+                <td className="num">{movement.change?.formatted ?? "—"}</td>
+                <td className="mono">{movement.reason_code ?? "—"}</td>
+                <td>{movement.operator_id}</td>
+                <td className="muted">{movement.created_at}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <p className="muted">
+        The ledger is append-only: a correction is a new compensating movement,
+        never an edit. Expected cash is derived from these movements and is not
+        stored anywhere.
       </p>
     </>
   );

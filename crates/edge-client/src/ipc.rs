@@ -6,13 +6,16 @@ use std::time::{Duration, Instant};
 
 use edge_ipc::{DesktopLocalTransport, EdgeEventStream, EdgeTransport, IpcError};
 use edge_protocol::{
-    AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
-    CatalogSnapshotRequestV1, CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1,
-    CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
-    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PaymentRequestV1,
-    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
-    RegisterSessionV1, RemoveItemRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
-    RetailTransactionV1, StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
+    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayV1,
+    CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotRequestV1,
+    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
+    CoreInfoV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
+    InitDeviceRequestV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
+    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1,
+    PutCatalogChunkRequestV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
+    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1,
+    SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1, TransactionPaymentsV1,
+    TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -384,11 +387,106 @@ impl EdgeClient for IpcEdgeClient {
         )
     }
 
-    fn close_session(&self, request_id: Option<Uuid>) -> Result<RegisterSessionV1, ClientError> {
+    fn cash_position(&self) -> Result<CashPositionV1, ClientError> {
         expect_result!(
-            self.call(OperationV1::CloseRegisterSession, request_id)?,
+            self.call(OperationV1::GetCashPosition, None)?,
+            ResultV1::CashPosition,
+            "CASH_POSITION"
+        )
+    }
+
+    fn cash_in(
+        &self,
+        request: CashMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CashPositionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::CashIn(request), request_id)?,
+            ResultV1::CashPosition,
+            "CASH_POSITION"
+        )
+    }
+
+    fn cash_out(
+        &self,
+        request: CashMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<CashPositionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::CashOut(request), request_id)?,
+            ResultV1::CashPosition,
+            "CASH_POSITION"
+        )
+    }
+
+    fn request_safe_drop(
+        &self,
+        request: CashMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<SafeDropV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::RequestSafeDrop(request), request_id)?,
+            ResultV1::SafeDrop,
+            "SAFE_DROP"
+        )
+    }
+
+    fn approve_safe_drop(
+        &self,
+        request: ApproveSafeDropRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<SafeDropV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ApproveSafeDrop(request), request_id)?,
+            ResultV1::SafeDrop,
+            "SAFE_DROP"
+        )
+    }
+
+    fn request_session_close(
+        &self,
+        request_id: Option<Uuid>,
+    ) -> Result<SessionCloseRequirementsV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::RequestSessionClose, request_id)?,
+            ResultV1::SessionCloseRequirements,
+            "SESSION_CLOSE_REQUIREMENTS"
+        )
+    }
+
+    fn declare_closing_cash(
+        &self,
+        request: DeclareClosingCashRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<SessionCloseResultV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::DeclareClosingCash(request), request_id)?,
+            ResultV1::SessionCloseResult,
+            "SESSION_CLOSE_RESULT"
+        )
+    }
+
+    fn reopen_session(
+        &self,
+        request: ReopenSessionRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RegisterSessionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ReopenSession(request), request_id)?,
             ResultV1::RegisterSession,
             "REGISTER_SESSION"
+        )
+    }
+
+    fn force_close_business_day(
+        &self,
+        request: ForceCloseBusinessDayRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<BusinessDayV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ForceCloseBusinessDay(request), request_id)?,
+            ResultV1::BusinessDay,
+            "BUSINESS_DAY"
         )
     }
 

@@ -9,16 +9,19 @@
 //! typed error instead of reaching a use case.
 
 use edge_application::commands::{
-    AddItemCommand, BeginCatalogImportCommand, ChangeQuantityCommand, CommitCatalogImportCommand,
-    InitDeviceCommand, OpenRegisterSessionCommand, PutCatalogChunkCommand, ReconcilePaymentCommand,
-    RemoveItemCommand, ReversePaymentCommand, StartPaymentCommand,
+    AddItemCommand, ApproveSafeDropCommand, BeginCatalogImportCommand, CashInCommand,
+    CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand, DeclareClosingCashCommand,
+    ForceCloseBusinessDayCommand, InitDeviceCommand, OpenRegisterSessionCommand,
+    PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand,
+    RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand,
 };
 use edge_application::ports::DeviceProfile;
 use edge_application::queries::{
-    CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState, PendingOutbox,
-    ProductLookup,
+    CashPositionView, CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState,
+    PendingOutbox, ProductLookup, SessionCloseResult,
 };
 use edge_application::{AppError, PaymentOutcome};
+use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
 use edge_catalog::CatalogError;
 use edge_domain::prelude::*;
 use edge_payments::{PaymentAttempt, PaymentError, PaymentView, Settlement, TenderType};
@@ -566,6 +569,185 @@ impl From<&AppliedPromotion> for AppliedPromotionV1 {
             amount: MoneyV1::from(&applied.amount),
             reason: applied.reason.clone(),
             detail: applied.detail.clone(),
+        }
+    }
+}
+
+// ------------------------------------------------------------ cash management
+
+impl From<&CashMovement> for CashMovementV1 {
+    fn from(movement: &CashMovement) -> Self {
+        Self {
+            movement_id: movement.movement_id.to_string(),
+            movement_type: movement.movement_type.as_str().to_owned(),
+            direction: movement.direction.as_str().to_owned(),
+            amount: MoneyV1::from(&movement.amount),
+            tendered: movement.tendered.as_ref().map(MoneyV1::from),
+            change: movement.change.as_ref().map(MoneyV1::from),
+            source_ref: movement.source_ref.clone(),
+            reason_code: movement.reason_code.clone(),
+            approval_id: movement.approval_id.map(|id| id.to_string()),
+            operator_id: movement.operator_id.to_string(),
+            created_at: movement.created_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<&SafeDrop> for SafeDropV1 {
+    fn from(drop: &SafeDrop) -> Self {
+        Self {
+            safe_drop_id: drop.safe_drop_id.to_string(),
+            approval_id: drop.approval_id.to_string(),
+            amount: MoneyV1::from(&drop.amount),
+            reason_code: drop.reason_code.clone(),
+            status: drop.status.as_str().to_owned(),
+            requested_by: drop.requested_by.to_string(),
+            requested_at: drop.requested_at.to_rfc3339(),
+            approved_by: drop.approved_by.as_ref().map(ToString::to_string),
+            approved_at: drop.approved_at.map(|ts| ts.to_rfc3339()),
+        }
+    }
+}
+
+impl From<&CashPositionView> for CashPositionV1 {
+    fn from(view: &CashPositionView) -> Self {
+        let position = &view.position;
+        Self {
+            session_id: view.session_id.to_string(),
+            register_id: view.register_id.to_string(),
+            operator_id: view.operator_id.to_string(),
+            session_status: view.session_status.as_str().to_owned(),
+            opening_float: MoneyV1::from(&position.opening_float),
+            cash_sales: MoneyV1::from(&position.cash_sales),
+            cash_in: MoneyV1::from(&position.cash_in),
+            cash_out: MoneyV1::from(&position.cash_out),
+            safe_drops: MoneyV1::from(&position.safe_drops),
+            expected_cash: MoneyV1::from(&position.expected_cash),
+            tendered_total: MoneyV1::from(&position.tendered_total),
+            change_total: MoneyV1::from(&position.change_total),
+            movements: view.movements.iter().map(CashMovementV1::from).collect(),
+            pending_safe_drops: view
+                .pending_safe_drops
+                .iter()
+                .map(SafeDropV1::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&SessionCloseRequirements> for SessionCloseRequirementsV1 {
+    /// Note what is *not* copied: there is no expected figure, no movement
+    /// list and no total in either type (ADR 022).
+    fn from(requirements: &SessionCloseRequirements) -> Self {
+        Self {
+            session_id: requirements.session_id.to_string(),
+            currency: requirements.currency.code().to_owned(),
+            movement_count: requirements.movement_count,
+            blockers: requirements.blockers.clone(),
+            requires_declaration: requirements.requires_declaration,
+        }
+    }
+}
+
+impl From<&SessionCloseResult> for SessionCloseResultV1 {
+    fn from(result: &SessionCloseResult) -> Self {
+        Self {
+            session_id: result.session_id.to_string(),
+            closure_kind: result.closure_kind.as_str().to_owned(),
+            declared_cash: result.declared_cash.as_ref().map(MoneyV1::from),
+            expected_at_close: MoneyV1::from(&result.expected_at_close),
+            variance: result.variance.as_ref().map(MoneyV1::from),
+            variance_label: result.variance_label.clone(),
+        }
+    }
+}
+
+impl CashMovementRequestV1 {
+    pub fn into_cash_in(self, request_id: Option<Uuid>) -> CashInCommand {
+        CashInCommand {
+            request_id,
+            amount_minor: self.amount_minor,
+            reason_code: self.reason_code,
+        }
+    }
+
+    pub fn into_cash_out(self, request_id: Option<Uuid>) -> CashOutCommand {
+        CashOutCommand {
+            request_id,
+            amount_minor: self.amount_minor,
+            reason_code: self.reason_code,
+        }
+    }
+
+    pub fn into_safe_drop(self, request_id: Option<Uuid>) -> RequestSafeDropCommand {
+        RequestSafeDropCommand {
+            request_id,
+            amount_minor: self.amount_minor,
+            reason_code: self.reason_code,
+        }
+    }
+}
+
+impl ApproveSafeDropRequestV1 {
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<ApproveSafeDropCommand, CashError> {
+        Ok(ApproveSafeDropCommand {
+            request_id,
+            safe_drop_id: self
+                .safe_drop_id
+                .parse()
+                .map_err(|_| CashError::InvalidRecord {
+                    field: "safe_drop_id",
+                    reason: format!("`{}` is not a UUID", self.safe_drop_id),
+                })?,
+            approver: OperatorId::new(self.approver).map_err(|error| CashError::InvalidRecord {
+                field: "approver",
+                reason: error.to_string(),
+            })?,
+            approve: self.approve,
+        })
+    }
+}
+
+impl DeclareClosingCashRequestV1 {
+    pub fn into_command(self, request_id: Option<Uuid>) -> DeclareClosingCashCommand {
+        DeclareClosingCashCommand {
+            request_id,
+            counted_minor: self.counted_minor,
+        }
+    }
+}
+
+impl ReopenSessionRequestV1 {
+    pub fn into_command(self, request_id: Option<Uuid>) -> Result<ReopenSessionCommand, CashError> {
+        Ok(ReopenSessionCommand {
+            request_id,
+            session_id: self
+                .session_id
+                .parse()
+                .map_err(|_| CashError::InvalidRecord {
+                    field: "session_id",
+                    reason: format!("`{}` is not a UUID", self.session_id),
+                })?,
+            reason: self.reason,
+            operator_id: OperatorId::new(self.operator_id).map_err(|error| {
+                CashError::InvalidRecord {
+                    field: "operator_id",
+                    reason: error.to_string(),
+                }
+            })?,
+        })
+    }
+}
+
+impl ForceCloseBusinessDayRequestV1 {
+    pub fn into_command(self, request_id: Option<Uuid>) -> ForceCloseBusinessDayCommand {
+        ForceCloseBusinessDayCommand {
+            request_id,
+            reason: self.reason,
+            actor: self.actor,
         }
     }
 }

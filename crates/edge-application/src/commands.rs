@@ -170,6 +170,78 @@ pub struct FinalizeTransactionCommand {
     pub request_id: Option<Uuid>,
 }
 
+/// Put money into the drawer for an operational reason.
+#[derive(Debug, Clone)]
+pub struct CashInCommand {
+    pub request_id: Option<Uuid>,
+    pub amount_minor: i64,
+    /// Why. A blank reason is refused: an unexplained drawer movement is not
+    /// an audit trail.
+    pub reason_code: String,
+}
+
+/// Take money out of the drawer for an operational reason.
+#[derive(Debug, Clone)]
+pub struct CashOutCommand {
+    pub request_id: Option<Uuid>,
+    pub amount_minor: i64,
+    pub reason_code: String,
+}
+
+/// Ask for money to be moved to the safe. Changes no cash on its own.
+#[derive(Debug, Clone)]
+pub struct RequestSafeDropCommand {
+    pub request_id: Option<Uuid>,
+    pub amount_minor: i64,
+    pub reason_code: String,
+}
+
+/// Authorise a pending drop. `approver` must not be the requester (ADR 023).
+#[derive(Debug, Clone)]
+pub struct ApproveSafeDropCommand {
+    pub request_id: Option<Uuid>,
+    pub safe_drop_id: Uuid,
+    /// An identity the application layer has already authorised. The domain
+    /// does not evaluate roles.
+    pub approver: OperatorId,
+    pub approve: bool,
+}
+
+/// Begin a close. The answer says what is still needed and deliberately does
+/// not say what the drawer should contain (ADR 022).
+#[derive(Debug, Clone, Default)]
+pub struct RequestSessionCloseCommand {
+    pub request_id: Option<Uuid>,
+}
+
+/// Declare the counted cash. Only after this is durable does the core reveal
+/// the expected figure and the variance.
+#[derive(Debug, Clone)]
+pub struct DeclareClosingCashCommand {
+    pub request_id: Option<Uuid>,
+    pub counted_minor: i64,
+}
+
+/// Continue a closed session. Creates a new session linked to it; the closed
+/// one keeps its declaration and variance (ADR 023).
+#[derive(Debug, Clone)]
+pub struct ReopenSessionCommand {
+    pub request_id: Option<Uuid>,
+    pub session_id: SessionId,
+    pub reason: String,
+    /// Who takes over. May differ from the previous operator.
+    pub operator_id: OperatorId,
+}
+
+/// End the day over open sessions, under an explicit policy (ADR 024).
+#[derive(Debug, Clone)]
+pub struct ForceCloseBusinessDayCommand {
+    pub request_id: Option<Uuid>,
+    pub reason: String,
+    /// Who or what ordered it: an operator, a console, later a scheduler.
+    pub actor: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CloseRegisterSessionCommand {
     pub request_id: Option<Uuid>,

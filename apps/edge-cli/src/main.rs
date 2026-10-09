@@ -20,9 +20,10 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
-    AddItemRequestV1, ChangeQuantityRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1,
-    PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1, StartPaymentRequestV1,
-    TransactionRequestV1, PROTOCOL_VERSION,
+    AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1, ChangeQuantityRequestV1,
+    DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1, InitDeviceRequestV1,
+    OpenRegisterSessionRequestV1, PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1,
+    ReopenSessionRequestV1, StartPaymentRequestV1, TransactionRequestV1, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -211,8 +212,65 @@ enum Command {
     GetState,
     /// Print the active transaction, if any.
     ActiveSale,
-    /// Close the active register session.
-    CloseSession,
+    /// What the drawer should contain, and the movements that explain it.
+    CashPosition,
+    /// Put money into the drawer.
+    CashIn {
+        #[arg(long)]
+        amount: i64,
+        /// Why. A blank reason is refused.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Take money out of the drawer.
+    CashOut {
+        #[arg(long)]
+        amount: i64,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Ask for money to be moved to the safe. Moves nothing on its own.
+    SafeDrop {
+        #[arg(long)]
+        amount: i64,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Authorise a pending safe drop. The approver must not be the requester.
+    ApproveSafeDrop {
+        #[arg(long = "id")]
+        safe_drop_id: String,
+        #[arg(long)]
+        approver: String,
+        /// Decline instead of approving.
+        #[arg(long)]
+        reject: bool,
+    },
+    /// Begin a session close. The answer never reveals the expected cash.
+    RequestCloseSession,
+    /// Declare the counted cash. Only now is the variance revealed.
+    DeclareClose {
+        #[arg(long)]
+        amount: i64,
+    },
+    /// Continue a closed session under a new one.
+    ReopenSession {
+        #[arg(long = "session")]
+        session_id: String,
+        #[arg(long)]
+        reason: String,
+        /// Who takes over. Defaults to the demo cashier.
+        #[arg(long, default_value = "CASHIER-001")]
+        operator: String,
+    },
+    /// End the day over open sessions, under an explicit policy.
+    ForceCloseBusinessDay {
+        #[arg(long)]
+        reason: String,
+        /// Who or what ordered it.
+        #[arg(long, default_value = "OPERATIONS")]
+        actor: String,
+    },
     /// Close the business day.
     CloseBusinessDay,
     /// Tail the local journal.
@@ -405,7 +463,68 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             }))
         }
         Command::ActiveSale => to_value(&client.get_active_transaction()?),
-        Command::CloseSession => to_value(&client.close_session(request_id)?),
+        Command::CashPosition => to_value(&client.cash_position()?),
+        Command::CashIn { amount, reason } => to_value(&client.cash_in(
+            CashMovementRequestV1 {
+                amount_minor: *amount,
+                reason_code: reason.clone(),
+            },
+            request_id,
+        )?),
+        Command::CashOut { amount, reason } => to_value(&client.cash_out(
+            CashMovementRequestV1 {
+                amount_minor: *amount,
+                reason_code: reason.clone(),
+            },
+            request_id,
+        )?),
+        Command::SafeDrop { amount, reason } => to_value(&client.request_safe_drop(
+            CashMovementRequestV1 {
+                amount_minor: *amount,
+                reason_code: reason.clone(),
+            },
+            request_id,
+        )?),
+        Command::ApproveSafeDrop {
+            safe_drop_id,
+            approver,
+            reject,
+        } => to_value(&client.approve_safe_drop(
+            ApproveSafeDropRequestV1 {
+                safe_drop_id: safe_drop_id.clone(),
+                approver: approver.clone(),
+                approve: !*reject,
+            },
+            request_id,
+        )?),
+        Command::RequestCloseSession => to_value(&client.request_session_close(request_id)?),
+        Command::DeclareClose { amount } => to_value(&client.declare_closing_cash(
+            DeclareClosingCashRequestV1 {
+                counted_minor: *amount,
+            },
+            request_id,
+        )?),
+        Command::ReopenSession {
+            session_id,
+            reason,
+            operator,
+        } => to_value(&client.reopen_session(
+            ReopenSessionRequestV1 {
+                session_id: session_id.clone(),
+                reason: reason.clone(),
+                operator_id: operator.clone(),
+            },
+            request_id,
+        )?),
+        Command::ForceCloseBusinessDay { reason, actor } => {
+            to_value(&client.force_close_business_day(
+                ForceCloseBusinessDayRequestV1 {
+                    reason: reason.clone(),
+                    actor: actor.clone(),
+                },
+                request_id,
+            )?)
+        }
         Command::CloseBusinessDay => to_value(&client.close_business_day(request_id)?),
         Command::Journal { limit } => to_value(&json!({
             "protocol_version": PROTOCOL_VERSION,

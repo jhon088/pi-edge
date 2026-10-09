@@ -14,6 +14,7 @@ fault-injection = []
 
 [dependencies]
 edge-application = { workspace = true }
+edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
 edge-payments = { workspace = true }

@@ -120,3 +120,50 @@ for payment states that do not exist yet.
   payload, in any table, log, journal event or DTO.
 * **`COMMIT_CASH_PAYMENT` and the legacy cash path are gone for good.** There
   is exactly one way to take money.
+
+## Cash management, sessions and the day (milestone 7)
+
+* **Four concepts stay separate**: a `Payment` says how a sale was covered, the
+  cash ledger says what should be in the drawer, a `RegisterSession` says who is
+  responsible, a `BusinessDay` says which period it is. (ADR 025)
+* **The cash ledger is append-only.** A correction is a new compensating
+  movement, never an edit — enforced by database triggers, not convention.
+  (ADR 021)
+* **Direction is explicit** (`IN`/`OUT`), never the sign of a `Money`, and each
+  movement type moves exactly one way.
+* **A cash sale records the net that stayed in the drawer**, carrying
+  `tendered` and `change` for audit, with `amount = tendered − change`.
+* **Expected cash is derived**, never stored: `Σ(IN) − Σ(OUT)`. The only
+  materialised figure is `expected_at_close` on a declaration, so a historical
+  variance is never recomputed under future rules. (ADR 022)
+* **A committed cash payment writes exactly one movement**, keyed by the payment
+  id. A card payment and a card reversal write none.
+* **A pending safe drop moves nothing.** Only an approval by a *different*
+  identity reduces expected cash, and the domain never evaluates a role — it
+  records the identity the application layer already authorised. (ADR 023)
+* **The blind close is a contract, not a screen.** The pre-close payload has no
+  field capable of carrying an amount, and a declaration is refused unless a
+  close was requested first. (ADR 022)
+* **Reopening a session creates a new one linked to the closed one**; the first
+  close, its declaration and its variance are never mutated. The new float is
+  what was *declared*, not what was expected. (ADR 023)
+* **A business day is an operational period, never a calendar date**, and
+  `business_day_id` is never derived from `DATE(now())`. (ADR 024)
+* **A forced end of day invents no counted cash.** The variance stays unknown
+  rather than zero, the closure kind is stored rather than inferred, a reason
+  and an actor are mandatory, and no transaction, payment, movement or pending
+  approval is destroyed. (ADR 024)
+* **A movement type arrives with its operation.** No type exists without the
+  command, authorisation policy and workflow that produce it.
+
+## Engineering rules (frozen in milestone 7)
+
+The organisation and quality rules in **`CLAUDE.md`** at the repository root are
+permanent instructions, on the same footing as the decisions above: architecture
+and boundaries, organisation by domain rather than by task, no file-per-task, no
+abstraction without an existing boundary, local helpers, minimal visibility,
+clean imports, crates only for real boundaries, no legacy kept "just in case",
+and the mandatory gates.
+
+They are recorded there rather than duplicated here, because a rule copied into
+two files drifts in one of them.

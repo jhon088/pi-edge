@@ -1,0 +1,20 @@
+[package]
+name = "edge-cash"
+description = "Cash management for PI.Edge: the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Knows nothing about SQLite, IPC, hardware or payments."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Pure Rust, like edge-domain, edge-catalog and edge-payments: no SQLite, no
+# HTTP, no transport, no clock, no hardware.
+[dependencies]
+edge-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::DomainError;
 use crate::ids::{BusinessDayId, StoreId, TenantId};
+use crate::session::ClosureKind;
 use crate::time::Timestamp;
 
 const AGGREGATE: &str = "BusinessDay";
@@ -55,6 +56,14 @@ pub struct BusinessDayState {
     pub status: BusinessDayStatus,
     pub opened_at: Timestamp,
     pub closed_at: Option<Timestamp>,
+    /// How it ended: `DECLARED` when every session closed normally, `FORCED`
+    /// when a policy ended it over open sessions (ADR 024). `None` while it is
+    /// still trading.
+    pub closure_kind: Option<ClosureKind>,
+    /// Why it was forced, and who forced it. Mandatory for a forced close: a
+    /// forced end of day with no stated reason is a loss of information.
+    pub close_reason: Option<String>,
+    pub closed_by: Option<String>,
     /// Monotonic aggregate version, used for sync ordering and stale-write detection.
     pub version: i64,
 }
@@ -80,6 +89,9 @@ impl BusinessDay {
             status: BusinessDayStatus::Open,
             opened_at: new.opened_at,
             closed_at: None,
+            closure_kind: None,
+            close_reason: None,
+            closed_by: None,
             version: 1,
         })
     }
@@ -126,10 +138,46 @@ impl BusinessDay {
     }
 
     pub fn close(&mut self, now: Timestamp) -> Result<(), DomainError> {
+        self.close_as(ClosureKind::Declared, None, None, now)
+    }
+
+    /// End the day under an explicit policy.
+    ///
+    /// This does not ignore state: the caller is responsible for having
+    /// already forced the sessions it names, which is an auditable flow of its
+    /// own (ADR 024). What the day records is that it ended this way, why, and
+    /// on whose authority.
+    pub fn force_close(
+        &mut self,
+        reason: String,
+        actor: String,
+        now: Timestamp,
+    ) -> Result<(), DomainError> {
+        let reason = reason.trim().to_owned();
+        if reason.is_empty() {
+            return Err(DomainError::MissingReason { field: "reason" });
+        }
+        let actor = actor.trim().to_owned();
+        if actor.is_empty() {
+            return Err(DomainError::MissingReason { field: "actor" });
+        }
+        self.close_as(ClosureKind::Forced, Some(reason), Some(actor), now)
+    }
+
+    fn close_as(
+        &mut self,
+        kind: ClosureKind,
+        reason: Option<String>,
+        actor: Option<String>,
+        now: Timestamp,
+    ) -> Result<(), DomainError> {
         match self.0.status {
             BusinessDayStatus::Open | BusinessDayStatus::Closing => {
                 self.0.status = BusinessDayStatus::Closed;
                 self.0.closed_at = Some(now);
+                self.0.closure_kind = Some(kind);
+                self.0.close_reason = reason;
+                self.0.closed_by = actor;
                 self.0.version += 1;
                 Ok(())
             }
@@ -139,6 +187,14 @@ impl BusinessDay {
                 attempted: "CLOSED",
             }),
         }
+    }
+
+    /// Whether the day was ended by policy rather than by closing every till.
+    pub fn was_forced(&self) -> bool {
+        self.0
+            .closure_kind
+            .map(ClosureKind::is_forced)
+            .unwrap_or(false)
     }
 }
 

@@ -34,16 +34,58 @@ the active sale, the journal and the outbox live in the daemon.
 | `crates/edge-application` | use cases, queries, ports. Knows the domain and the port traits, never an adapter |
 | `crates/edge-catalog` | local projection of the product master: versioned snapshots, lookup, price books, price/tax resolution and the promotion engine. Pure Rust |
 | `crates/edge-payments` | tenders, the payment and attempt state machines, settlement arithmetic, the provider port and a deterministic simulator. Pure Rust: no SQLite, no HTTP, no provider SDK |
+| `crates/edge-cash` | the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Pure Rust |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
 | `crates/edge-ipc` | the only crate that knows what a socket or a pipe is: `EdgeTransport`, JSON Lines framing, local credentials |
 | `crates/edge-client` | `EdgeClient` + `IpcEdgeClient`. Cannot reach the core in-process: it does not depend on the application or storage layers |
-| `crates/edge-hardware-api` | hardware ports as traits. No adapter implemented yet |
 | `apps/edge-daemon` | process lifecycle, IPC listener, dispatch, graceful shutdown |
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 6 (payment engine V1)
+## Status — milestone 7 (cash management + sessions + EOD V1)
+
+Done: the operational responsibility of a till. Four things that were starting
+to be confused are now separate (ADR 025):
+
+| Concept | Question it answers |
+| --- | --- |
+| `Payment` | how was this sale covered? |
+| Cash ledger | how much physical money should be in this drawer, and why? |
+| `RegisterSession` | who is responsible for this register, for this period? |
+| `BusinessDay` | which operational period are we in? |
+
+* **An append-only cash ledger.** `OPENING_FLOAT`, `CASH_SALE`, `CASH_IN`,
+  `CASH_OUT` and `SAFE_DROP`, each with exactly one `IN`/`OUT` direction. Nothing is ever updated or deleted — a correction is a new
+  compensating movement, and the database enforces it (ADR 021).
+* **Expected cash is derived**, never stored: `Σ(IN) − Σ(OUT)`.
+* **A committed cash payment writes exactly one movement**, keyed by the
+  payment id, so a replay cannot move the drawer twice. A card payment writes
+  none.
+* **Safe drops need a second person.** A pending drop moves nothing; only an
+  approval by a different identity reduces expected cash (ADR 023).
+* **Blind close.** A cashier declares the count *before* learning the
+  expectation, enforced by the contract: the pre-close payload has no field
+  that could carry an amount (ADR 022).
+* **Reopening a session creates a new one linked to the closed one**, so the
+  first close and its variance survive (ADR 023).
+* **Forced end of day** ends a day over open tills under an explicit policy,
+  with a reason and an actor, and **never invents a counted amount** — the
+  variance stays unknown rather than zero (ADR 024).
+
+```bash
+edge-cli cash-position
+edge-cli cash-in  --amount 50000 --reason CHANGE_FUND
+edge-cli cash-out --amount 10000 --reason PETTY_CASH
+edge-cli safe-drop --amount 80000 --reason DRAWER_LIMIT
+edge-cli approve-safe-drop --id <id> --approver SUPERVISOR-01
+edge-cli request-close-session        # never reveals the expected cash
+edge-cli declare-close --amount 111600
+edge-cli reopen-session --session <id> --reason recount
+edge-cli force-close-business-day --reason "central EOD"
+```
+
+## Previously — milestone 6 (payment engine V1)
 
 Done: payments are a bounded context with a real lifecycle. A **`Payment`** is
 one tender's intention to cover part of a sale; a **`PaymentAttempt`** is one
@@ -158,7 +200,9 @@ cargo run -p edge-cli -- start-payment --tender CARD --amount 70000
 cargo run -p edge-cli -- payments
 cargo run -p edge-cli -- finalize-sale
 cargo run -p edge-cli -- get-state
-cargo run -p edge-cli -- close-session
+cargo run -p edge-cli -- cash-position
+cargo run -p edge-cli -- request-close-session
+cargo run -p edge-cli -- declare-close --amount 111600
 cargo run -p edge-cli -- close-business-day
 
 # 3. the diagnostic UI, consuming the same daemon
@@ -319,6 +363,44 @@ For development, `PI_EDGE_PAYMENT_SIM` scripts the simulator — for example
 `default:approve,amount:70000=unknown,query:approve`. The daemon refuses to
 start on an unparseable script rather than falling back silently.
 
+## Cash, sessions and the day
+
+```text
+BusinessDay ──┬── RegisterSession ──┬── OPENING_FLOAT
+              │   (one operator,    ├── CASH_SALE ← a committed cash payment
+              │    one register,    ├── CASH_IN / CASH_OUT
+              │    one period)      ├── SAFE_DROP ← only once approved
+              │                     └── close declaration → variance
+              └── RegisterSession … (a register runs a chain of them)
+```
+
+**Tender, applied and change are three different numbers.** A customer hands
+over 200.00 for a 116.00 sale: the payment applies 116.00, the drawer gains
+116.00 net, and the ledger keeps `tendered 200.00` / `change 84.00` on the same
+row so the audit exists without distorting the expectation. The invariant is
+`amount = tendered − change`, checked in the domain and by a SQL `CHECK`.
+
+**Expected cash is never stored.** It is `Σ(IN) − Σ(OUT)` over the session's
+movements. The one place it is materialised is a close declaration, so a
+historical variance cannot be recomputed under future rules.
+
+**The blind close is a contract, not a screen:**
+
+```text
+RequestSessionClose  -> { session_id, currency, movement_count, blockers[],
+                          requires_declaration }      ← no amount, anywhere
+DeclareClosingCash   -> { declared, expected_at_close, variance, label }
+   { counted_amount }                                 ← only now
+```
+
+`variance = counted − expected`; a shortage is negative, an overage positive,
+and neither is corrected automatically. A forced close has an expected figure,
+no count, and **no variance** — `UNDECLARED`, never `BALANCED`.
+
+A business day is an operational period, not a date: it can span midnight and
+survive an offline stretch, and `business_day_id` is never derived from
+`DATE(now())`.
+
 ## Runtime layout
 
 Derived from the database path, so one database means one runtime:
@@ -371,7 +453,11 @@ arithmetic are denied outside tests.
 | `crates/edge-payments` unit tests | tender rules, both state machines, settlement arithmetic, cash/card split, unresolved propagation, deterministic simulator |
 | `tests/crash-recovery/tests/payment_recovery.rs` | `UNKNOWN`, `PROCESSING`, `AUTHORIZED`, committed cash, partial mixed tender and a pending reversal all rebuilt by a brand new application object; a restart never decides an outcome |
 | `apps/edge-daemon/tests/payments.rs` | the payment surface over real IPC, plus a daemon **killed between the provider call and the result persistence**: the attempt comes back unresolved, never failed, with no second charge |
-| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on |
+| `tests/integration/tests/cash.rs` | the drawer on real SQLite: float as a movement, cash sales net of change, cash in/out, replay idempotency, card payments moving nothing, pending vs approved safe drops, self-approval refused, blind close exact/shortage/overage, declaration ordering, materialised expected figure, close blockers, sequential sessions, reopen, midnight-crossing day, forced close inventing no count |
+| `crates/edge-cash` unit tests | movement rules and directions, the `amount = tendered − change` invariant, expected-cash arithmetic, safe-drop approval and self-approval, declaration and variance, the pre-close payload carrying no amount |
+| `tests/crash-recovery/tests/cash_recovery.rs` | exact position after a restart, a pending drop still pending, an approved drop not applied twice, a session still awaiting its declaration, a declaration not duplicated, a forced close keeping its unknown variance |
+| `apps/edge-daemon/tests/cash.rs` | the cash surface over real IPC, including the contract-level proof that the pre-close payload cannot carry the expected cash |
+| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, and that the pre-close DTO has no amount-bearing field |
 
 ## Non-negotiable boundaries
 
@@ -381,7 +467,12 @@ arithmetic are denied outside tests.
   the Cargo workspace so this cannot regress by accident.
 * A UI never opens SQLite, never computes official totals, never decides
   payment state, and never issues a command while disconnected. The diagnostic
-  window shows payments read-only and issues no payment command.
+  window shows payments and the cash drawer read-only and issues no payment or
+  cash command.
+* A cashier never sees expected cash before declaring the count, and that is
+  enforced by the protocol rather than by the interface.
+* The cash ledger and close declarations are append-only in the database, not
+  merely by convention.
 * PI.Edge never receives cardholder data. No PAN, CVV, track data or terminal
   payload is stored, logged or journalled.
 * PI.Edge never creates product master data or promotions, and no client may
@@ -389,7 +480,9 @@ arithmetic are denied outside tests.
 * All durable transactional state belongs to the core.
 * Exactly one runtime per installation, enforced by an OS lock taken before the
   database is opened.
-* Hardware is always behind ports/adapters.
+* Hardware will always sit behind ports injected at the composition root. The
+  port traits arrive with the first adapter, not before: a crate of traits
+  nothing implements is an abstraction waiting for a boundary, not a boundary.
 * Public ids are UUIDs; server-owned ids (tenant, store, register, operator,
   product, price book, promotion) are opaque strings PI.Edge never mints.
 * No Flutter, no Dart, no Odoo, no ERP logic, no local microservices.

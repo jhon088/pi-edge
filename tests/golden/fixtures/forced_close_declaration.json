@@ -1,0 +1,14 @@
+{
+  "declaration_id": "00000000-0000-0000-0000-000000000017",
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "closure_kind": "FORCED",
+  "declared_cash": null,
+  "expected_at_close": {
+    "minor": 111600,
+    "currency": "MXN"
+  },
+  "variance": null,
+  "declared_by": null,
+  "declared_at": "2026-10-08T15:00:00Z",
+  "reason": "central EOD"
+}
