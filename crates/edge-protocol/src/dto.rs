@@ -72,6 +72,30 @@ pub struct TransactionLineV1 {
     pub line_total: MoneyV1,
 }
 
+/// One promotion as applied to one sale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedPromotionV1 {
+    /// Deterministic composite of promotion and target: re-evaluating the same
+    /// basket produces the same id.
+    pub adjustment_id: String,
+    pub promotion_id: String,
+    pub code: String,
+    pub name: String,
+    pub priority: i32,
+    /// `STACKABLE` or `EXCLUSIVE`.
+    pub stackability: String,
+    /// `LINE` or `BASKET`.
+    pub target: String,
+    /// Set exactly when `target` is `LINE`.
+    pub line_number: Option<i64>,
+    /// Positive discount amount.
+    pub amount: MoneyV1,
+    /// Rule kind that produced it, e.g. `BUY_N_GET_M`.
+    pub reason: String,
+    /// Human detail, e.g. `2 application(s), 2 free unit(s)`.
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TotalsV1 {
     /// Sum of quoted extended amounts, before discount.
@@ -110,6 +134,10 @@ pub struct RetailTransactionV1 {
     /// Instant every line of this sale is priced at.
     pub pricing_effective_at: Option<String>,
     pub lines: Vec<TransactionLineV1>,
+    /// Every promotion this sale granted, in the order the engine applied
+    /// them. Materialised on the sale, so it stays readable after the snapshot
+    /// that produced it is gone.
+    pub applied_promotions: Vec<AppliedPromotionV1>,
     pub totals: TotalsV1,
     pub payments: Vec<PaymentV1>,
     /// Derived by the core: committed payments.
@@ -251,6 +279,18 @@ pub struct AddItemRequestV1 {
     pub quantity_thousandths: i64,
 }
 
+/// The line to remove, by its number. Numbers are never reused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoveItemRequestV1 {
+    pub line_number: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeQuantityRequestV1 {
+    pub line_number: i64,
+    pub quantity_thousandths: i64,
+}
+
 // ------------------------------------------------------------------- catalog
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -260,6 +300,8 @@ pub struct SnapshotCountsV1 {
     pub products: i64,
     pub price_entries: i64,
     pub barcodes: i64,
+    #[serde(default)]
+    pub promotions: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -448,6 +490,64 @@ pub struct CatalogProductRecordV1 {
     pub prices: Vec<PriceRecordV1>,
 }
 
+/// One promotion, as the snapshot carries it.
+///
+/// The rule is adjacently tagged on `rule`, so each kind declares exactly the
+/// fields it uses and an unknown kind is a parse error rather than a silently
+/// ignored promotion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromotionRecordV1 {
+    pub promotion_id: String,
+    pub code: String,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub active: bool,
+    /// Higher wins on the same target.
+    #[serde(default)]
+    pub priority: i32,
+    /// `STACKABLE` or `EXCLUSIVE`.
+    pub stackability: String,
+    /// `TENANT` or `STORE`.
+    pub scope: String,
+    /// Set exactly when `scope` is `STORE`.
+    #[serde(default)]
+    pub store_id: Option<String>,
+    /// Inclusive lower bound.
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    /// Exclusive upper bound.
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    pub rule: PromotionRuleV1,
+}
+
+/// What a promotion does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PromotionRuleV1 {
+    PercentageOff {
+        /// Absent means every product.
+        #[serde(default)]
+        product_ref: Option<String>,
+        percentage_bps: u32,
+    },
+    FixedAmountOff {
+        #[serde(default)]
+        product_ref: Option<String>,
+        amount_minor: i64,
+    },
+    BuyNGetM {
+        #[serde(default)]
+        product_ref: Option<String>,
+        buy_thousandths: i64,
+        get_thousandths: i64,
+    },
+    BasketThreshold {
+        minimum_minor: i64,
+        amount_minor: i64,
+    },
+}
+
 fn default_true() -> bool {
     true
 }
@@ -459,6 +559,10 @@ pub struct PutCatalogChunkRequestV1 {
     /// Hash of this chunk's canonical content, for replay detection.
     pub chunk_hash: String,
     pub products: Vec<CatalogProductRecordV1>,
+    /// Promotions for the products in this chunk. One that names a product
+    /// must travel with it, exactly as a price does.
+    #[serde(default)]
+    pub promotions: Vec<PromotionRecordV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

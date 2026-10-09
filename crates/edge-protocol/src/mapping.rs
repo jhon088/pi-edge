@@ -9,9 +9,9 @@
 //! typed error instead of reaching a use case.
 
 use edge_application::commands::{
-    AddItemCommand, BeginCatalogImportCommand, CommitCashPaymentCommand,
+    AddItemCommand, BeginCatalogImportCommand, ChangeQuantityCommand, CommitCashPaymentCommand,
     CommitCatalogImportCommand, InitDeviceCommand, OpenRegisterSessionCommand,
-    PutCatalogChunkCommand,
+    PutCatalogChunkCommand, RemoveItemCommand,
 };
 use edge_application::ports::DeviceProfile;
 use edge_application::queries::{
@@ -138,6 +138,11 @@ impl RetailTransactionV1 {
             pricing_effective_at: state
                 .pricing
                 .map(|pricing| pricing.effective_at.to_rfc3339()),
+            applied_promotions: state
+                .applied_promotions
+                .iter()
+                .map(AppliedPromotionV1::from)
+                .collect(),
             lines: state.lines.iter().map(TransactionLineV1::from).collect(),
             totals: TotalsV1::from(&state.totals),
             payments: state.payments.iter().map(PaymentV1::from).collect(),
@@ -248,6 +253,28 @@ impl AddItemRequestV1 {
         Ok(AddItemCommand {
             request_id,
             selector: self.product.into_domain()?,
+            quantity: Quantity::from_thousandths(self.quantity_thousandths)?,
+        })
+    }
+}
+
+impl RemoveItemRequestV1 {
+    pub fn into_command(self, request_id: Option<Uuid>) -> RemoveItemCommand {
+        RemoveItemCommand {
+            request_id,
+            line_number: self.line_number,
+        }
+    }
+}
+
+impl ChangeQuantityRequestV1 {
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<ChangeQuantityCommand, CatalogError> {
+        Ok(ChangeQuantityCommand {
+            request_id,
+            line_number: self.line_number,
             quantity: Quantity::from_thousandths(self.quantity_thousandths)?,
         })
     }
@@ -375,6 +402,11 @@ impl PutCatalogChunkRequestV1 {
             price_entries.append(&mut record.prices);
             barcodes.append(&mut record.barcodes);
         }
+        let promotions = self
+            .promotions
+            .into_iter()
+            .map(|record| record.into_domain(currency))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(PutCatalogChunkCommand {
             snapshot_id,
             chunk_index: self.chunk_index,
@@ -382,6 +414,7 @@ impl PutCatalogChunkRequestV1 {
             products,
             price_entries,
             barcodes,
+            promotions,
         })
     }
 }
@@ -396,5 +429,23 @@ impl CommitCatalogImportRequestV1 {
             snapshot_id: parse_snapshot_id(&self.snapshot_id)?,
             chunk_count: self.chunk_count,
         })
+    }
+}
+
+impl From<&AppliedPromotion> for AppliedPromotionV1 {
+    fn from(applied: &AppliedPromotion) -> Self {
+        Self {
+            adjustment_id: applied.adjustment_id.clone(),
+            promotion_id: applied.promotion_id.clone(),
+            code: applied.code.clone(),
+            name: applied.name.clone(),
+            priority: applied.priority,
+            stackability: applied.stackability.clone(),
+            target: applied.target.kind().to_owned(),
+            line_number: applied.target.line_number(),
+            amount: MoneyV1::from(&applied.amount),
+            reason: applied.reason.clone(),
+            detail: applied.detail.clone(),
+        }
     }
 }

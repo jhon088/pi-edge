@@ -12,6 +12,9 @@ use edge_application::ports::{CatalogUnitOfWork, StoredChunk};
 use edge_application::AppError;
 use edge_catalog::content::ContentHasher;
 use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
+use edge_catalog::promotions::{
+    NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
+};
 use edge_catalog::snapshot::CatalogSnapshotState;
 use edge_catalog::{
     Barcode, CatalogBarcode, CatalogError, CatalogProduct, CatalogSnapshot, CatalogSnapshotStatus,
@@ -27,7 +30,7 @@ use crate::sqlite::{money, parse_currency, parse_id, parse_opt_ts, parse_ts, Sql
 const SNAPSHOT_COLUMNS: &str = "snapshot_id, tenant_id, store_id, version, status, \
      declared_content_hash, content_hash, generated_at, effective_at, expected_tax_profiles, \
      expected_price_books, expected_products, expected_price_entries, expected_barcodes, \
-     imported_at, committed_at, activated_at, superseded_at";
+     expected_promotions, imported_at, committed_at, activated_at, superseded_at";
 
 const PRODUCT_COLUMNS: &str = "product_ref, external_ref, sku, name, active, sellable, \
      tax_profile_code";
@@ -37,6 +40,10 @@ const PRICE_BOOK_COLUMNS: &str =
 
 const PRICE_ENTRY_COLUMNS: &str =
     "price_book_id, product_ref, amount_minor, currency, price_mode, valid_from, valid_until";
+
+const PROMOTION_COLUMNS: &str = "promotion_id, code, name, active, priority, stackability, \
+     scope, scope_store_id, valid_from, valid_until, rule_kind, applies_to_product_ref, \
+     percentage_bps, amount_minor, minimum_minor, currency, buy_thousandths, get_thousandths";
 
 impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
     fn find_catalog_snapshot(
@@ -128,10 +135,10 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                      (snapshot_id, tenant_id, store_id, version, status, declared_content_hash,
                       content_hash, generated_at, effective_at, expected_tax_profiles,
                       expected_price_books, expected_products, expected_price_entries,
-                      expected_barcodes, imported_at, committed_at, activated_at, superseded_at,
-                      created_at, updated_at)
+                      expected_barcodes, expected_promotions, imported_at, committed_at,
+                      activated_at, superseded_at, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?18, ?19, ?19)",
+                         ?17, ?18, ?19, ?20, ?20)",
                 params![
                     state.snapshot_id.to_string(),
                     state.tenant_id.as_str(),
@@ -147,6 +154,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.expected.products,
                     state.expected.price_entries,
                     state.expected.barcodes,
+                    state.expected.promotions,
                     state.imported_at.to_rfc3339(),
                     state.committed_at.map(|ts| ts.to_rfc3339()),
                     state.activated_at.map(|ts| ts.to_rfc3339()),
@@ -286,7 +294,8 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
     ) -> Result<Option<StoredChunk>, AppError> {
         self.tx
             .query_row(
-                "SELECT chunk_index, chunk_hash, product_count, price_entry_count, barcode_count
+                "SELECT chunk_index, chunk_hash, product_count, price_entry_count,
+                        barcode_count, promotion_count
                  FROM catalog_import_chunks
                  WHERE snapshot_id = ?1 AND chunk_index = ?2",
                 params![snapshot_id.to_string(), chunk_index],
@@ -297,6 +306,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                         product_count: row.get(2)?,
                         price_entry_count: row.get(3)?,
                         barcode_count: row.get(4)?,
+                        promotion_count: row.get(5)?,
                     })
                 },
             )
@@ -314,8 +324,8 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             .execute(
                 "INSERT INTO catalog_import_chunks
                      (snapshot_id, chunk_index, chunk_hash, product_count, price_entry_count,
-                      barcode_count, received_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                      barcode_count, promotion_count, received_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     snapshot_id.to_string(),
                     chunk.chunk_index,
@@ -323,6 +333,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                     chunk.product_count,
                     chunk.price_entry_count,
                     chunk.barcode_count,
+                    chunk.promotion_count,
                     now.to_rfc3339(),
                 ],
             )
@@ -571,6 +582,104 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             .collect()
     }
 
+    fn insert_catalog_promotions(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        promotions: &[Promotion],
+    ) -> Result<(), AppError> {
+        for promotion in promotions {
+            let rule = RuleColumns::from(&promotion.rule);
+            self.tx
+                .execute(
+                    "INSERT INTO promotions
+                         (snapshot_id, promotion_id, code, name, active, priority, stackability,
+                          scope, scope_store_id, valid_from, valid_until, rule_kind,
+                          applies_to_product_ref, percentage_bps, amount_minor, minimum_minor,
+                          currency, buy_thousandths, get_thousandths)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                             ?16, ?17, ?18, ?19)",
+                    params![
+                        snapshot_id.to_string(),
+                        promotion.promotion_id.as_str(),
+                        promotion.code,
+                        promotion.name,
+                        i64::from(promotion.active),
+                        promotion.priority,
+                        promotion.stackability.as_str(),
+                        promotion.scope.as_str(),
+                        promotion.scope.store_id().map(StoreId::as_str),
+                        promotion.valid_from.map(|ts| ts.to_rfc3339()),
+                        promotion.valid_until.map(|ts| ts.to_rfc3339()),
+                        promotion.rule.kind(),
+                        rule.product_ref,
+                        rule.percentage_bps,
+                        rule.amount_minor,
+                        rule.minimum_minor,
+                        rule.currency,
+                        rule.buy_thousandths,
+                        rule.get_thousandths,
+                    ],
+                )
+                .map_err(|error| {
+                    if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::InvalidRecord {
+                            field: "promotion_id",
+                            reason: format!("`{}` is declared twice", promotion.promotion_id),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_promotions(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<Promotion>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(&format!(
+                "SELECT {PROMOTION_COLUMNS} FROM promotions
+                 WHERE snapshot_id = ?1
+                 ORDER BY promotion_id ASC"
+            ))
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id.to_string()], RawPromotion::from_row)
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        rows.into_iter().map(RawPromotion::into_domain).collect()
+    }
+
+    fn promotion_candidates(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        store_id: &StoreId,
+    ) -> Result<Vec<Promotion>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(&format!(
+                "SELECT {PROMOTION_COLUMNS} FROM promotions
+                 WHERE snapshot_id = ?1
+                   AND active = 1
+                   AND (scope = 'TENANT' OR scope_store_id = ?2)
+                 ORDER BY priority DESC, promotion_id ASC"
+            ))
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(
+                params![snapshot_id.to_string(), store_id.as_str()],
+                RawPromotion::from_row,
+            )
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        rows.into_iter().map(RawPromotion::into_domain).collect()
+    }
+
     fn catalog_stored_counts(
         &mut self,
         snapshot_id: CatalogSnapshotId,
@@ -582,6 +691,7 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             products: self.count("catalog_products", &id)?,
             price_entries: self.count("price_entries", &id)?,
             barcodes: self.count("catalog_barcodes", &id)?,
+            promotions: self.count("promotions", &id)?,
         })
     }
 
@@ -748,6 +858,11 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             }
         }
 
+        hasher.begin_promotions();
+        for promotion in self.list_catalog_promotions(snapshot_id)? {
+            hasher.promotion(&promotion);
+        }
+
         Ok(hasher.finish())
     }
 }
@@ -799,6 +914,7 @@ struct RawSnapshot {
     expected_products: i64,
     expected_price_entries: i64,
     expected_barcodes: i64,
+    expected_promotions: i64,
     imported_at: String,
     committed_at: Option<String>,
     activated_at: Option<String>,
@@ -822,10 +938,11 @@ impl RawSnapshot {
             expected_products: row.get(11)?,
             expected_price_entries: row.get(12)?,
             expected_barcodes: row.get(13)?,
-            imported_at: row.get(14)?,
-            committed_at: row.get(15)?,
-            activated_at: row.get(16)?,
-            superseded_at: row.get(17)?,
+            expected_promotions: row.get(14)?,
+            imported_at: row.get(15)?,
+            committed_at: row.get(16)?,
+            activated_at: row.get(17)?,
+            superseded_at: row.get(18)?,
         })
     }
 
@@ -846,6 +963,7 @@ impl RawSnapshot {
                 products: self.expected_products,
                 price_entries: self.expected_price_entries,
                 barcodes: self.expected_barcodes,
+                promotions: self.expected_promotions,
             },
             imported_at: parse_ts(&self.imported_at)?,
             committed_at: parse_opt_ts(self.committed_at)?,
@@ -1018,4 +1136,200 @@ impl RawProduct {
             tax_profile: TaxProfileCode::new(self.tax_profile_code).map_err(AppError::Catalog)?,
         })
     }
+}
+
+/// The typed rule columns of one promotion. Each rule kind fills its own slots
+/// and leaves the rest NULL; the table's CHECK enforces exactly that, so a
+/// malformed rule cannot be stored in the first place.
+struct RuleColumns {
+    product_ref: Option<String>,
+    percentage_bps: Option<i64>,
+    amount_minor: Option<i64>,
+    minimum_minor: Option<i64>,
+    currency: Option<&'static str>,
+    buy_thousandths: Option<i64>,
+    get_thousandths: Option<i64>,
+}
+
+impl RuleColumns {
+    fn from(rule: &PromotionRule) -> Self {
+        let product_ref = rule
+            .applicability()
+            .and_then(|applies| applies.product_ref())
+            .map(|product| product.to_string());
+        let empty = Self {
+            product_ref,
+            percentage_bps: None,
+            amount_minor: None,
+            minimum_minor: None,
+            currency: None,
+            buy_thousandths: None,
+            get_thousandths: None,
+        };
+        match rule {
+            PromotionRule::PercentageOff { percentage, .. } => Self {
+                percentage_bps: Some(i64::from(percentage.bps())),
+                ..empty
+            },
+            PromotionRule::FixedAmountOff { amount, .. } => Self {
+                amount_minor: Some(amount.minor()),
+                currency: Some(amount.currency().code()),
+                ..empty
+            },
+            PromotionRule::BuyNGetM { buy, get, .. } => Self {
+                buy_thousandths: Some(buy.thousandths()),
+                get_thousandths: Some(get.thousandths()),
+                ..empty
+            },
+            PromotionRule::BasketThreshold { minimum, amount } => Self {
+                amount_minor: Some(amount.minor()),
+                minimum_minor: Some(minimum.minor()),
+                currency: Some(amount.currency().code()),
+                ..empty
+            },
+        }
+    }
+}
+
+struct RawPromotion {
+    promotion_id: String,
+    code: String,
+    name: String,
+    active: i64,
+    priority: i64,
+    stackability: String,
+    scope: String,
+    scope_store_id: Option<String>,
+    valid_from: Option<String>,
+    valid_until: Option<String>,
+    rule_kind: String,
+    applies_to_product_ref: Option<String>,
+    percentage_bps: Option<i64>,
+    amount_minor: Option<i64>,
+    minimum_minor: Option<i64>,
+    currency: Option<String>,
+    buy_thousandths: Option<i64>,
+    get_thousandths: Option<i64>,
+}
+
+impl RawPromotion {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            promotion_id: row.get(0)?,
+            code: row.get(1)?,
+            name: row.get(2)?,
+            active: row.get(3)?,
+            priority: row.get(4)?,
+            stackability: row.get(5)?,
+            scope: row.get(6)?,
+            scope_store_id: row.get(7)?,
+            valid_from: row.get(8)?,
+            valid_until: row.get(9)?,
+            rule_kind: row.get(10)?,
+            applies_to_product_ref: row.get(11)?,
+            percentage_bps: row.get(12)?,
+            amount_minor: row.get(13)?,
+            minimum_minor: row.get(14)?,
+            currency: row.get(15)?,
+            buy_thousandths: row.get(16)?,
+            get_thousandths: row.get(17)?,
+        })
+    }
+
+    fn into_domain(self) -> Result<Promotion, AppError> {
+        let scope = match (self.scope.as_str(), self.scope_store_id.as_deref()) {
+            ("TENANT", _) => PriceBookScope::Tenant,
+            ("STORE", Some(store_id)) => PriceBookScope::Store {
+                store_id: parse_id(store_id)?,
+            },
+            (other, _) => {
+                return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                    field: "promotion_scope",
+                    reason: format!("unknown or incomplete scope `{other}`"),
+                }))
+            }
+        };
+        let applies_to = match self.applies_to_product_ref.as_deref() {
+            Some(product_ref) => ProductApplicability::Product {
+                product_ref: parse_id(product_ref)?,
+            },
+            None => ProductApplicability::AnyProduct,
+        };
+        let rule = match self.rule_kind.as_str() {
+            "PERCENTAGE_OFF" => PromotionRule::PercentageOff {
+                applies_to,
+                percentage: Percentage::from_bps(
+                    u32::try_from(required(self.percentage_bps, "percentage_bps")?).map_err(
+                        |_| {
+                            AppError::Catalog(CatalogError::InvalidRecord {
+                                field: "percentage_bps",
+                                reason: "out of range".to_owned(),
+                            })
+                        },
+                    )?,
+                )
+                .map_err(|error| AppError::Catalog(CatalogError::from(error)))?,
+            },
+            "FIXED_AMOUNT_OFF" => PromotionRule::FixedAmountOff {
+                applies_to,
+                amount: self.money("amount_minor", self.amount_minor)?,
+            },
+            "BUY_N_GET_M" => PromotionRule::BuyNGetM {
+                applies_to,
+                buy: quantity(required(self.buy_thousandths, "buy_thousandths")?)?,
+                get: quantity(required(self.get_thousandths, "get_thousandths")?)?,
+            },
+            "BASKET_THRESHOLD" => PromotionRule::BasketThreshold {
+                minimum: self.money("minimum_minor", self.minimum_minor)?,
+                amount: self.money("amount_minor", self.amount_minor)?,
+            },
+            other => {
+                return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                    field: "rule_kind",
+                    reason: format!("unknown rule `{other}`"),
+                }))
+            }
+        };
+        Promotion::import(NewPromotion {
+            promotion_id: parse_id(&self.promotion_id)?,
+            code: self.code,
+            name: self.name,
+            active: self.active != 0,
+            priority: i32::try_from(self.priority).map_err(|_| {
+                AppError::Catalog(CatalogError::InvalidRecord {
+                    field: "promotion_priority",
+                    reason: "out of range".to_owned(),
+                })
+            })?,
+            stackability: Stackability::parse(&self.stackability).map_err(AppError::Catalog)?,
+            scope,
+            valid_from: parse_opt_ts(self.valid_from)?,
+            valid_until: parse_opt_ts(self.valid_until)?,
+            rule,
+        })
+        .map_err(AppError::Catalog)
+    }
+
+    fn money(&self, field: &'static str, minor: Option<i64>) -> Result<Money, AppError> {
+        let code =
+            self.currency
+                .as_deref()
+                .ok_or(AppError::Catalog(CatalogError::InvalidRecord {
+                    field: "currency",
+                    reason: "missing for a money rule".to_owned(),
+                }))?;
+        Ok(money(required(minor, field)?, parse_currency(code)?))
+    }
+}
+
+fn required(value: Option<i64>, field: &'static str) -> Result<i64, AppError> {
+    value.ok_or(AppError::Catalog(CatalogError::InvalidRecord {
+        field,
+        reason: "missing for this rule kind".to_owned(),
+    }))
+}
+
+fn quantity(thousandths: i64) -> Result<Quantity, AppError> {
+    Quantity::from_thousandths(thousandths)
+        .map_err(|error| AppError::Catalog(CatalogError::from(error)))
 }

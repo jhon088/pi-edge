@@ -7,6 +7,10 @@
 
 use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::product::NewCatalogProduct;
+use edge_catalog::promotions::{
+    NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
+};
+use edge_catalog::scope::CatalogScope;
 use edge_catalog::{
     Barcode, CatalogBarcode, CatalogError, CatalogProduct, CatalogSnapshot, ImportProgress,
     PriceBook, PriceEntry, ProductSelector, ResolvedPrice, SnapshotCounts, TaxProfile,
@@ -69,6 +73,7 @@ impl From<SnapshotCounts> for SnapshotCountsV1 {
             products: counts.products,
             price_entries: counts.price_entries,
             barcodes: counts.barcodes,
+            promotions: counts.promotions,
         }
     }
 }
@@ -81,6 +86,7 @@ impl From<SnapshotCountsV1> for SnapshotCounts {
             products: counts.products,
             price_entries: counts.price_entries,
             barcodes: counts.barcodes,
+            promotions: counts.promotions,
         }
     }
 }
@@ -322,4 +328,151 @@ pub struct ProductRecord {
     pub product: CatalogProduct,
     pub prices: Vec<PriceEntry>,
     pub barcodes: Vec<CatalogBarcode>,
+}
+
+// ---------------------------------------------------------------- promotions
+
+impl From<&Promotion> for PromotionRecordV1 {
+    fn from(promotion: &Promotion) -> Self {
+        Self {
+            promotion_id: promotion.promotion_id.to_string(),
+            code: promotion.code.clone(),
+            name: promotion.name.clone(),
+            active: promotion.active,
+            priority: promotion.priority,
+            stackability: promotion.stackability.as_str().to_owned(),
+            scope: promotion.scope.as_str().to_owned(),
+            store_id: promotion.scope.store_id().map(ToString::to_string),
+            valid_from: promotion.valid_from.map(|ts| ts.to_rfc3339()),
+            valid_until: promotion.valid_until.map(|ts| ts.to_rfc3339()),
+            rule: PromotionRuleV1::from(&promotion.rule),
+        }
+    }
+}
+
+impl From<&PromotionRule> for PromotionRuleV1 {
+    fn from(rule: &PromotionRule) -> Self {
+        let product_ref = rule
+            .applicability()
+            .and_then(|applies| applies.product_ref())
+            .map(ToString::to_string);
+        match rule {
+            PromotionRule::PercentageOff { percentage, .. } => PromotionRuleV1::PercentageOff {
+                product_ref,
+                percentage_bps: percentage.bps(),
+            },
+            PromotionRule::FixedAmountOff { amount, .. } => PromotionRuleV1::FixedAmountOff {
+                product_ref,
+                amount_minor: amount.minor(),
+            },
+            PromotionRule::BuyNGetM { buy, get, .. } => PromotionRuleV1::BuyNGetM {
+                product_ref,
+                buy_thousandths: buy.thousandths(),
+                get_thousandths: get.thousandths(),
+            },
+            PromotionRule::BasketThreshold { minimum, amount } => {
+                PromotionRuleV1::BasketThreshold {
+                    minimum_minor: minimum.minor(),
+                    amount_minor: amount.minor(),
+                }
+            }
+        }
+    }
+}
+
+impl PromotionRecordV1 {
+    /// Validate and convert. The currency comes from the import header, never
+    /// from the record, so a chunk cannot smuggle in a second currency.
+    pub fn into_domain(self, currency: Currency) -> Result<Promotion, CatalogError> {
+        let scope = match (self.scope.as_str(), self.store_id) {
+            ("TENANT", None) => CatalogScope::Tenant,
+            ("TENANT", Some(_)) => {
+                return Err(CatalogError::InvalidRecord {
+                    field: "promotion_scope",
+                    reason: "a tenant promotion must not name a store".to_owned(),
+                })
+            }
+            ("STORE", Some(store_id)) => CatalogScope::Store {
+                store_id: StoreId::new(store_id)?,
+            },
+            ("STORE", None) => {
+                return Err(CatalogError::InvalidRecord {
+                    field: "promotion_scope",
+                    reason: "a store promotion must name its store".to_owned(),
+                })
+            }
+            (other, _) => {
+                return Err(CatalogError::InvalidRecord {
+                    field: "promotion_scope",
+                    reason: format!("unknown scope `{other}`"),
+                })
+            }
+        };
+        let rule = self.rule.into_domain(currency)?;
+        Promotion::import(NewPromotion {
+            promotion_id: PromotionId::new(self.promotion_id)?,
+            code: self.code,
+            name: self.name,
+            active: self.active,
+            priority: self.priority,
+            stackability: Stackability::parse(&self.stackability)?,
+            scope,
+            valid_from: self
+                .valid_from
+                .as_deref()
+                .map(|value| parse_timestamp(value, "valid_from"))
+                .transpose()?,
+            valid_until: self
+                .valid_until
+                .as_deref()
+                .map(|value| parse_timestamp(value, "valid_until"))
+                .transpose()?,
+            rule,
+        })
+    }
+}
+
+impl PromotionRuleV1 {
+    pub fn into_domain(self, currency: Currency) -> Result<PromotionRule, CatalogError> {
+        let applicability = |product_ref: Option<String>| -> Result<_, CatalogError> {
+            Ok(match product_ref {
+                Some(value) => ProductApplicability::Product {
+                    product_ref: ProductRef::new(value)?,
+                },
+                None => ProductApplicability::AnyProduct,
+            })
+        };
+        Ok(match self {
+            PromotionRuleV1::PercentageOff {
+                product_ref,
+                percentage_bps,
+            } => PromotionRule::PercentageOff {
+                applies_to: applicability(product_ref)?,
+                percentage: Percentage::from_bps(percentage_bps)?,
+            },
+            PromotionRuleV1::FixedAmountOff {
+                product_ref,
+                amount_minor,
+            } => PromotionRule::FixedAmountOff {
+                applies_to: applicability(product_ref)?,
+                amount: Money::from_minor(amount_minor, currency),
+            },
+            PromotionRuleV1::BuyNGetM {
+                product_ref,
+                buy_thousandths,
+                get_thousandths,
+            } => PromotionRule::BuyNGetM {
+                applies_to: applicability(product_ref)?,
+                buy: Quantity::from_thousandths(buy_thousandths)?,
+                get: Quantity::from_thousandths(get_thousandths)?,
+            },
+            PromotionRuleV1::BasketThreshold {
+                minimum_minor,
+                amount_minor,
+            } => PromotionRule::BasketThreshold {
+                minimum: Money::from_minor(minimum_minor, currency),
+                amount: Money::from_minor(amount_minor, currency),
+            },
+        })
+    }
 }

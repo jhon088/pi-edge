@@ -55,8 +55,28 @@ export interface TransactionLine {
   price_mode: string;
   /** Book the price came from. */
   price_book_id: string | null;
+  /** What promotions took off this line, allocations included. */
+  discount_amount: Money;
   tax_amount: Money;
   line_total: Money;
+}
+
+/** One promotion as applied to the sale. Produced entirely by the core. */
+export interface AppliedPromotion {
+  adjustment_id: string;
+  promotion_id: string;
+  code: string;
+  name: string;
+  priority: number;
+  /** `STACKABLE` or `EXCLUSIVE`. */
+  stackability: string;
+  /** `LINE` or `BASKET`. */
+  target: string;
+  line_number: number | null;
+  amount: Money;
+  /** Rule kind that produced it, e.g. `BUY_N_GET_M`. */
+  reason: string;
+  detail: string | null;
 }
 
 export interface Totals {
@@ -77,6 +97,7 @@ export interface RetailTransaction {
   status: string;
   currency: string;
   lines: TransactionLine[];
+  applied_promotions: AppliedPromotion[];
   totals: Totals;
   paid_total: Money;
   balance_due: Money;
@@ -103,6 +124,7 @@ export interface SnapshotCounts {
   products: number;
   price_entries: number;
   barcodes: number;
+  promotions: number;
 }
 
 export interface CatalogSnapshot {

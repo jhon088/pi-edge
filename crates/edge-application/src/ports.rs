@@ -5,7 +5,7 @@
 
 use edge_catalog::{
     CatalogBarcode, CatalogProduct, CatalogSnapshot, ImportProgress, PriceBook, PriceCandidate,
-    PriceEntry, ProductSelector, SnapshotCounts, TaxProfile, TaxProfileCode,
+    PriceEntry, ProductSelector, Promotion, SnapshotCounts, TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,7 @@ pub struct StoredChunk {
     pub product_count: i64,
     pub price_entry_count: i64,
     pub barcode_count: i64,
+    pub promotion_count: i64,
 }
 
 /// Catalog persistence.
@@ -145,6 +146,25 @@ pub trait CatalogUnitOfWork {
         store_id: &StoreId,
         product_ref: &ProductRef,
     ) -> Result<Vec<PriceCandidate>, AppError>;
+
+    fn insert_catalog_promotions(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        promotions: &[Promotion],
+    ) -> Result<(), AppError>;
+    fn list_catalog_promotions(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<Promotion>, AppError>;
+
+    /// Every promotion that *could* apply at a store: tenant-wide ones plus
+    /// that store's own, active only. Validity is decided in the engine, which
+    /// owns the half-open interval rule.
+    fn promotion_candidates(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        store_id: &StoreId,
+    ) -> Result<Vec<Promotion>, AppError>;
 
     fn catalog_stored_counts(
         &mut self,

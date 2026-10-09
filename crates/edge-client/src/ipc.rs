@@ -7,11 +7,12 @@ use std::time::{Duration, Instant};
 use edge_ipc::{DesktopLocalTransport, EdgeEventStream, EdgeTransport, IpcError};
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
-    CatalogSnapshotRequestV1, CatalogSnapshotViewV1, CatalogStatusV1, CommitCashPaymentRequestV1,
-    CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
-    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PendingOutboxV1,
-    ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1,
-    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
+    CatalogSnapshotRequestV1, CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1,
+    CommitCashPaymentRequestV1, CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1,
+    InitDeviceRequestV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
+    PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    RegisterSessionV1, RemoveItemRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
+    RetailTransactionV1,
 };
 use uuid::Uuid;
 
@@ -280,6 +281,30 @@ impl EdgeClient for IpcEdgeClient {
     ) -> Result<RetailTransactionV1, ClientError> {
         expect_result!(
             self.call(OperationV1::AddItem(request), request_id)?,
+            ResultV1::Transaction,
+            "TRANSACTION"
+        )
+    }
+
+    fn remove_item(
+        &self,
+        request: RemoveItemRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RetailTransactionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::RemoveItem(request), request_id)?,
+            ResultV1::Transaction,
+            "TRANSACTION"
+        )
+    }
+
+    fn change_quantity(
+        &self,
+        request: ChangeQuantityRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RetailTransactionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ChangeQuantity(request), request_id)?,
             ResultV1::Transaction,
             "TRANSACTION"
         )

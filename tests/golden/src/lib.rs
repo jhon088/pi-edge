@@ -13,6 +13,10 @@ use edge_application::testing::{
     CatalogFixture, FixedClock, FixturePrice, FixtureProduct, SequentialIdFactory,
 };
 use edge_application::EdgeApplication;
+use edge_catalog::promotions::{
+    NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
+};
+use edge_catalog::scope::CatalogScope;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_storage::SqliteEdgeStore;
@@ -189,4 +193,201 @@ pub fn assert_golden(name: &str, value: &Value) {
         actual, expected,
         "golden mismatch for `{name}`; if this change is intended, regenerate with UPDATE_GOLDEN=1"
     );
+}
+
+// ------------------------------------------------------------- promotions
+
+/// Promotional catalog: the same products as [`golden_catalog`] plus the four
+/// rule kinds, so every golden promotion case prices from a real snapshot.
+///
+/// The promotions are *all* in force at [`FROZEN_AT`]; which ones actually
+/// apply is decided by each case's basket, never by the fixture.
+pub fn promotional_catalog(version: i64) -> CatalogFixture {
+    golden_catalog(version)
+        // 10% off one product.
+        .promoting(percentage_off(
+            "PROMO-PCT-16",
+            10,
+            Stackability::Stackable,
+            Some("SKU-16"),
+            1_000,
+        ))
+        // 15.00 off one product, lower priority so it stacks after the above.
+        .promoting(fixed_off(
+            "PROMO-FIX-16",
+            5,
+            Stackability::Stackable,
+            Some("SKU-16"),
+            1_500,
+        ))
+        // Buy 2 get 1 on the 8% product.
+        .promoting(buy_n_get_m(
+            "PROMO-BOGO-8",
+            0,
+            Stackability::Stackable,
+            Some("SKU-8"),
+            2,
+            1,
+        ))
+        // 20% off the tax-inclusive product: the inclusive path with a
+        // discount.
+        .promoting(percentage_off(
+            "PROMO-PCT-INC",
+            0,
+            Stackability::Stackable,
+            Some("SKU-INC-16"),
+            2_000,
+        ))
+        // Exclusive 30% off the store-override product: it must shut out the
+        // basket-wide one below.
+        .promoting(percentage_off(
+            "PROMO-EXC-STORE",
+            100,
+            Stackability::Exclusive,
+            Some("SKU-STORE"),
+            3_000,
+        ))
+        // 50.00 off the basket once it reaches 500.00.
+        .promoting(threshold("PROMO-THRESHOLD", 0, 50_000, 5_000))
+}
+
+pub fn promotion(
+    id: &str,
+    priority: i32,
+    stackability: Stackability,
+    rule: PromotionRule,
+) -> Promotion {
+    Promotion::import(NewPromotion {
+        promotion_id: PromotionId::new(id).unwrap(),
+        code: id.to_owned(),
+        name: format!("Promoción {id}"),
+        active: true,
+        priority,
+        stackability,
+        scope: CatalogScope::Tenant,
+        valid_from: None,
+        valid_until: None,
+        rule,
+    })
+    .unwrap()
+}
+
+fn applies_to(product_ref: Option<&str>) -> ProductApplicability {
+    match product_ref {
+        Some(value) => ProductApplicability::Product {
+            product_ref: ProductRef::new(value).unwrap(),
+        },
+        None => ProductApplicability::AnyProduct,
+    }
+}
+
+pub fn percentage_off(
+    id: &str,
+    priority: i32,
+    stackability: Stackability,
+    product_ref: Option<&str>,
+    bps: u32,
+) -> Promotion {
+    promotion(
+        id,
+        priority,
+        stackability,
+        PromotionRule::PercentageOff {
+            applies_to: applies_to(product_ref),
+            percentage: Percentage::from_bps(bps).unwrap(),
+        },
+    )
+}
+
+pub fn fixed_off(
+    id: &str,
+    priority: i32,
+    stackability: Stackability,
+    product_ref: Option<&str>,
+    minor: i64,
+) -> Promotion {
+    promotion(
+        id,
+        priority,
+        stackability,
+        PromotionRule::FixedAmountOff {
+            applies_to: applies_to(product_ref),
+            amount: Money::from_minor(minor, Currency::Mxn),
+        },
+    )
+}
+
+pub fn buy_n_get_m(
+    id: &str,
+    priority: i32,
+    stackability: Stackability,
+    product_ref: Option<&str>,
+    buy: i64,
+    get: i64,
+) -> Promotion {
+    promotion(
+        id,
+        priority,
+        stackability,
+        PromotionRule::BuyNGetM {
+            applies_to: applies_to(product_ref),
+            buy: Quantity::from_units(buy).unwrap(),
+            get: Quantity::from_units(get).unwrap(),
+        },
+    )
+}
+
+pub fn threshold(id: &str, priority: i32, minimum_minor: i64, amount_minor: i64) -> Promotion {
+    promotion(
+        id,
+        priority,
+        Stackability::Stackable,
+        PromotionRule::BasketThreshold {
+            minimum: Money::from_minor(minimum_minor, Currency::Mxn),
+            amount: Money::from_minor(amount_minor, Currency::Mxn),
+        },
+    )
+}
+
+/// `net + tax == gross` on every line, and the totals are the sum of the
+/// lines. The invariant promotions must never break.
+pub fn assert_tax_identity(transaction: &RetailTransaction) {
+    let state = transaction.state();
+    let mut net = 0;
+    let mut tax = 0;
+    let mut gross = 0;
+    let mut extended = 0;
+    let mut discount = 0;
+    for line in &state.lines {
+        assert_eq!(
+            line.taxable_amount.minor() + line.tax_amount.minor(),
+            line.line_total.minor(),
+            "line {} breaks net + tax == gross",
+            line.line_number
+        );
+        assert!(
+            line.line_total.minor() >= 0,
+            "line {} went negative",
+            line.line_number
+        );
+        net += line.taxable_amount.minor();
+        tax += line.tax_amount.minor();
+        gross += line.line_total.minor();
+        extended += line.extended_amount.minor();
+        discount += line.discount_amount.minor();
+    }
+    let totals = &state.totals;
+    assert_eq!(totals.net_total.minor(), net);
+    assert_eq!(totals.tax_total.minor(), tax);
+    assert_eq!(totals.grand_total.minor(), gross);
+    assert_eq!(totals.subtotal.minor(), extended);
+    assert_eq!(totals.discount_total.minor(), discount);
+    // The discounts the engine reported and the ones the lines carry are the
+    // same money.
+    let reported: i64 = transaction
+        .applied_promotions()
+        .iter()
+        .map(|applied| applied.amount.minor())
+        .sum();
+    assert_eq!(reported, discount, "adjustments must sum to the discounts");
 }

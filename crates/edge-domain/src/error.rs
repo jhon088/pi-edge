@@ -48,6 +48,15 @@ pub enum DomainError {
     #[error("field `{0}` is required")]
     MissingField(&'static str),
 
+    #[error("line {line_number} is not part of this transaction")]
+    LineNotFound { line_number: i64 },
+
+    #[error("a promotion adjustment targets line {line_number}, which does not exist")]
+    AdjustmentTargetMissing { line_number: i64 },
+
+    #[error("promotion target `{kind}` is not a valid target")]
+    InvalidPromotionTarget { kind: String },
+
     #[error("unknown {kind} value `{value}`")]
     UnknownEnumValue { kind: &'static str, value: String },
 }

@@ -1,0 +1,262 @@
+{
+  "transaction_id": "00000000-0000-0000-0000-000000000008",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "store_id": "STORE-DEMO",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "register_sequence": 1,
+  "status": "TOTALIZED",
+  "currency": "MXN",
+  "catalog_snapshot_id": "00000000-0000-0000-0000-000000000001",
+  "catalog_version": 1,
+  "pricing_effective_at": "2026-10-08T15:00:00.000000Z",
+  "lines": [
+    {
+      "line_id": "00000000-0000-0000-0000-00000000000a",
+      "line_number": 1,
+      "product_ref": "SKU-16",
+      "sku": "SKU-16",
+      "barcode": "7501000000016",
+      "description": "Gravado 16%",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "unit_price": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "tax_rate_bps": 1600,
+      "price_mode": "TAX_EXCLUSIVE",
+      "price_book_id": "BASE",
+      "extended_amount": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "discount_amount": {
+        "minor": 3228,
+        "currency": "MXN",
+        "formatted": "32.28"
+      },
+      "taxable_amount": {
+        "minor": 6772,
+        "currency": "MXN",
+        "formatted": "67.72"
+      },
+      "tax_amount": {
+        "minor": 1084,
+        "currency": "MXN",
+        "formatted": "10.84"
+      },
+      "line_total": {
+        "minor": 7856,
+        "currency": "MXN",
+        "formatted": "78.56"
+      }
+    },
+    {
+      "line_id": "00000000-0000-0000-0000-00000000000c",
+      "line_number": 2,
+      "product_ref": "SKU-8",
+      "sku": "SKU-8",
+      "barcode": "7501000000008",
+      "description": "Gravado 8%",
+      "quantity": "6.000",
+      "quantity_thousandths": 6000,
+      "unit_price": {
+        "minor": 10000,
+        "currency": "MXN",
+        "formatted": "100.00"
+      },
+      "tax_rate_bps": 800,
+      "price_mode": "TAX_EXCLUSIVE",
+      "price_book_id": "BASE",
+      "extended_amount": {
+        "minor": 60000,
+        "currency": "MXN",
+        "formatted": "600.00"
+      },
+      "discount_amount": {
+        "minor": 23884,
+        "currency": "MXN",
+        "formatted": "238.84"
+      },
+      "taxable_amount": {
+        "minor": 36116,
+        "currency": "MXN",
+        "formatted": "361.16"
+      },
+      "tax_amount": {
+        "minor": 2889,
+        "currency": "MXN",
+        "formatted": "28.89"
+      },
+      "line_total": {
+        "minor": 39005,
+        "currency": "MXN",
+        "formatted": "390.05"
+      }
+    },
+    {
+      "line_id": "00000000-0000-0000-0000-00000000000e",
+      "line_number": 3,
+      "product_ref": "SKU-0",
+      "sku": "SKU-0",
+      "barcode": "7501000000000",
+      "description": "Tasa 0%",
+      "quantity": "2.000",
+      "quantity_thousandths": 2000,
+      "unit_price": {
+        "minor": 1999,
+        "currency": "MXN",
+        "formatted": "19.99"
+      },
+      "tax_rate_bps": 0,
+      "price_mode": "TAX_EXCLUSIVE",
+      "price_book_id": "BASE",
+      "extended_amount": {
+        "minor": 3998,
+        "currency": "MXN",
+        "formatted": "39.98"
+      },
+      "discount_amount": {
+        "minor": 388,
+        "currency": "MXN",
+        "formatted": "3.88"
+      },
+      "taxable_amount": {
+        "minor": 3610,
+        "currency": "MXN",
+        "formatted": "36.10"
+      },
+      "tax_amount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "line_total": {
+        "minor": 3610,
+        "currency": "MXN",
+        "formatted": "36.10"
+      }
+    }
+  ],
+  "applied_promotions": [
+    {
+      "adjustment_id": "PROMO-PCT-16#line:1",
+      "promotion_id": "PROMO-PCT-16",
+      "code": "PROMO-PCT-16",
+      "name": "Promoción PROMO-PCT-16",
+      "priority": 10,
+      "stackability": "STACKABLE",
+      "target": "LINE",
+      "line_number": 1,
+      "amount": {
+        "minor": 1000,
+        "currency": "MXN",
+        "formatted": "10.00"
+      },
+      "reason": "PERCENTAGE_OFF",
+      "detail": "1000 bps off"
+    },
+    {
+      "adjustment_id": "PROMO-FIX-16#line:1",
+      "promotion_id": "PROMO-FIX-16",
+      "code": "PROMO-FIX-16",
+      "name": "Promoción PROMO-FIX-16",
+      "priority": 5,
+      "stackability": "STACKABLE",
+      "target": "LINE",
+      "line_number": 1,
+      "amount": {
+        "minor": 1500,
+        "currency": "MXN",
+        "formatted": "15.00"
+      },
+      "reason": "FIXED_AMOUNT_OFF",
+      "detail": null
+    },
+    {
+      "adjustment_id": "PROMO-BOGO-8#line:2",
+      "promotion_id": "PROMO-BOGO-8",
+      "code": "PROMO-BOGO-8",
+      "name": "Promoción PROMO-BOGO-8",
+      "priority": 0,
+      "stackability": "STACKABLE",
+      "target": "LINE",
+      "line_number": 2,
+      "amount": {
+        "minor": 20000,
+        "currency": "MXN",
+        "formatted": "200.00"
+      },
+      "reason": "BUY_N_GET_M",
+      "detail": "2 application(s), 2 free unit(s)"
+    },
+    {
+      "adjustment_id": "PROMO-THRESHOLD#basket",
+      "promotion_id": "PROMO-THRESHOLD",
+      "code": "PROMO-THRESHOLD",
+      "name": "Promoción PROMO-THRESHOLD",
+      "priority": 0,
+      "stackability": "STACKABLE",
+      "target": "BASKET",
+      "line_number": null,
+      "amount": {
+        "minor": 5000,
+        "currency": "MXN",
+        "formatted": "50.00"
+      },
+      "reason": "BASKET_THRESHOLD",
+      "detail": "allocated across 3 line(s) over a basis of 514.98"
+    }
+  ],
+  "totals": {
+    "subtotal": {
+      "minor": 73998,
+      "currency": "MXN",
+      "formatted": "739.98"
+    },
+    "discount_total": {
+      "minor": 27500,
+      "currency": "MXN",
+      "formatted": "275.00"
+    },
+    "net_total": {
+      "minor": 46498,
+      "currency": "MXN",
+      "formatted": "464.98"
+    },
+    "tax_total": {
+      "minor": 3973,
+      "currency": "MXN",
+      "formatted": "39.73"
+    },
+    "grand_total": {
+      "minor": 50471,
+      "currency": "MXN",
+      "formatted": "504.71"
+    }
+  },
+  "payments": [],
+  "paid_total": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "balance_due": {
+    "minor": 50471,
+    "currency": "MXN",
+    "formatted": "504.71"
+  },
+  "change_due": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "created_at": "2026-10-08T15:00:00.000000Z",
+  "updated_at": "2026-10-08T15:00:00.000000Z",
+  "finalized_at": null,
+  "version": 8
+}

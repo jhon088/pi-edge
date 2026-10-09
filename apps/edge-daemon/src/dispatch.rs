@@ -203,6 +203,23 @@ impl Dispatcher {
                 let transaction = self.core.add_item(command).map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
             }
+            OperationV1::RemoveItem(payload) => {
+                let transaction = self
+                    .core
+                    .remove_item(payload.into_command(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Transaction(dto(&transaction)?))
+            }
+            OperationV1::ChangeQuantity(payload) => {
+                let command = payload
+                    .into_command(Some(request_id))
+                    .map_err(catalog_error)?;
+                let transaction = self
+                    .core
+                    .change_quantity(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Transaction(dto(&transaction)?))
+            }
             OperationV1::Totalize => {
                 let transaction = self
                     .core

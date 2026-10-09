@@ -7,14 +7,15 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use edge_catalog::{
-    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceEntry,
+    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceEntry, Promotion,
     SnapshotContent,
 };
 use edge_client::{ClientError, EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
     CommitCatalogImportRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1, PriceBookV1,
-    PriceRecordV1, ProductSelectorV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
+    PriceRecordV1, ProductSelectorV1, PromotionRecordV1, PromotionRuleV1, PutCatalogChunkRequestV1,
+    SnapshotCountsV1, TaxProfileV1,
 };
 
 /// A spawned daemon process. Killed on drop so a failing test cannot leak a
@@ -186,6 +187,7 @@ pub struct CatalogSpec {
     pub tax_profiles: Vec<TaxProfileV1>,
     pub price_books: Vec<PriceBookV1>,
     pub products: Vec<CatalogProductRecordV1>,
+    pub promotions: Vec<PromotionRecordV1>,
 }
 
 impl CatalogSpec {
@@ -207,7 +209,22 @@ impl CatalogSpec {
             ],
             price_books: vec![base_book()],
             products,
+            promotions: Vec::new(),
         }
+    }
+
+    /// Add a promotion, the way the snapshot would carry it.
+    pub fn promoting(mut self, promotion: PromotionRecordV1) -> Self {
+        self.promotions.push(promotion);
+        self
+    }
+
+    fn domain_promotions(&self) -> Vec<Promotion> {
+        self.promotions
+            .iter()
+            .cloned()
+            .map(|record| record.into_domain(Currency::Mxn).unwrap())
+            .collect()
     }
 
     fn domain(&self) -> (Vec<CatalogProduct>, Vec<PriceEntry>, Vec<CatalogBarcode>) {
@@ -245,6 +262,7 @@ impl CatalogSpec {
             products: &products,
             price_entries: &price_entries,
             barcodes: &barcodes,
+            promotions: &self.domain_promotions(),
         })
     }
 
@@ -262,6 +280,7 @@ impl CatalogSpec {
                 products: products.len() as i64,
                 price_entries: price_entries.len() as i64,
                 barcodes: barcodes.len() as i64,
+                promotions: self.promotions.len() as i64,
             },
             tax_profiles: self.tax_profiles.clone(),
             price_books: self.price_books.clone(),
@@ -284,11 +303,14 @@ impl CatalogSpec {
             prices.append(&mut parsed.prices);
             barcodes.append(&mut parsed.barcodes);
         }
+        // Single-chunk imports in these tests, so every promotion rides here.
+        let promotions = self.domain_promotions();
         PutCatalogChunkRequestV1 {
             snapshot_id: snapshot_id.to_owned(),
             chunk_index,
-            chunk_hash: hash_chunk(&products, &prices, &barcodes),
+            chunk_hash: hash_chunk(&products, &prices, &barcodes, &promotions),
             products: records.to_vec(),
+            promotions: self.promotions.clone(),
         }
     }
 
@@ -428,4 +450,38 @@ where
         }
     }
     panic!("client never reconnected: {last:?}");
+}
+
+/// A promotion record in the shape the server will send.
+pub fn promotion_record(
+    promotion_id: &str,
+    priority: i32,
+    stackability: &str,
+    rule: PromotionRuleV1,
+) -> PromotionRecordV1 {
+    PromotionRecordV1 {
+        promotion_id: promotion_id.to_owned(),
+        code: promotion_id.to_owned(),
+        name: format!("Promoción {promotion_id}"),
+        active: true,
+        priority,
+        stackability: stackability.to_owned(),
+        scope: "TENANT".to_owned(),
+        store_id: None,
+        valid_from: None,
+        valid_until: None,
+        rule,
+    }
+}
+
+pub fn percentage_off_record(promotion_id: &str, product_ref: &str, bps: u32) -> PromotionRecordV1 {
+    promotion_record(
+        promotion_id,
+        0,
+        "STACKABLE",
+        PromotionRuleV1::PercentageOff {
+            product_ref: Some(product_ref.to_owned()),
+            percentage_bps: bps,
+        },
+    )
 }

@@ -15,6 +15,7 @@
 //! Every step is durable on its own. A failed commit leaves the import in
 //! `IMPORTING`, which is exactly the state a client resumes from.
 
+use edge_catalog::promotions::PromotionRule;
 use edge_catalog::{
     resolve_price, CatalogError, CatalogSnapshot, CatalogSnapshotStatus, NewCatalogSnapshot,
     PricingContext, ProductSelector,
@@ -214,9 +215,49 @@ where
                 }
             }
 
+            // A promotion's money must be in the snapshot's currency, and a
+            // promotion that names a product must travel with that product.
+            let currency = books
+                .first()
+                .map(|book| book.currency)
+                .unwrap_or(Currency::Mxn);
+            for promotion in &cmd.promotions {
+                for amount in promotion_amounts(&promotion.rule) {
+                    if amount.currency() != currency {
+                        return Err(CatalogError::CurrencyMismatch {
+                            expected: currency.code(),
+                            actual: amount.currency().code(),
+                        }
+                        .into());
+                    }
+                }
+                if let Some(product_ref) = promotion
+                    .rule
+                    .applicability()
+                    .and_then(|applies| applies.product_ref())
+                {
+                    if !cmd
+                        .products
+                        .iter()
+                        .any(|product| &product.product_ref == product_ref)
+                    {
+                        return Err(CatalogError::InvalidRecord {
+                            field: "promotion_applies_to",
+                            reason: format!(
+                                "promotion `{}` names product `{product_ref}`, which is not in \
+                                 this chunk",
+                                promotion.promotion_id
+                            ),
+                        }
+                        .into());
+                    }
+                }
+            }
+
             uow.insert_catalog_products(cmd.snapshot_id, &cmd.products)?;
             uow.insert_catalog_price_entries(cmd.snapshot_id, &cmd.price_entries)?;
             uow.insert_catalog_barcodes(cmd.snapshot_id, &cmd.barcodes)?;
+            uow.insert_catalog_promotions(cmd.snapshot_id, &cmd.promotions)?;
             uow.record_catalog_chunk(
                 cmd.snapshot_id,
                 &StoredChunk {
@@ -225,6 +266,7 @@ where
                     product_count: i64::try_from(cmd.products.len()).unwrap_or(i64::MAX),
                     price_entry_count: i64::try_from(cmd.price_entries.len()).unwrap_or(i64::MAX),
                     barcode_count: i64::try_from(cmd.barcodes.len()).unwrap_or(i64::MAX),
+                    promotion_count: i64::try_from(cmd.promotions.len()).unwrap_or(i64::MAX),
                 },
                 now,
             )?;
@@ -510,4 +552,14 @@ fn load_snapshot(
             snapshot_id: snapshot_id.to_string(),
         })
     })
+}
+
+/// The money a rule carries, so the import can check it against the snapshot's
+/// currency. A percentage or a buy-N-get-M carries none.
+fn promotion_amounts(rule: &PromotionRule) -> Vec<Money> {
+    match rule {
+        PromotionRule::PercentageOff { .. } | PromotionRule::BuyNGetM { .. } => Vec::new(),
+        PromotionRule::FixedAmountOff { amount, .. } => vec![*amount],
+        PromotionRule::BasketThreshold { minimum, amount } => vec![*minimum, *amount],
+    }
 }

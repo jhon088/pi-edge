@@ -71,8 +71,8 @@ use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::product::NewCatalogProduct;
 use edge_catalog::{
     hash_chunk, hash_snapshot, Barcode, CatalogBarcode, CatalogProduct, Currency, Money, PriceBook,
-    PriceEntry, PriceMode, ProductRef, SnapshotContent, StoreId, TaxProfile, TaxProfileCode,
-    TaxRate,
+    PriceEntry, PriceMode, ProductRef, Promotion, SnapshotContent, StoreId, TaxProfile,
+    TaxProfileCode, TaxRate,
 };
 use edge_domain::prelude::{CatalogSnapshotId, PriceBookId};
 
@@ -214,6 +214,7 @@ pub struct CatalogFixture {
     pub profiles: Vec<TaxProfile>,
     pub books: Vec<PriceBook>,
     pub products: Vec<FixtureProduct>,
+    pub promotions: Vec<Promotion>,
 }
 
 #[allow(clippy::expect_used)]
@@ -257,6 +258,7 @@ impl CatalogFixture {
             ],
             books: vec![book(BASE_BOOK, PriceBookScope::Tenant, 0)],
             products: Vec::new(),
+            promotions: Vec::new(),
         }
     }
 
@@ -272,6 +274,12 @@ impl CatalogFixture {
 
     pub fn with(mut self, product: FixtureProduct) -> Self {
         self.products.push(product);
+        self
+    }
+
+    /// Add a promotion, built the way the snapshot would carry it.
+    pub fn promoting(mut self, promotion: Promotion) -> Self {
+        self.promotions.push(promotion);
         self
     }
 
@@ -349,6 +357,7 @@ impl CatalogFixture {
         barcodes: usize,
     ) -> edge_catalog::SnapshotCounts {
         edge_catalog::SnapshotCounts {
+            promotions: i64::try_from(self.promotions.len()).unwrap_or(i64::MAX),
             tax_profiles: i64::try_from(self.profiles.len()).unwrap_or(i64::MAX),
             price_books: i64::try_from(self.books.len()).unwrap_or(i64::MAX),
             products: i64::try_from(products).unwrap_or(i64::MAX),
@@ -378,6 +387,7 @@ impl CatalogFixture {
                 products: &products,
                 price_entries: &price_entries,
                 barcodes: &barcodes,
+                promotions: &self.promotions,
             }),
             generated_at: self.generated_at,
             effective_at: None,
@@ -391,10 +401,11 @@ impl CatalogFixture {
             app.put_catalog_chunk(PutCatalogChunkCommand {
                 snapshot_id,
                 chunk_index: 0,
-                chunk_hash: hash_chunk(&products, &price_entries, &barcodes),
+                chunk_hash: hash_chunk(&products, &price_entries, &barcodes, &self.promotions),
                 products,
                 price_entries,
                 barcodes,
+                promotions: self.promotions.clone(),
             })?;
         }
         app.commit_catalog_import(CommitCatalogImportCommand {

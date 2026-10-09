@@ -130,6 +130,35 @@ pub struct NewLineInput {
 }
 
 impl TransactionLine {
+    /// Recompute every derived amount from the line's own inputs.
+    ///
+    /// The single place line arithmetic happens: extend by quantity, take the
+    /// discount off the quoted amount, then split by price mode. Promotions
+    /// feed only the `discount` term, which is what keeps `net + tax == gross`
+    /// true for both modes without any new arithmetic (ADR 015).
+    fn recompute(&mut self, discount: Money) -> Result<(), DomainError> {
+        if discount.is_negative() {
+            return Err(DomainError::Money(MoneyError::NegativeAmount(
+                discount.minor(),
+            )));
+        }
+        let extended = self.unit_price.mul_quantity(self.quantity)?;
+        let quoted = extended.checked_sub(discount)?;
+        if quoted.is_negative() {
+            return Err(DomainError::DiscountExceedsLine {
+                discount_minor: discount.minor(),
+                gross_minor: extended.minor(),
+            });
+        }
+        let taxed = self.tax_rate.apply(quoted, self.price_mode)?;
+        self.extended_amount = extended;
+        self.discount_amount = discount;
+        self.taxable_amount = taxed.net;
+        self.tax_amount = taxed.tax;
+        self.line_total = taxed.gross;
+        Ok(())
+    }
+
     fn price(input: NewLineInput, line_number: i64) -> Result<Self, DomainError> {
         if input.description.trim().is_empty() {
             return Err(DomainError::MissingField("description"));
@@ -146,21 +175,8 @@ impl TransactionLine {
                 discount.minor(),
             )));
         }
-        // Extend first, then split the tax: the customer pays the quoted price
-        // times the quantity, exactly.
-        let extended = input.unit_price.mul_quantity(input.quantity)?;
-        let quoted = extended.checked_sub(discount)?;
-        if quoted.is_negative() {
-            return Err(DomainError::DiscountExceedsLine {
-                discount_minor: discount.minor(),
-                gross_minor: extended.minor(),
-            });
-        }
-        let taxed = input.tax_rate.apply(quoted, input.price_mode)?;
-        let taxable = taxed.net;
-        let tax_amount = taxed.tax;
-        let line_total = taxed.gross;
-        Ok(Self {
+        let currency = input.unit_price.currency();
+        let mut line = Self {
             line_id: input.line_id,
             line_number,
             product_ref: input.product_ref,
@@ -172,12 +188,14 @@ impl TransactionLine {
             tax_rate: input.tax_rate,
             price_mode: input.price_mode,
             price_book_id: input.price_book_id,
-            extended_amount: extended,
-            discount_amount: discount,
-            taxable_amount: taxable,
-            tax_amount,
-            line_total,
-        })
+            extended_amount: Money::zero(currency),
+            discount_amount: Money::zero(currency),
+            taxable_amount: Money::zero(currency),
+            tax_amount: Money::zero(currency),
+            line_total: Money::zero(currency),
+        };
+        line.recompute(discount)?;
+        Ok(line)
     }
 }
 
@@ -233,6 +251,97 @@ impl Totals {
     }
 }
 
+/// Total discount a promotion evaluation assigns to one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineDiscount {
+    pub line_number: i64,
+    pub amount: Money,
+}
+
+/// What a promotion applied to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "target", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PromotionTarget {
+    Line { line_number: i64 },
+    Basket,
+}
+
+impl PromotionTarget {
+    /// Discriminant, stored on its own column so an audit query can filter on
+    /// it without parsing a label.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            PromotionTarget::Line { .. } => "LINE",
+            PromotionTarget::Basket => "BASKET",
+        }
+    }
+
+    pub const fn line_number(&self) -> Option<i64> {
+        match self {
+            PromotionTarget::Line { line_number } => Some(*line_number),
+            PromotionTarget::Basket => None,
+        }
+    }
+
+    /// Stable human label: `BASKET`, or `LINE:<line_number>`.
+    pub fn label(&self) -> String {
+        match self {
+            PromotionTarget::Line { line_number } => format!("LINE:{line_number}"),
+            PromotionTarget::Basket => "BASKET".to_owned(),
+        }
+    }
+
+    /// Rebuild from the two stored columns.
+    pub fn rehydrate(kind: &str, line_number: Option<i64>) -> Result<Self, DomainError> {
+        match (kind, line_number) {
+            ("LINE", Some(line_number)) => Ok(PromotionTarget::Line { line_number }),
+            ("BASKET", None) => Ok(PromotionTarget::Basket),
+            _ => Err(DomainError::InvalidPromotionTarget {
+                kind: kind.to_owned(),
+            }),
+        }
+    }
+}
+
+/// One promotion as applied to this sale, materialized for audit.
+///
+/// Self-contained on purpose: a historical sale stays interpretable after old
+/// catalog snapshots are purged, so the amount and the reason live here rather
+/// than only in the snapshot (ADR 015).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedPromotion {
+    /// Deterministic composite of promotion and target, not a minted id.
+    pub adjustment_id: String,
+    pub promotion_id: String,
+    pub code: String,
+    pub name: String,
+    pub priority: i32,
+    pub stackability: String,
+    pub target: PromotionTarget,
+    pub amount: Money,
+    /// Rule kind that produced it, e.g. `BUY_N_GET_M`.
+    pub reason: String,
+    /// Human detail for the journal and the receipt.
+    pub detail: Option<String>,
+}
+
+/// The result of one promotion evaluation over the whole basket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromotionOutcome {
+    /// Final discount per line, basket-level allocations included.
+    pub line_discounts: Vec<LineDiscount>,
+    pub applied: Vec<AppliedPromotion>,
+}
+
+impl PromotionOutcome {
+    pub fn empty() -> Self {
+        Self {
+            line_discounts: Vec::new(),
+            applied: Vec::new(),
+        }
+    }
+}
+
 /// The pricing context a sale was opened with.
 ///
 /// Captured when the sale starts and never changed afterwards. The snapshot
@@ -262,7 +371,12 @@ pub struct RetailTransactionState {
     /// `None` only for sales created before the catalog existed.
     pub pricing: Option<PricingCapture>,
     pub lines: Vec<TransactionLine>,
+    /// Never reused: removing a line leaves a gap so an adjustment id always
+    /// points at the same line.
+    pub next_line_number: i64,
     pub totals: Totals,
+    /// Promotions applied by the last evaluation.
+    pub applied_promotions: Vec<AppliedPromotion>,
     pub payments: Vec<Payment>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -302,7 +416,9 @@ impl RetailTransaction {
             currency: new.currency,
             pricing: new.pricing,
             lines: Vec::new(),
+            next_line_number: 1,
             totals: Totals::zero(new.currency),
+            applied_promotions: Vec::new(),
             payments: Vec::new(),
             created_at: new.created_at,
             updated_at: new.created_at,
@@ -363,28 +479,139 @@ impl RetailTransaction {
         input: NewLineInput,
         now: Timestamp,
     ) -> Result<TransactionLine, DomainError> {
-        match self.0.status {
-            TransactionStatus::Open | TransactionStatus::Totalized => {}
-            other => {
-                return Err(DomainError::InvalidTransition {
-                    aggregate: AGGREGATE,
-                    from: other.as_str(),
-                    attempted: "ITEM_ADDED",
-                })
-            }
-        }
+        self.require_mutable("ITEM_ADDED")?;
         self.require_currency(input.unit_price)?;
         if let Some(discount) = input.discount_amount {
             self.require_currency(discount)?;
         }
-        let line_number = self.0.lines.len() as i64 + 1;
+        let line_number = self.0.next_line_number;
         let line = TransactionLine::price(input, line_number)?;
         self.0.lines.push(line.clone());
-        // Totals are no longer official until the core recomputes them.
-        self.0.status = TransactionStatus::Open;
-        self.0.totals = Totals::zero(self.0.currency);
+        self.0.next_line_number += 1;
+        self.invalidate_totals();
         self.touch(now);
         Ok(line)
+    }
+
+    /// Drop a line from the basket.
+    ///
+    /// The line number is not reused, so promotion adjustments keep pointing at
+    /// the same line for the life of the sale.
+    pub fn remove_line(
+        &mut self,
+        line_number: i64,
+        now: Timestamp,
+    ) -> Result<TransactionLine, DomainError> {
+        self.require_mutable("ITEM_REMOVED")?;
+        let position = self
+            .0
+            .lines
+            .iter()
+            .position(|line| line.line_number == line_number)
+            .ok_or(DomainError::LineNotFound { line_number })?;
+        let removed = self.0.lines.remove(position);
+        self.invalidate_totals();
+        self.touch(now);
+        Ok(removed)
+    }
+
+    /// Change how much of a line is being sold, re-extending its amounts.
+    pub fn change_line_quantity(
+        &mut self,
+        line_number: i64,
+        quantity: Quantity,
+        now: Timestamp,
+    ) -> Result<TransactionLine, DomainError> {
+        self.require_mutable("QUANTITY_CHANGED")?;
+        let line = self
+            .0
+            .lines
+            .iter_mut()
+            .find(|line| line.line_number == line_number)
+            .ok_or(DomainError::LineNotFound { line_number })?;
+        line.quantity = quantity;
+        // Promotions are re-evaluated right after, which sets the real
+        // discount; recompute now so the line is never left inconsistent.
+        line.recompute(Money::zero(line.unit_price.currency()))?;
+        let updated = line.clone();
+        self.invalidate_totals();
+        self.touch(now);
+        Ok(updated)
+    }
+
+    /// Replace the promotion result for the whole basket.
+    ///
+    /// Promotions are recomputed from the current basket on every change, so
+    /// this overwrites rather than accumulates: `add → remove → add` lands
+    /// exactly where a single `add` would (ADR 015).
+    pub fn apply_promotions(
+        &mut self,
+        outcome: PromotionOutcome,
+        now: Timestamp,
+    ) -> Result<(), DomainError> {
+        self.require_mutable("PROMOTIONS_APPLIED")?;
+        for discount in &outcome.line_discounts {
+            if !self
+                .0
+                .lines
+                .iter()
+                .any(|line| line.line_number == discount.line_number)
+            {
+                return Err(DomainError::AdjustmentTargetMissing {
+                    line_number: discount.line_number,
+                });
+            }
+        }
+        let currency = self.0.currency;
+        let discount_for = |line: &TransactionLine| {
+            outcome
+                .line_discounts
+                .iter()
+                .find(|candidate| candidate.line_number == line.line_number)
+                .map(|candidate| candidate.amount)
+                .unwrap_or(Money::zero(currency))
+        };
+        // Re-evaluating a basket no promotion touches must not look like a
+        // change: it would bump the version and invalidate totals for nothing.
+        let unchanged = outcome.applied == self.0.applied_promotions
+            && self
+                .0
+                .lines
+                .iter()
+                .all(|line| discount_for(line) == line.discount_amount);
+        if unchanged {
+            return Ok(());
+        }
+        for index in 0..self.0.lines.len() {
+            let discount = discount_for(&self.0.lines[index]);
+            self.0.lines[index].recompute(discount)?;
+        }
+        self.0.applied_promotions = outcome.applied;
+        self.invalidate_totals();
+        self.touch(now);
+        Ok(())
+    }
+
+    /// Promotions applied by the last evaluation.
+    pub fn applied_promotions(&self) -> &[AppliedPromotion] {
+        &self.0.applied_promotions
+    }
+
+    /// Totals stop being official whenever the basket changes.
+    fn invalidate_totals(&mut self) {
+        self.0.status = TransactionStatus::Open;
+        self.0.totals = Totals::zero(self.0.currency);
+    }
+
+    fn require_mutable(&self, attempted: &'static str) -> Result<(), DomainError> {
+        match self.0.status {
+            TransactionStatus::Open | TransactionStatus::Totalized => Ok(()),
+            other => Err(DomainError::InvalidTransition {
+                aggregate: AGGREGATE,
+                from: other.as_str(),
+                attempted,
+            }),
+        }
     }
 
     /// Compute the official totals.
@@ -704,6 +931,171 @@ mod tests {
         tx.add_line(line(1_000, 1, 1_600, 2), ts(3)).unwrap();
         assert_eq!(tx.status(), TransactionStatus::Open);
         assert_eq!(tx.state().totals.grand_total, money(0));
+    }
+
+    fn discount(line_number: i64, minor: i64) -> PromotionOutcome {
+        PromotionOutcome {
+            line_discounts: vec![LineDiscount {
+                line_number,
+                amount: money(minor),
+            }],
+            applied: vec![AppliedPromotion {
+                adjustment_id: format!("PROMO#line:{line_number}"),
+                promotion_id: "PROMO".to_owned(),
+                code: "PROMO".to_owned(),
+                name: "Test promotion".to_owned(),
+                priority: 0,
+                stackability: "STACKABLE".to_owned(),
+                target: PromotionTarget::Line { line_number },
+                amount: money(minor),
+                reason: "PERCENTAGE_OFF".to_owned(),
+                detail: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn removing_a_line_never_reuses_its_number() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        tx.add_line(line(5_000, 1, 1_600, 2), ts(2)).unwrap();
+        assert_eq!(tx.state().lines[1].line_number, 2);
+
+        let removed = tx.remove_line(1, ts(3)).unwrap();
+        assert_eq!(removed.line_number, 1);
+        assert_eq!(tx.state().lines.len(), 1);
+        // The survivor keeps its number: nothing is renumbered.
+        assert_eq!(tx.state().lines[0].line_number, 2);
+
+        let added = tx.add_line(line(1_000, 1, 1_600, 3), ts(4)).unwrap();
+        assert_eq!(added.line_number, 3);
+        assert!(matches!(
+            tx.remove_line(99, ts(5)).unwrap_err(),
+            DomainError::LineNotFound { line_number: 99 }
+        ));
+    }
+
+    #[test]
+    fn changing_a_quantity_re_extends_the_line() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        let updated = tx
+            .change_line_quantity(1, Quantity::from_units(3).unwrap(), ts(2))
+            .unwrap();
+        assert_eq!(updated.extended_amount, money(30_000));
+        assert_eq!(updated.tax_amount, money(4_800));
+        assert_eq!(updated.line_total, money(34_800));
+
+        let totals = tx.totalize(ts(3)).unwrap();
+        assert_eq!(totals.grand_total, money(34_800));
+        assert!(tx
+            .change_line_quantity(42, Quantity::from_units(1).unwrap(), ts(4))
+            .is_err());
+    }
+
+    #[test]
+    fn applying_promotions_discounts_the_line_and_keeps_net_plus_tax_equal_to_gross() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        tx.apply_promotions(discount(1, 1_000), ts(2)).unwrap();
+
+        let line = &tx.state().lines[0];
+        assert_eq!(line.discount_amount, money(1_000));
+        assert_eq!(line.extended_amount, money(10_000));
+        assert_eq!(line.taxable_amount, money(9_000));
+        assert_eq!(line.tax_amount, money(1_440));
+        assert_eq!(line.line_total, money(10_440));
+        assert_eq!(
+            line.taxable_amount.checked_add(line.tax_amount).unwrap(),
+            line.line_total
+        );
+        assert_eq!(tx.applied_promotions().len(), 1);
+
+        let totals = tx.totalize(ts(3)).unwrap();
+        assert_eq!(totals.subtotal, money(10_000));
+        assert_eq!(totals.discount_total, money(1_000));
+        assert_eq!(totals.net_total, money(9_000));
+        assert_eq!(totals.tax_total, money(1_440));
+        assert_eq!(totals.grand_total, money(10_440));
+    }
+
+    #[test]
+    fn applying_promotions_overwrites_instead_of_accumulating() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        tx.apply_promotions(discount(1, 1_000), ts(2)).unwrap();
+        tx.apply_promotions(discount(1, 2_000), ts(3)).unwrap();
+        assert_eq!(tx.state().lines[0].discount_amount, money(2_000));
+        assert_eq!(tx.state().lines[0].line_total, money(9_280));
+
+        // An empty outcome clears every discount.
+        tx.apply_promotions(PromotionOutcome::empty(), ts(4))
+            .unwrap();
+        assert_eq!(tx.state().lines[0].discount_amount, money(0));
+        assert_eq!(tx.state().lines[0].line_total, money(11_600));
+        assert!(tx.applied_promotions().is_empty());
+    }
+
+    #[test]
+    fn a_discount_can_never_exceed_the_line() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        assert!(matches!(
+            tx.apply_promotions(discount(1, 10_001), ts(2)).unwrap_err(),
+            DomainError::DiscountExceedsLine { .. }
+        ));
+        // A full discount is allowed and taxes nothing.
+        tx.apply_promotions(discount(1, 10_000), ts(3)).unwrap();
+        assert_eq!(tx.state().lines[0].tax_amount, money(0));
+        assert_eq!(tx.state().lines[0].line_total, money(0));
+    }
+
+    #[test]
+    fn an_adjustment_for_a_missing_line_is_refused() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        assert!(matches!(
+            tx.apply_promotions(discount(7, 100), ts(2)).unwrap_err(),
+            DomainError::AdjustmentTargetMissing { line_number: 7 }
+        ));
+    }
+
+    #[test]
+    fn the_basket_cannot_change_once_payment_has_started() {
+        let mut tx = sale();
+        tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
+        tx.totalize(ts(2)).unwrap();
+        tx.commit_cash_payment(
+            PaymentId::from_uuid(Uuid::from_u128(50)),
+            money(5_000),
+            ts(3),
+        )
+        .unwrap();
+        assert!(tx.remove_line(1, ts(4)).is_err());
+        assert!(tx
+            .change_line_quantity(1, Quantity::from_units(2).unwrap(), ts(4))
+            .is_err());
+        assert!(tx.apply_promotions(discount(1, 1), ts(4)).is_err());
+        assert!(tx.add_line(line(1, 1, 0, 9), ts(4)).is_err());
+    }
+
+    #[test]
+    fn promotions_work_on_a_tax_inclusive_line_too() {
+        let mut tx = sale();
+        let mut inclusive = line(11_600, 1, 1_600, 1);
+        inclusive.price_mode = PriceMode::TaxInclusive;
+        tx.add_line(inclusive, ts(1)).unwrap();
+        tx.apply_promotions(discount(1, 1_160), ts(2)).unwrap();
+
+        let line = &tx.state().lines[0];
+        // The customer pays 104.40 and the tax is backed out of that.
+        assert_eq!(line.line_total, money(10_440));
+        assert_eq!(line.taxable_amount, money(9_000));
+        assert_eq!(line.tax_amount, money(1_440));
+        assert_eq!(
+            line.taxable_amount.checked_add(line.tax_amount).unwrap(),
+            line.line_total
+        );
     }
 
     #[test]

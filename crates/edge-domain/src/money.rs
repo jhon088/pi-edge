@@ -28,6 +28,8 @@ pub enum MoneyError {
     InvalidTaxRate(u32),
     #[error("unknown price mode `{0}`")]
     UnknownPriceMode(String),
+    #[error("percentage out of range (got {0} basis points)")]
+    InvalidPercentage(u32),
 }
 
 /// Supported currencies. Only MXN is active today; the type exists so that
@@ -254,6 +256,43 @@ pub struct TaxedAmount {
     pub net: Money,
     pub tax: Money,
     pub gross: Money,
+}
+
+/// A proportion in basis points (1000 = 10.00%), used for discounts.
+///
+/// Separate from [`TaxRate`] on purpose: a discount is not a tax, and a
+/// discount above 100% is nonsense while a tax above 100% merely needs a wider
+/// bound. Both share the core's single rounding policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Percentage(u32);
+
+impl Percentage {
+    pub const SCALE: u32 = 10_000;
+    /// 100%. A discount cannot exceed what it discounts.
+    pub const MAX_BPS: u32 = 10_000;
+
+    pub fn from_bps(bps: u32) -> Result<Self, MoneyError> {
+        if bps > Self::MAX_BPS {
+            return Err(MoneyError::InvalidPercentage(bps));
+        }
+        Ok(Self(bps))
+    }
+
+    pub const fn bps(&self) -> u32 {
+        self.0
+    }
+
+    /// This proportion of an amount, rounded half away from zero.
+    pub fn of(&self, amount: Money) -> Result<Money, MoneyError> {
+        let scaled = i128::from(amount.minor())
+            .checked_mul(i128::from(self.0))
+            .ok_or(MoneyError::Overflow)?;
+        Ok(Money::from_minor(
+            div_round_half_away_from_zero(scaled, i128::from(Self::SCALE))?,
+            amount.currency(),
+        ))
+    }
 }
 
 /// Tax rate in basis points (1600 = 16.00%).
@@ -537,6 +576,32 @@ mod tests {
             assert_eq!(PriceMode::parse(mode.as_str()).unwrap(), mode);
         }
         assert!(PriceMode::parse("GUESS").is_err());
+    }
+
+    #[test]
+    fn percentage_shares_the_core_rounding_policy() {
+        let ten = Percentage::from_bps(1_000).unwrap();
+        assert_eq!(ten.of(m(10_000)).unwrap(), m(1_000));
+        // 10% of 2.55 = 0.255 -> 0.26 (half away from zero)
+        assert_eq!(ten.of(m(255)).unwrap(), m(26));
+        // 33.33% of 1.00 = 0.3333 -> 0.33
+        assert_eq!(
+            Percentage::from_bps(3_333).unwrap().of(m(100)).unwrap(),
+            m(33)
+        );
+        assert_eq!(Percentage::from_bps(0).unwrap().of(m(999)).unwrap(), m(0));
+        assert_eq!(
+            Percentage::from_bps(10_000).unwrap().of(m(999)).unwrap(),
+            m(999)
+        );
+    }
+
+    #[test]
+    fn percentage_cannot_exceed_one_hundred_per_cent() {
+        assert_eq!(
+            Percentage::from_bps(10_001).unwrap_err(),
+            MoneyError::InvalidPercentage(10_001)
+        );
     }
 
     #[test]

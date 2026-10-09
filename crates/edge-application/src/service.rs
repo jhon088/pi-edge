@@ -9,6 +9,9 @@
 //! business day and *the* active transaction of that session. Ambiguity is an
 //! error, never a guess.
 
+use edge_catalog::basket::{
+    evaluate, AdjustmentTarget, BasketLine, NewBasketLine, PricedBasket, PromotionContext,
+};
 use edge_catalog::{resolve_price, resolve_sale_line, CatalogSnapshot, PricingContext};
 use edge_domain::prelude::*;
 use serde::de::DeserializeOwned;
@@ -332,6 +335,20 @@ where
                     },
                     now,
                 )?;
+                // The basket is re-evaluated from scratch on every change: a
+                // promotion is a property of the whole basket, not of the line
+                // that happened to trigger it (ADR 015).
+                let promotions =
+                    evaluate_basket_promotions(uow, &device, &mut transaction, &capture, now)?;
+                let line = transaction
+                    .state()
+                    .lines
+                    .iter()
+                    .find(|candidate| candidate.line_number == line.line_number)
+                    .cloned()
+                    .ok_or(DomainError::LineNotFound {
+                        line_number: line.line_number,
+                    })?;
                 uow.update_transaction(&transaction, now)?;
                 let ctx = EventContext {
                     device: &device,
@@ -365,6 +382,7 @@ where
                         "price_book_id": resolved.price_book_id.to_string(),
                         "priced_at": resolved.priced_at.to_rfc3339(),
                         "resolved_by": cmd.selector.to_string(),
+                        "promotion_count": promotions,
                     }),
                 ))?;
                 Ok(transaction)
@@ -374,6 +392,130 @@ where
             transaction_id = %transaction.id(),
             lines = transaction.state().lines.len(),
             "item added"
+        );
+        Ok(transaction)
+    }
+
+    /// Remove one line and re-evaluate the basket.
+    pub fn remove_item(&self, cmd: RemoveItemCommand) -> Result<RetailTransaction, AppError> {
+        let now = self.clock.now();
+        let event_id = self.new_event_id();
+
+        let transaction = self.store.transact(move |uow| {
+            idempotent(uow, cmd.request_id, "RemoveItem", now, |uow| {
+                let device = require_device(uow)?;
+                let day = require_open_business_day(uow, &device.store_id)?;
+                require_business_day_open(&day)?;
+                let session = require_single_open_session(uow, day.id())?;
+                require_session_open(&session)?;
+                let mut transaction = require_active_transaction(uow, session.id())?;
+                let (_, capture) = require_sale_pricing(uow, &transaction)?;
+
+                let removed = transaction.remove_line(cmd.line_number, now)?;
+                let promotions =
+                    evaluate_basket_promotions(uow, &device, &mut transaction, &capture, now)?;
+                uow.update_transaction(&transaction, now)?;
+                let ctx = EventContext {
+                    device: &device,
+                    register_id: Some(&transaction.state().register_id),
+                    business_day_id: Some(day.id()),
+                    session_id: Some(session.id()),
+                    transaction_id: Some(transaction.id()),
+                    operator_id: Some(&transaction.state().operator_id),
+                };
+                uow.append_journal(&journal_event(
+                    event_id,
+                    JournalEventType::ItemRemoved,
+                    transaction.id().to_string(),
+                    &ctx,
+                    now,
+                    json!({
+                        "line_id": removed.line_id.to_string(),
+                        "line_number": removed.line_number,
+                        "product_ref": removed.product_ref.as_str(),
+                        "description": removed.description,
+                        "quantity_thousandths": removed.quantity.thousandths(),
+                        "line_total_minor": removed.line_total.minor(),
+                        "remaining_lines": transaction.state().lines.len(),
+                        "promotion_count": promotions,
+                    }),
+                ))?;
+                Ok(transaction)
+            })
+        })?;
+        tracing::info!(
+            transaction_id = %transaction.id(),
+            lines = transaction.state().lines.len(),
+            "item removed"
+        );
+        Ok(transaction)
+    }
+
+    /// Change one line's quantity and re-evaluate the basket.
+    ///
+    /// The line keeps its identity and its captured price: only the quantity
+    /// and everything derived from it move.
+    pub fn change_quantity(
+        &self,
+        cmd: ChangeQuantityCommand,
+    ) -> Result<RetailTransaction, AppError> {
+        let now = self.clock.now();
+        let event_id = self.new_event_id();
+
+        let transaction = self.store.transact(move |uow| {
+            idempotent(uow, cmd.request_id, "ChangeQuantity", now, |uow| {
+                let device = require_device(uow)?;
+                let day = require_open_business_day(uow, &device.store_id)?;
+                require_business_day_open(&day)?;
+                let session = require_single_open_session(uow, day.id())?;
+                require_session_open(&session)?;
+                let mut transaction = require_active_transaction(uow, session.id())?;
+                let (_, capture) = require_sale_pricing(uow, &transaction)?;
+
+                let previous = transaction
+                    .state()
+                    .lines
+                    .iter()
+                    .find(|line| line.line_number == cmd.line_number)
+                    .map(|line| line.quantity)
+                    .ok_or(DomainError::LineNotFound {
+                        line_number: cmd.line_number,
+                    })?;
+                let changed =
+                    transaction.change_line_quantity(cmd.line_number, cmd.quantity, now)?;
+                let promotions =
+                    evaluate_basket_promotions(uow, &device, &mut transaction, &capture, now)?;
+                uow.update_transaction(&transaction, now)?;
+                let ctx = EventContext {
+                    device: &device,
+                    register_id: Some(&transaction.state().register_id),
+                    business_day_id: Some(day.id()),
+                    session_id: Some(session.id()),
+                    transaction_id: Some(transaction.id()),
+                    operator_id: Some(&transaction.state().operator_id),
+                };
+                uow.append_journal(&journal_event(
+                    event_id,
+                    JournalEventType::LineQuantityChanged,
+                    transaction.id().to_string(),
+                    &ctx,
+                    now,
+                    json!({
+                        "line_id": changed.line_id.to_string(),
+                        "line_number": changed.line_number,
+                        "product_ref": changed.product_ref.as_str(),
+                        "from_quantity_thousandths": previous.thousandths(),
+                        "to_quantity_thousandths": cmd.quantity.thousandths(),
+                        "promotion_count": promotions,
+                    }),
+                ))?;
+                Ok(transaction)
+            })
+        })?;
+        tracing::info!(
+            transaction_id = %transaction.id(),
+            line_number = cmd.line_number,
+            "line quantity changed"
         );
         Ok(transaction)
     }
@@ -414,6 +556,23 @@ where
                         "tax_total_minor": totals.tax_total.minor(),
                         "grand_total_minor": totals.grand_total.minor(),
                         "line_count": transaction.state().lines.len(),
+                        // The promotion summary is journalled here and only
+                        // here: this is the moment the totals become official.
+                        "promotions": transaction
+                            .applied_promotions()
+                            .iter()
+                            .map(|applied| json!({
+                                "adjustment_id": applied.adjustment_id,
+                                "promotion_id": applied.promotion_id,
+                                "code": applied.code,
+                                "name": applied.name,
+                                "priority": applied.priority,
+                                "stackability": applied.stackability,
+                                "target": applied.target.label(),
+                                "reason": applied.reason,
+                                "amount_minor": applied.amount.minor(),
+                            }))
+                            .collect::<Vec<_>>(),
                     }),
                 ))?;
                 Ok(transaction)
@@ -713,6 +872,18 @@ where
         })
     }
 
+    /// Read one sale back by id, finalized ones included.
+    ///
+    /// What the sale granted is materialised on it, so this stays readable
+    /// after the catalog snapshot that produced the promotions is gone.
+    pub fn get_transaction(
+        &self,
+        transaction_id: TransactionId,
+    ) -> Result<Option<RetailTransaction>, AppError> {
+        self.store
+            .transact(move |uow| uow.find_transaction(transaction_id))
+    }
+
     pub fn get_pending_outbox(&self, limit: i64) -> Result<PendingOutbox, AppError> {
         self.store.transact(move |uow| {
             Ok(PendingOutbox {
@@ -880,4 +1051,81 @@ fn require_active_transaction(
 ) -> Result<RetailTransaction, AppError> {
     uow.find_active_transaction(session_id)?
         .ok_or(AppError::NoActiveTransaction)
+}
+
+/// Re-evaluate every promotion against the whole basket and write the result
+/// onto the transaction. Returns how many promotions applied.
+///
+/// Always a full re-evaluation: incremental promotion state would have to be
+/// invalidated on every basket change, and getting that wrong means charging a
+/// customer the wrong amount. Idempotent by construction — the same basket and
+/// the same snapshot produce the same adjustments, with the same ids.
+pub(crate) fn evaluate_basket_promotions(
+    uow: &mut dyn UnitOfWork,
+    device: &DeviceProfile,
+    transaction: &mut RetailTransaction,
+    capture: &PricingCapture,
+    now: Timestamp,
+) -> Result<usize, AppError> {
+    let lines = transaction
+        .state()
+        .lines
+        .iter()
+        .map(|line| {
+            BasketLine::new(NewBasketLine {
+                line_number: line.line_number,
+                product_ref: line.product_ref.clone(),
+                quantity: line.quantity,
+                unit_price: line.unit_price,
+                price_mode: line.price_mode,
+            })
+            .map_err(AppError::Catalog)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let basket = PricedBasket::new(lines);
+
+    let candidates = uow.promotion_candidates(capture.snapshot_id, &device.store_id)?;
+    let result = evaluate(
+        &basket,
+        &candidates,
+        &PromotionContext {
+            store_id: &device.store_id,
+            effective_at: capture.effective_at,
+            snapshot_id: capture.snapshot_id,
+            currency: device.currency,
+        },
+    )
+    .map_err(AppError::Catalog)?;
+
+    let outcome = PromotionOutcome {
+        line_discounts: result
+            .line_discounts
+            .iter()
+            .map(|discount| LineDiscount {
+                line_number: discount.line_number,
+                amount: discount.amount,
+            })
+            .collect(),
+        applied: result
+            .adjustments()
+            .map(|adjustment| AppliedPromotion {
+                adjustment_id: adjustment.adjustment_id.clone(),
+                promotion_id: adjustment.promotion_id.to_string(),
+                code: adjustment.promotion_code.clone(),
+                name: adjustment.promotion_name.clone(),
+                priority: adjustment.priority,
+                stackability: adjustment.stackability.as_str().to_owned(),
+                target: match adjustment.target {
+                    AdjustmentTarget::Line { line_number } => PromotionTarget::Line { line_number },
+                    AdjustmentTarget::Basket => PromotionTarget::Basket,
+                },
+                amount: adjustment.amount,
+                reason: adjustment.reason_code.to_owned(),
+                detail: adjustment.detail.clone(),
+            })
+            .collect(),
+    };
+    let applied = outcome.applied.len();
+    transaction.apply_promotions(outcome, now)?;
+    Ok(applied)
 }

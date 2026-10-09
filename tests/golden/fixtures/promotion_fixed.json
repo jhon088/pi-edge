@@ -1,0 +1,125 @@
+{
+  "transaction_id": "00000000-0000-0000-0000-000000000008",
+  "business_day_id": "00000000-0000-0000-0000-000000000004",
+  "session_id": "00000000-0000-0000-0000-000000000006",
+  "store_id": "STORE-DEMO",
+  "register_id": "REG-001",
+  "operator_id": "CASHIER-001",
+  "register_sequence": 1,
+  "status": "TOTALIZED",
+  "currency": "MXN",
+  "catalog_snapshot_id": "00000000-0000-0000-0000-000000000001",
+  "catalog_version": 1,
+  "pricing_effective_at": "2026-10-08T15:00:00.000000Z",
+  "lines": [
+    {
+      "line_id": "00000000-0000-0000-0000-00000000000a",
+      "line_number": 1,
+      "product_ref": "SKU-0",
+      "sku": "SKU-0",
+      "barcode": "7501000000000",
+      "description": "Tasa 0%",
+      "quantity": "3.000",
+      "quantity_thousandths": 3000,
+      "unit_price": {
+        "minor": 1999,
+        "currency": "MXN",
+        "formatted": "19.99"
+      },
+      "tax_rate_bps": 0,
+      "price_mode": "TAX_EXCLUSIVE",
+      "price_book_id": "BASE",
+      "extended_amount": {
+        "minor": 5997,
+        "currency": "MXN",
+        "formatted": "59.97"
+      },
+      "discount_amount": {
+        "minor": 500,
+        "currency": "MXN",
+        "formatted": "5.00"
+      },
+      "taxable_amount": {
+        "minor": 5497,
+        "currency": "MXN",
+        "formatted": "54.97"
+      },
+      "tax_amount": {
+        "minor": 0,
+        "currency": "MXN",
+        "formatted": "0.00"
+      },
+      "line_total": {
+        "minor": 5497,
+        "currency": "MXN",
+        "formatted": "54.97"
+      }
+    }
+  ],
+  "applied_promotions": [
+    {
+      "adjustment_id": "PROMO-FIX-ONLY#line:1",
+      "promotion_id": "PROMO-FIX-ONLY",
+      "code": "PROMO-FIX-ONLY",
+      "name": "Promoción PROMO-FIX-ONLY",
+      "priority": 0,
+      "stackability": "STACKABLE",
+      "target": "LINE",
+      "line_number": 1,
+      "amount": {
+        "minor": 500,
+        "currency": "MXN",
+        "formatted": "5.00"
+      },
+      "reason": "FIXED_AMOUNT_OFF",
+      "detail": null
+    }
+  ],
+  "totals": {
+    "subtotal": {
+      "minor": 5997,
+      "currency": "MXN",
+      "formatted": "59.97"
+    },
+    "discount_total": {
+      "minor": 500,
+      "currency": "MXN",
+      "formatted": "5.00"
+    },
+    "net_total": {
+      "minor": 5497,
+      "currency": "MXN",
+      "formatted": "54.97"
+    },
+    "tax_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "grand_total": {
+      "minor": 5497,
+      "currency": "MXN",
+      "formatted": "54.97"
+    }
+  },
+  "payments": [],
+  "paid_total": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "balance_due": {
+    "minor": 5497,
+    "currency": "MXN",
+    "formatted": "54.97"
+  },
+  "change_due": {
+    "minor": 0,
+    "currency": "MXN",
+    "formatted": "0.00"
+  },
+  "created_at": "2026-10-08T15:00:00.000000Z",
+  "updated_at": "2026-10-08T15:00:00.000000Z",
+  "finalized_at": null,
+  "version": 4
+}

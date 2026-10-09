@@ -103,6 +103,8 @@ pub enum OperationV1 {
     OpenRegisterSession(OpenRegisterSessionRequestV1),
     StartTransaction,
     AddItem(AddItemRequestV1),
+    RemoveItem(RemoveItemRequestV1),
+    ChangeQuantity(ChangeQuantityRequestV1),
     Totalize,
     CommitCashPayment(CommitCashPaymentRequestV1),
     FinalizeTransaction,
@@ -135,6 +137,8 @@ impl OperationV1 {
             OperationV1::OpenRegisterSession(_) => "OPEN_REGISTER_SESSION",
             OperationV1::StartTransaction => "START_TRANSACTION",
             OperationV1::AddItem(_) => "ADD_ITEM",
+            OperationV1::RemoveItem(_) => "REMOVE_ITEM",
+            OperationV1::ChangeQuantity(_) => "CHANGE_QUANTITY",
             OperationV1::Totalize => "TOTALIZE",
             OperationV1::CommitCashPayment(_) => "COMMIT_CASH_PAYMENT",
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
@@ -158,6 +162,8 @@ impl OperationV1 {
                 | OperationV1::OpenRegisterSession(_)
                 | OperationV1::StartTransaction
                 | OperationV1::AddItem(_)
+                | OperationV1::RemoveItem(_)
+                | OperationV1::ChangeQuantity(_)
                 | OperationV1::Totalize
                 | OperationV1::CommitCashPayment(_)
                 | OperationV1::FinalizeTransaction
@@ -437,6 +443,7 @@ mod tests {
         })
         .is_command());
         assert!(OperationV1::PutCatalogChunk(PutCatalogChunkRequestV1 {
+            promotions: Vec::new(),
             snapshot_id: "s".to_owned(),
             chunk_index: 0,
             chunk_hash: "h".to_owned(),

@@ -191,5 +191,65 @@
       ],
       "sellable": false
     }
+  ],
+  "promotions": [
+    {
+      "promotion_id": "PROMO-LECHE-10",
+      "code": "LECHE10",
+      "name": "10% en leche entera 1L",
+      "active": true,
+      "priority": 10,
+      "stackability": "STACKABLE",
+      "scope": "TENANT",
+      "rule": {
+        "kind": "PERCENTAGE_OFF",
+        "product_ref": "P-LECHE-1L",
+        "percentage_bps": 1000
+      }
+    },
+    {
+      "promotion_id": "PROMO-REFRESCO-3X2",
+      "code": "REFRESCO3X2",
+      "name": "3x2 en refresco 600ml",
+      "active": true,
+      "priority": 0,
+      "stackability": "STACKABLE",
+      "scope": "TENANT",
+      "rule": {
+        "kind": "BUY_N_GET_M",
+        "product_ref": "P-REFRESCO-600",
+        "buy_thousandths": 2000,
+        "get_thousandths": 1000
+      }
+    },
+    {
+      "promotion_id": "PROMO-CAFE-20",
+      "code": "CAFE20",
+      "name": "20 pesos menos en café 500g",
+      "active": true,
+      "priority": 0,
+      "stackability": "STACKABLE",
+      "scope": "STORE",
+      "store_id": "STORE-DEMO",
+      "rule": {
+        "kind": "FIXED_AMOUNT_OFF",
+        "product_ref": "P-CAFE-500",
+        "amount_minor": 2000
+      }
+    },
+    {
+      "promotion_id": "PROMO-CANASTA-500",
+      "code": "CANASTA500",
+      "name": "50 pesos menos al llegar a 500",
+      "active": true,
+      "priority": 0,
+      "stackability": "STACKABLE",
+      "scope": "TENANT",
+      "rule": {
+        "kind": "BASKET_THRESHOLD",
+        "minimum_minor": 50000,
+        "amount_minor": 5000
+      }
+    }
   ]
 }

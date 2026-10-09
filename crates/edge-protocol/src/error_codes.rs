@@ -22,6 +22,7 @@
 //! | `TRANSACTION_ALREADY_ACTIVE` | the session already has a live transaction |
 //! | `NO_ACTIVE_TRANSACTION` | the operation needs an active transaction |
 //! | `INVALID_TRANSACTION_STATE` | the aggregate refused the state transition |
+//! | `LINE_NOT_FOUND` | no line of the sale carries that line number |
 //! | `DOMAIN_RULE_VIOLATION` | another domain invariant was violated |
 //! | `CONCURRENT_MODIFICATION` | stale write detected |
 //! | `STORAGE_FAILURE` | the local database failed |
@@ -35,6 +36,8 @@
 pub const INVALID_TRANSACTION_STATE: &str = "INVALID_TRANSACTION_STATE";
 /// Another domain invariant was violated.
 pub const DOMAIN_RULE_VIOLATION: &str = "DOMAIN_RULE_VIOLATION";
+/// No line of the sale carries the given line number.
+pub const LINE_NOT_FOUND: &str = "LINE_NOT_FOUND";
 /// The local database failed. The runtime reports itself as `DEGRADED`.
 pub const STORAGE_FAILURE: &str = "STORAGE_FAILURE";
 
@@ -52,6 +55,11 @@ pub const NO_ACTIVE_CATALOG: &str = "NO_ACTIVE_CATALOG";
 pub const PRICE_NOT_FOUND: &str = "PRICE_NOT_FOUND";
 /// Two or more prices apply with equal specificity: the core refuses to guess.
 pub const AMBIGUOUS_PRICE: &str = "AMBIGUOUS_PRICE";
+/// Two or more exclusive promotions claim the same target at the same
+/// priority: the core refuses to pick one.
+pub const AMBIGUOUS_PROMOTION: &str = "AMBIGUOUS_PROMOTION";
+/// A record names a promotion the snapshot does not declare.
+pub const CATALOG_UNKNOWN_PROMOTION: &str = "CATALOG_UNKNOWN_PROMOTION";
 /// A price entry names a book the snapshot does not declare.
 pub const CATALOG_UNKNOWN_PRICE_BOOK: &str = "CATALOG_UNKNOWN_PRICE_BOOK";
 /// Two prices in one book start at the same instant for one product.

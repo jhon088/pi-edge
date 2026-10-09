@@ -6,8 +6,8 @@
       "store_id": "STORE-DEMO",
       "version": 1,
       "status": "ACTIVE",
-      "declared_content_hash": "sha256:04d6059028d6412dc3157af75374bd139bc4434c1cdbe5a3b3871c5e50bc3e37",
-      "content_hash": "sha256:04d6059028d6412dc3157af75374bd139bc4434c1cdbe5a3b3871c5e50bc3e37",
+      "declared_content_hash": "sha256:8e3ffcdcf73c1eb84607cf11ee689d4f5b9858c379b8a23013fa6cf2b3533994",
+      "content_hash": "sha256:8e3ffcdcf73c1eb84607cf11ee689d4f5b9858c379b8a23013fa6cf2b3533994",
       "generated_at": "2026-10-01T00:00:00.000000Z",
       "effective_at": null,
       "expected": {
@@ -15,7 +15,8 @@
         "price_books": 2,
         "products": 10,
         "price_entries": 12,
-        "barcodes": 10
+        "barcodes": 10,
+        "promotions": 0
       },
       "imported_at": "2026-10-08T15:00:00.000000Z",
       "committed_at": "2026-10-08T15:00:00.000000Z",
@@ -27,7 +28,8 @@
       "price_books": 2,
       "products": 10,
       "price_entries": 12,
-      "barcodes": 10
+      "barcodes": 10,
+      "promotions": 0
     }
   },
   "pending": [],

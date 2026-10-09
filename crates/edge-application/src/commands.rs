@@ -5,8 +5,8 @@
 //! applying the command twice (explicit idempotency).
 
 use edge_catalog::{
-    CatalogBarcode, CatalogProduct, PriceBook, PriceEntry, ProductSelector, SnapshotCounts,
-    TaxProfile,
+    CatalogBarcode, CatalogProduct, PriceBook, PriceEntry, ProductSelector, Promotion,
+    SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
 use uuid::Uuid;
@@ -49,6 +49,21 @@ pub struct AddItemCommand {
     pub quantity: Quantity,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemoveItemCommand {
+    pub request_id: Option<Uuid>,
+    /// The line to remove. Numbers are never reused, so this is unambiguous
+    /// even after earlier removals.
+    pub line_number: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChangeQuantityCommand {
+    pub request_id: Option<Uuid>,
+    pub line_number: i64,
+    pub quantity: Quantity,
+}
+
 /// Open an import and declare what is coming.
 ///
 /// Idempotent on `(store, version, declared_content_hash)`: calling it again
@@ -88,6 +103,9 @@ pub struct PutCatalogChunkCommand {
     /// always land in the same transaction.
     pub price_entries: Vec<PriceEntry>,
     pub barcodes: Vec<CatalogBarcode>,
+    /// Promotions for the products in this chunk, for the same reason as the
+    /// prices: a promotion that names a product must land with it.
+    pub promotions: Vec<Promotion>,
 }
 
 /// Close the import. Everything is verified before the snapshot becomes

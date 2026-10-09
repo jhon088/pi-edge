@@ -20,8 +20,8 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
-    AddItemRequestV1, CommitCashPaymentRequestV1, InitDeviceRequestV1,
-    OpenRegisterSessionRequestV1, ProductSelectorV1, PROTOCOL_VERSION,
+    AddItemRequestV1, ChangeQuantityRequestV1, CommitCashPaymentRequestV1, InitDeviceRequestV1,
+    OpenRegisterSessionRequestV1, ProductSelectorV1, RemoveItemRequestV1, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -125,6 +125,22 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         qty: i64,
         /// Quantity in thousandths, for fractional units. Overrides --qty.
+        #[arg(long = "qty-thousandths")]
+        qty_thousandths: Option<i64>,
+    },
+    /// Remove a line from the active transaction, by line number.
+    RemoveItem {
+        #[arg(long = "line")]
+        line: i64,
+    },
+    /// Change a line's quantity. The line keeps its captured unit price.
+    ChangeQty {
+        #[arg(long = "line")]
+        line: i64,
+        /// New quantity in whole units.
+        #[arg(long, default_value_t = 1)]
+        qty: i64,
+        /// New quantity in thousandths, for fractional units. Overrides --qty.
         #[arg(long = "qty-thousandths")]
         qty_thousandths: Option<i64>,
     },
@@ -275,6 +291,23 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             to_value(&client.add_item(
                 AddItemRequestV1 {
                     product: product.to_selector()?,
+                    quantity_thousandths,
+                },
+                request_id,
+            )?)
+        }
+        Command::RemoveItem { line } => {
+            to_value(&client.remove_item(RemoveItemRequestV1 { line_number: *line }, request_id)?)
+        }
+        Command::ChangeQty {
+            line,
+            qty,
+            qty_thousandths,
+        } => {
+            let quantity_thousandths = qty_thousandths.unwrap_or(qty.saturating_mul(1_000));
+            to_value(&client.change_quantity(
+                ChangeQuantityRequestV1 {
+                    line_number: *line,
                     quantity_thousandths,
                 },
                 request_id,

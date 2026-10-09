@@ -191,6 +191,10 @@ export default function App() {
                 value={String(catalog.active.stored.barcodes)}
               />
               <Field
+                label="Promotions"
+                value={String(catalog.active.stored.promotions)}
+              />
+              <Field
                 label="Tax profiles"
                 value={String(catalog.active.stored.tax_profiles)}
               />
@@ -395,6 +399,7 @@ function ActiveTransaction({
             <th className="num">Qty</th>
             <th className="num">Unit</th>
             <th>Book</th>
+            <th className="num">Discount</th>
             <th className="num">Tax</th>
             <th className="num">Total</th>
           </tr>
@@ -408,21 +413,59 @@ function ActiveTransaction({
               <td className="num">{line.quantity}</td>
               <td className="num">{line.unit_price.formatted}</td>
               <td className="mono">{line.price_book_id ?? "—"}</td>
+              <td className="num">{line.discount_amount.formatted}</td>
               <td className="num">{line.tax_amount.formatted}</td>
               <td className="num">{line.line_total.formatted}</td>
             </tr>
           ))}
           {transaction.lines.length === 0 ? (
             <tr>
-              <td colSpan={8} className="muted">
+              <td colSpan={9} className="muted">
                 No lines yet.
               </td>
             </tr>
           ) : null}
         </tbody>
       </table>
+      {transaction.applied_promotions.length > 0 ? (
+        <table className="lines">
+          <thead>
+            <tr>
+              <th>Promotion</th>
+              <th>Name</th>
+              <th>Target</th>
+              <th>Rule</th>
+              <th className="num">Prio</th>
+              <th>Stacking</th>
+              <th className="num">Discount</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transaction.applied_promotions.map((applied) => (
+              <tr key={applied.adjustment_id}>
+                <td className="mono">{applied.code}</td>
+                <td>{applied.name}</td>
+                <td className="mono">
+                  {applied.line_number === null
+                    ? applied.target
+                    : `${applied.target}:${applied.line_number}`}
+                </td>
+                <td className="mono">{applied.reason}</td>
+                <td className="num">{applied.priority}</td>
+                <td>{applied.stackability}</td>
+                <td className="num">{applied.amount.formatted}</td>
+                <td className="muted">{applied.detail ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">No promotion applies to this basket.</p>
+      )}
       <div className="row totals">
         <Field label="Subtotal" value={transaction.totals.subtotal.formatted} />
+        <Field label="Discounts" value={transaction.totals.discount_total.formatted} />
         <Field label="Net" value={transaction.totals.net_total.formatted} />
         <Field label="Tax" value={transaction.totals.tax_total.formatted} />
         <Field label="Grand total" value={transaction.totals.grand_total.formatted} />

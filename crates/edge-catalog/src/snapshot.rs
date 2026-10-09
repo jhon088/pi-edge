@@ -73,6 +73,7 @@ pub struct SnapshotCounts {
     pub products: i64,
     pub price_entries: i64,
     pub barcodes: i64,
+    pub promotions: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +237,7 @@ impl CatalogSnapshot {
                 stored.price_entries,
             ),
             ("barcodes", expected.barcodes, stored.barcodes),
+            ("promotions", expected.promotions, stored.promotions),
         ] {
             if expected != stored {
                 return Err(CatalogError::CountMismatch {
@@ -330,6 +332,7 @@ mod tests {
                 products: 2,
                 price_entries: 2,
                 barcodes: 3,
+                promotions: 1,
             },
             imported_at: ts(1),
         })
@@ -386,6 +389,7 @@ mod tests {
             products: 2,
             price_entries: 2,
             barcodes: 3,
+            promotions: 1,
         };
         assert!(snapshot.verify_counts(stored).is_ok());
         assert!(matches!(

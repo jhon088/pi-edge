@@ -4,10 +4,11 @@ use std::fmt::Debug;
 
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, BusinessDayV1, CatalogImportStatusV1,
-    CatalogSnapshotViewV1, CatalogStatusV1, CommitCashPaymentRequestV1,
+    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCashPaymentRequestV1,
     CommitCatalogImportRequestV1, CoreInfoV1, DeviceV1, EdgeStateV1, InitDeviceRequestV1,
     JournalEventV1, OpenRegisterSessionRequestV1, PendingOutboxV1, ProductLookupV1,
-    ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1, RetailTransactionV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, RegisterSessionV1, RemoveItemRequestV1,
+    RetailTransactionV1,
 };
 use uuid::Uuid;
 
@@ -64,6 +65,16 @@ pub trait EdgeClient: Debug + Send + Sync {
     fn add_item(
         &self,
         request: AddItemRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RetailTransactionV1, ClientError>;
+    fn remove_item(
+        &self,
+        request: RemoveItemRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<RetailTransactionV1, ClientError>;
+    fn change_quantity(
+        &self,
+        request: ChangeQuantityRequestV1,
         request_id: Option<Uuid>,
     ) -> Result<RetailTransactionV1, ClientError>;
     fn totalize(&self, request_id: Option<Uuid>) -> Result<RetailTransactionV1, ClientError>;

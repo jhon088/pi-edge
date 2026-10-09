@@ -225,3 +225,94 @@ fn a_scheduled_price_change_cannot_move_an_open_sale() {
         .unwrap();
     assert_eq!(priced.state().lines[0].unit_price.minor(), 12_000);
 }
+
+#[test]
+fn applied_promotions_and_the_line_counter_survive_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("pi-edge.db");
+
+    let promoted = CatalogFixture::new(2)
+        .with(
+            FixtureProduct::new("SKU-X", "Producto X", 1_000)
+                .sku("SKU-X")
+                .barcode(BARCODE),
+        )
+        .promoting(
+            edge_catalog::promotions::Promotion::import(edge_catalog::promotions::NewPromotion {
+                promotion_id: edge_domain::prelude::PromotionId::new("BOGO").unwrap(),
+                code: "BOGO".to_owned(),
+                name: "Lleva 3 paga 2".to_owned(),
+                active: true,
+                priority: 0,
+                stackability: edge_catalog::promotions::Stackability::Stackable,
+                scope: edge_catalog::scope::CatalogScope::Tenant,
+                valid_from: None,
+                valid_until: None,
+                rule: edge_catalog::promotions::PromotionRule::BuyNGetM {
+                    applies_to: edge_catalog::promotions::ProductApplicability::Product {
+                        product_ref: edge_domain::prelude::ProductRef::new("SKU-X").unwrap(),
+                    },
+                    buy: edge_domain::prelude::Quantity::from_units(2).unwrap(),
+                    get: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+                },
+            })
+            .unwrap(),
+        );
+
+    // --- lifetime 1: a promoted line, and a removed one before it ---------
+    let (expected_adjustments, expected_discount) = {
+        let core = core_at(&db, 1);
+        open_register(&core);
+        promoted.activate(&core).unwrap();
+        core.start_transaction(StartTransactionCommand::default())
+            .unwrap();
+        // Line 1 is added and removed, so line 1 is retired for good.
+        core.add_item(scan_x(1)).unwrap();
+        core.remove_item(RemoveItemCommand {
+            request_id: None,
+            line_number: 1,
+        })
+        .unwrap();
+        let sale = core.add_item(scan_x(6)).unwrap();
+        assert_eq!(sale.state().lines[0].line_number, 2);
+        assert_eq!(sale.state().lines[0].discount_amount.minor(), 2_000);
+        (
+            sale.applied_promotions().to_vec(),
+            sale.state().lines[0].discount_amount.minor(),
+        )
+    };
+
+    // --- lifetime 2: everything the sale granted is still there -----------
+    // The id offset keeps the new lifetime's ids clear of the first one's,
+    // exactly as a restarted daemon's random UUIDs would be.
+    let core = core_at(&db, 1_000);
+    let sale = core.get_active_transaction().unwrap().unwrap();
+    assert_eq!(sale.applied_promotions(), expected_adjustments.as_slice());
+    assert_eq!(
+        sale.state().lines[0].discount_amount.minor(),
+        expected_discount
+    );
+    // The retired line number is not handed out again after the restart.
+    let after = core.add_item(scan_x(1)).unwrap();
+    let numbers: Vec<i64> = after
+        .state()
+        .lines
+        .iter()
+        .map(|line| line.line_number)
+        .collect();
+    assert_eq!(numbers, vec![2, 3]);
+    // And re-evaluation across the restart is still deterministic: the second
+    // line earns nothing, the first keeps exactly what it had.
+    assert_eq!(after.state().lines[0].discount_amount.minor(), 2_000);
+    assert_eq!(after.state().lines[1].discount_amount.minor(), 0);
+}
+
+fn scan_x(units: i64) -> AddItemCommand {
+    AddItemCommand {
+        request_id: None,
+        selector: edge_catalog::ProductSelector::Barcode(
+            edge_catalog::Barcode::new(BARCODE).unwrap(),
+        ),
+        quantity: edge_domain::prelude::Quantity::from_units(units).unwrap(),
+    }
+}

@@ -371,7 +371,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                         operator_id, register_sequence, status, currency, subtotal_minor,
                         discount_total_minor, net_total_minor, tax_total_minor,
                         grand_total_minor, created_at, updated_at, finalized_at, version,
-                        catalog_snapshot_id, catalog_version, pricing_effective_at
+                        catalog_snapshot_id, catalog_version, pricing_effective_at,
+                        next_line_number
                  FROM retail_transactions
                  WHERE session_id = ?1 AND status NOT IN ('FINALIZED', 'CANCELLED')
                  ORDER BY register_sequence DESC
@@ -398,7 +399,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                         operator_id, register_sequence, status, currency, subtotal_minor,
                         discount_total_minor, net_total_minor, tax_total_minor,
                         grand_total_minor, created_at, updated_at, finalized_at, version,
-                        catalog_snapshot_id, catalog_version, pricing_effective_at
+                        catalog_snapshot_id, catalog_version, pricing_effective_at,
+                        next_line_number
                  FROM retail_transactions
                  WHERE transaction_id = ?1",
                 params![id.to_string()],
@@ -436,9 +438,10 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                       operator_id, register_sequence, status, currency, subtotal_minor,
                       discount_total_minor, net_total_minor, tax_total_minor, grand_total_minor,
                       created_at, updated_at, finalized_at, version,
-                      catalog_snapshot_id, catalog_version, pricing_effective_at)
+                      catalog_snapshot_id, catalog_version, pricing_effective_at,
+                      next_line_number)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?18, ?19, ?20, ?21)",
+                         ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     state.transaction_id.to_string(),
                     state.business_day_id.to_string(),
@@ -463,6 +466,7 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state
                         .pricing
                         .map(|pricing| pricing.effective_at.to_rfc3339()),
+                    state.next_line_number,
                 ],
             )
             .map_err(sqlite_err)?;
@@ -481,7 +485,8 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                 "UPDATE retail_transactions
                  SET status = ?2, subtotal_minor = ?3, discount_total_minor = ?4,
                      net_total_minor = ?5, tax_total_minor = ?6, grand_total_minor = ?7,
-                     updated_at = ?8, finalized_at = ?9, version = ?10
+                     updated_at = ?8, finalized_at = ?9, version = ?10,
+                     next_line_number = ?11
                  WHERE transaction_id = ?1 AND version < ?10",
                 params![
                     state.transaction_id.to_string(),
@@ -494,6 +499,7 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
                     now.to_rfc3339(),
                     state.finalized_at.map(|ts| ts.to_rfc3339()),
                     state.version,
+                    state.next_line_number,
                 ],
             )
             .map_err(sqlite_err)?;
@@ -648,14 +654,28 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
 }
 
 impl SqliteUnitOfWork<'_, '_> {
-    /// Lines are immutable once priced; payments can only gain their commit
-    /// timestamp, so both are written with upserts.
+    /// A line is no longer write-once: it can be removed, its quantity can
+    /// change, and a promotion can put a discount on it. So the stored set is
+    /// reconciled with the in-memory one — rows that are gone are deleted, and
+    /// the mutable columns of the rest are refreshed. `created_at` and the
+    /// line's identity are never touched. Payments can only gain their commit
+    /// timestamp, so they stay a plain upsert.
     fn write_children(
         &self,
         transaction: &RetailTransaction,
         now: Timestamp,
     ) -> Result<(), AppError> {
         let state = transaction.state();
+        self.prune_children(
+            "transaction_lines",
+            "line_id",
+            &state.transaction_id.to_string(),
+            &state
+                .lines
+                .iter()
+                .map(|line| line.line_id.to_string())
+                .collect::<Vec<_>>(),
+        )?;
         for line in &state.lines {
             self.tx
                 .execute(
@@ -667,7 +687,13 @@ impl SqliteUnitOfWork<'_, '_> {
                           line_total_minor, currency, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                              ?16, ?17, ?18, ?19)
-                     ON CONFLICT(line_id) DO NOTHING",
+                     ON CONFLICT(line_id) DO UPDATE SET
+                         quantity_thousandths = excluded.quantity_thousandths,
+                         extended_amount_minor = excluded.extended_amount_minor,
+                         discount_amount_minor = excluded.discount_amount_minor,
+                         taxable_amount_minor = excluded.taxable_amount_minor,
+                         tax_amount_minor = excluded.tax_amount_minor,
+                         line_total_minor = excluded.line_total_minor",
                     params![
                         line.line_id.to_string(),
                         state.transaction_id.to_string(),
@@ -715,14 +741,117 @@ impl SqliteUnitOfWork<'_, '_> {
                 )
                 .map_err(sqlite_err)?;
         }
+        self.write_promotions(state, now)
+    }
+
+    /// Promotion records are keyed by their deterministic adjustment id, so
+    /// re-evaluating the same basket rewrites the same rows. An adjustment that
+    /// stops applying has to disappear, hence the prune.
+    fn write_promotions(
+        &self,
+        state: &RetailTransactionState,
+        now: Timestamp,
+    ) -> Result<(), AppError> {
+        let transaction_id = state.transaction_id.to_string();
+        self.prune_children(
+            "transaction_promotions",
+            "adjustment_id",
+            &transaction_id,
+            &state
+                .applied_promotions
+                .iter()
+                .map(|applied| applied.adjustment_id.clone())
+                .collect::<Vec<_>>(),
+        )?;
+        for (sequence, applied) in state.applied_promotions.iter().enumerate() {
+            self.tx
+                .execute(
+                    "INSERT INTO transaction_promotions
+                         (transaction_id, adjustment_id, sequence, promotion_id, promotion_code,
+                          promotion_name, priority, stackability, target, line_number,
+                          amount_minor, currency, reason_code, detail, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                     ON CONFLICT(transaction_id, adjustment_id) DO UPDATE SET
+                         sequence = excluded.sequence,
+                         amount_minor = excluded.amount_minor,
+                         detail = excluded.detail",
+                    params![
+                        transaction_id,
+                        applied.adjustment_id,
+                        i64::try_from(sequence).unwrap_or(i64::MAX),
+                        applied.promotion_id,
+                        applied.code,
+                        applied.name,
+                        applied.priority,
+                        applied.stackability,
+                        applied.target.kind(),
+                        applied.target.line_number(),
+                        applied.amount.minor(),
+                        applied.amount.currency().code(),
+                        applied.reason,
+                        applied.detail,
+                        now.to_rfc3339(),
+                    ],
+                )
+                .map_err(sqlite_err)?;
+        }
         Ok(())
+    }
+
+    /// Delete the rows of one child table that the aggregate no longer holds.
+    ///
+    /// The id list is bound as parameters rather than interpolated; the table
+    /// and key names are `&'static` call-site literals, never input.
+    fn prune_children(
+        &self,
+        table: &'static str,
+        key: &'static str,
+        transaction_id: &str,
+        keep: &[String],
+    ) -> Result<(), AppError> {
+        let mut sql = format!("DELETE FROM {table} WHERE transaction_id = ?1");
+        if !keep.is_empty() {
+            let placeholders: Vec<String> =
+                (0..keep.len()).map(|i| format!("?{}", i + 2)).collect();
+            sql.push_str(&format!(" AND {key} NOT IN ({})", placeholders.join(", ")));
+        }
+        let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(keep.len() + 1);
+        bound.push(&transaction_id);
+        for id in keep {
+            bound.push(id);
+        }
+        self.tx
+            .execute(&sql, bound.as_slice())
+            .map_err(sqlite_err)?;
+        Ok(())
+    }
+
+    fn load_promotions(&self, transaction_id: &str) -> Result<Vec<AppliedPromotion>, AppError> {
+        let mut stmt = self
+            .tx
+            .prepare(
+                "SELECT adjustment_id, promotion_id, promotion_code, promotion_name, priority,
+                        stackability, target, line_number, amount_minor, currency, reason_code,
+                        detail
+                 FROM transaction_promotions
+                 WHERE transaction_id = ?1
+                 ORDER BY sequence ASC, adjustment_id ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = stmt
+            .query_map(params![transaction_id], RawPromotion::from_row)
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        rows.into_iter().map(RawPromotion::into_domain).collect()
     }
 
     fn load_transaction(&self, raw: RawTransaction) -> Result<RetailTransaction, AppError> {
         let transaction_id: TransactionId = parse_id(&raw.transaction_id)?;
         let lines = self.load_lines(&raw.transaction_id)?;
         let payments = self.load_payments(&raw.transaction_id, transaction_id)?;
-        raw.into_domain(lines, payments)
+        let promotions = self.load_promotions(&raw.transaction_id)?;
+        raw.into_domain(lines, payments, promotions)
     }
 
     fn load_lines(&self, transaction_id: &str) -> Result<Vec<TransactionLine>, AppError> {
@@ -921,6 +1050,7 @@ struct RawTransaction {
     catalog_snapshot_id: Option<String>,
     catalog_version: Option<i64>,
     pricing_effective_at: Option<String>,
+    next_line_number: i64,
 }
 
 impl RawTransaction {
@@ -947,6 +1077,7 @@ impl RawTransaction {
             catalog_snapshot_id: row.get(18)?,
             catalog_version: row.get(19)?,
             pricing_effective_at: row.get(20)?,
+            next_line_number: row.get(21)?,
         })
     }
 
@@ -954,6 +1085,7 @@ impl RawTransaction {
         self,
         lines: Vec<TransactionLine>,
         payments: Vec<Payment>,
+        applied_promotions: Vec<AppliedPromotion>,
     ) -> Result<RetailTransaction, AppError> {
         let currency = parse_currency(&self.currency)?;
         Ok(RetailTransaction::rehydrate(RetailTransactionState {
@@ -993,7 +1125,60 @@ impl RawTransaction {
             updated_at: parse_ts(&self.updated_at)?,
             finalized_at: parse_opt_ts(self.finalized_at)?,
             version: self.version,
+            next_line_number: self.next_line_number,
+            applied_promotions,
         }))
+    }
+}
+
+struct RawPromotion {
+    adjustment_id: String,
+    promotion_id: String,
+    promotion_code: String,
+    promotion_name: String,
+    priority: i32,
+    stackability: String,
+    target: String,
+    line_number: Option<i64>,
+    amount_minor: i64,
+    currency: String,
+    reason_code: String,
+    detail: Option<String>,
+}
+
+impl RawPromotion {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            adjustment_id: row.get(0)?,
+            promotion_id: row.get(1)?,
+            promotion_code: row.get(2)?,
+            promotion_name: row.get(3)?,
+            priority: row.get(4)?,
+            stackability: row.get(5)?,
+            target: row.get(6)?,
+            line_number: row.get(7)?,
+            amount_minor: row.get(8)?,
+            currency: row.get(9)?,
+            reason_code: row.get(10)?,
+            detail: row.get(11)?,
+        })
+    }
+
+    fn into_domain(self) -> Result<AppliedPromotion, AppError> {
+        let currency = parse_currency(&self.currency)?;
+        Ok(AppliedPromotion {
+            adjustment_id: self.adjustment_id,
+            promotion_id: self.promotion_id,
+            code: self.promotion_code,
+            name: self.promotion_name,
+            priority: self.priority,
+            stackability: self.stackability,
+            target: PromotionTarget::rehydrate(&self.target, self.line_number)
+                .map_err(AppError::from)?,
+            amount: money(self.amount_minor, currency),
+            reason: self.reason_code,
+            detail: self.detail,
+        })
     }
 }
 

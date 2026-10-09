@@ -13,15 +13,18 @@
 //! 2. price books, ascending by `price_book_id`,
 //! 3. products, ascending by `product_ref`,
 //! 4. price entries, ascending by `(price_book_id, product_ref, valid_from)`,
-//! 5. barcodes, ascending by barcode.
+//! 5. barcodes, ascending by barcode,
+//! 6. promotions, ascending by `promotion_id`.
 //!
 //! Pricing is part of the hash: two snapshots that differ only in a price are
-//! different snapshots.
+//! different snapshots. So is promotional content: a snapshot that discounts a
+//! product is not the snapshot that sells it at list price.
 
 use sha2::{Digest, Sha256};
 
 use crate::pricing::{PriceBook, PriceEntry};
 use crate::product::{CatalogBarcode, CatalogProduct};
+use crate::promotions::{Promotion, PromotionRule};
 use crate::tax::TaxProfile;
 
 /// Prefix of the rendered hash, so the algorithm is visible in logs and
@@ -81,6 +84,10 @@ impl ContentHasher {
         self.section("barcodes");
     }
 
+    pub fn begin_promotions(&mut self) {
+        self.section("promotions");
+    }
+
     pub fn tax_profile(&mut self, profile: &TaxProfile) {
         self.field(profile.code.as_str().as_bytes());
         self.field(profile.name.as_bytes());
@@ -116,6 +123,60 @@ impl ContentHasher {
         self.field(entry.price_mode.as_str().as_bytes());
         self.optional(entry.valid_from.map(|ts| ts.to_rfc3339()).as_deref());
         self.optional(entry.valid_until.map(|ts| ts.to_rfc3339()).as_deref());
+    }
+
+    pub fn promotion(&mut self, promotion: &Promotion) {
+        self.field(promotion.promotion_id.as_str().as_bytes());
+        self.field(promotion.code.as_bytes());
+        self.field(promotion.name.as_bytes());
+        self.field(if promotion.active { b"1" } else { b"0" });
+        self.field(promotion.priority.to_string().as_bytes());
+        self.field(promotion.stackability.as_str().as_bytes());
+        self.field(promotion.scope.as_str().as_bytes());
+        self.optional(promotion.scope.store_id().map(|id| id.as_str()));
+        self.optional(promotion.valid_from.map(|ts| ts.to_rfc3339()).as_deref());
+        self.optional(promotion.valid_until.map(|ts| ts.to_rfc3339()).as_deref());
+        // Every rule contributes every slot, present or absent, so no two rule
+        // shapes can encode to the same bytes.
+        self.field(promotion.rule.kind().as_bytes());
+        self.optional(
+            promotion
+                .rule
+                .applicability()
+                .and_then(|applies| applies.product_ref())
+                .map(|product| product.as_str()),
+        );
+        let (percentage, amount, minimum, buy, get) = match &promotion.rule {
+            PromotionRule::PercentageOff { percentage, .. } => {
+                (Some(percentage.bps().to_string()), None, None, None, None)
+            }
+            PromotionRule::FixedAmountOff { amount, .. } => (
+                None,
+                Some(format!("{}:{}", amount.minor(), amount.currency().code())),
+                None,
+                None,
+                None,
+            ),
+            PromotionRule::BuyNGetM { buy, get, .. } => (
+                None,
+                None,
+                None,
+                Some(buy.thousandths().to_string()),
+                Some(get.thousandths().to_string()),
+            ),
+            PromotionRule::BasketThreshold { minimum, amount } => (
+                None,
+                Some(format!("{}:{}", amount.minor(), amount.currency().code())),
+                Some(format!("{}:{}", minimum.minor(), minimum.currency().code())),
+                None,
+                None,
+            ),
+        };
+        self.optional(percentage.as_deref());
+        self.optional(amount.as_deref());
+        self.optional(minimum.as_deref());
+        self.optional(buy.as_deref());
+        self.optional(get.as_deref());
     }
 
     pub fn barcode(&mut self, barcode: &CatalogBarcode) {
@@ -156,6 +217,7 @@ pub struct SnapshotContent<'a> {
     pub products: &'a [CatalogProduct],
     pub price_entries: &'a [PriceEntry],
     pub barcodes: &'a [CatalogBarcode],
+    pub promotions: &'a [Promotion],
 }
 
 /// Hash a whole snapshot. Used by a producer (the server, the CLI importer) to
@@ -171,6 +233,8 @@ pub fn hash_snapshot(content: SnapshotContent<'_>) -> String {
     entries.sort_by_key(|entry| entry_key(entry));
     let mut barcodes: Vec<&CatalogBarcode> = content.barcodes.iter().collect();
     barcodes.sort_by(|a, b| a.barcode.cmp(&b.barcode));
+    let mut promotions: Vec<&Promotion> = content.promotions.iter().collect();
+    promotions.sort_by(|a, b| a.promotion_id.cmp(&b.promotion_id));
 
     let mut hasher = ContentHasher::new();
     hasher.begin_tax_profiles();
@@ -193,6 +257,10 @@ pub fn hash_snapshot(content: SnapshotContent<'_>) -> String {
     for barcode in barcodes {
         hasher.barcode(barcode);
     }
+    hasher.begin_promotions();
+    for promotion in promotions {
+        hasher.promotion(promotion);
+    }
     hasher.finish()
 }
 
@@ -205,6 +273,7 @@ pub fn hash_chunk(
     products: &[CatalogProduct],
     price_entries: &[PriceEntry],
     barcodes: &[CatalogBarcode],
+    promotions: &[Promotion],
 ) -> String {
     hash_snapshot(SnapshotContent {
         tax_profiles: &[],
@@ -212,6 +281,7 @@ pub fn hash_chunk(
         products,
         price_entries,
         barcodes,
+        promotions,
     })
 }
 
@@ -293,6 +363,7 @@ mod tests {
             products,
             price_entries: entries,
             barcodes,
+            promotions: &[],
         }
     }
 
@@ -376,6 +447,93 @@ mod tests {
     }
 
     #[test]
+    fn promotional_content_is_part_of_the_hash() {
+        use crate::promotions::{
+            NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
+        };
+        use edge_domain::prelude::{Percentage, PromotionId, Quantity};
+
+        let profiles = vec![profile("IVA16", 1_600)];
+        let books = vec![book("BASE", 0)];
+        let products = vec![product("P-1")];
+        let entries = vec![entry(&books[0], "P-1", 100)];
+        let base = SnapshotContent {
+            tax_profiles: &profiles,
+            price_books: &books,
+            products: &products,
+            price_entries: &entries,
+            barcodes: &[],
+            promotions: &[],
+        };
+
+        let promotion = |rule: PromotionRule| {
+            Promotion::import(NewPromotion {
+                promotion_id: PromotionId::new("PR-1").unwrap(),
+                code: "PR-1".to_owned(),
+                name: "promo".to_owned(),
+                active: true,
+                priority: 0,
+                stackability: Stackability::Stackable,
+                scope: PriceBookScope::Tenant,
+                valid_from: None,
+                valid_until: None,
+                rule,
+            })
+            .unwrap()
+        };
+        let ten_percent = vec![promotion(PromotionRule::PercentageOff {
+            applies_to: ProductApplicability::AnyProduct,
+            percentage: Percentage::from_bps(1_000).unwrap(),
+        })];
+        let twenty_percent = vec![promotion(PromotionRule::PercentageOff {
+            applies_to: ProductApplicability::AnyProduct,
+            percentage: Percentage::from_bps(2_000).unwrap(),
+        })];
+        let buy_two_get_one = vec![promotion(PromotionRule::BuyNGetM {
+            applies_to: ProductApplicability::AnyProduct,
+            buy: Quantity::from_units(2).unwrap(),
+            get: Quantity::from_units(1).unwrap(),
+        })];
+
+        let without = hash_snapshot(base.clone());
+        let with_ten = hash_snapshot(SnapshotContent {
+            promotions: &ten_percent,
+            ..base.clone()
+        });
+        let with_twenty = hash_snapshot(SnapshotContent {
+            promotions: &twenty_percent,
+            ..base.clone()
+        });
+        let with_bogo = hash_snapshot(SnapshotContent {
+            promotions: &buy_two_get_one,
+            ..base.clone()
+        });
+
+        // A promotion, its magnitude and its kind each change the snapshot.
+        assert_ne!(without, with_ten);
+        assert_ne!(with_ten, with_twenty);
+        assert_ne!(with_ten, with_bogo);
+
+        // Inactive is still different content from absent.
+        let mut inactive = ten_percent.clone();
+        inactive[0].active = false;
+        assert_ne!(
+            with_ten,
+            hash_snapshot(SnapshotContent {
+                promotions: &inactive,
+                ..base.clone()
+            })
+        );
+        assert_ne!(
+            without,
+            hash_snapshot(SnapshotContent {
+                promotions: &inactive,
+                ..base
+            })
+        );
+    }
+
+    #[test]
     fn absent_and_empty_optional_fields_do_not_collide() {
         let profiles = vec![profile("IVA16", 1_600)];
         let books = vec![book("BASE", 0)];
@@ -427,6 +585,7 @@ mod tests {
         hasher.price_entry(&entries[1]);
         hasher.begin_barcodes();
         hasher.barcode(&barcodes[0]);
+        hasher.begin_promotions();
 
         assert_eq!(
             hasher.finish(),

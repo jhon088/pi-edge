@@ -28,7 +28,7 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     let info = cli.core_info().unwrap();
     assert_eq!(info.status, CoreStatusV1::Ready);
     assert_eq!(info.protocol_version, edge_protocol::PROTOCOL_VERSION);
-    assert_eq!(info.database_schema_version, 3);
+    assert_eq!(info.database_schema_version, 4);
     assert_eq!(info.pid, daemon.pid);
 
     open_register(&cli);

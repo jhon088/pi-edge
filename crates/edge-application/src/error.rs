@@ -70,6 +70,10 @@ impl AppError {
             // A refused state-machine transition is its own stable code: it is
             // the most common thing a client has to react to.
             AppError::Domain(DomainError::InvalidTransition { .. }) => "INVALID_TRANSACTION_STATE",
+            // Naming a line that is not there is a client mistake, not a
+            // broken invariant, so it gets its own code.
+            AppError::Domain(DomainError::LineNotFound { .. })
+            | AppError::Domain(DomainError::AdjustmentTargetMissing { .. }) => "LINE_NOT_FOUND",
             AppError::Domain(_) => "DOMAIN_RULE_VIOLATION",
             // The catalog context publishes its own codes.
             AppError::Catalog(error) => error.code(),

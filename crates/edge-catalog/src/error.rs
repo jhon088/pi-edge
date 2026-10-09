@@ -65,6 +65,18 @@ pub enum CatalogError {
         valid_until: String,
     },
 
+    #[error(
+        "promotions [{promotions}] are all exclusive at priority {priority} for {target}: \
+         refusing to choose"
+    )]
+    AmbiguousPromotion {
+        target: String,
+        priority: i32,
+        promotions: String,
+    },
+    #[error("promotion `{promotion_id}` is not declared by this snapshot")]
+    UnknownPromotion { promotion_id: String },
+
     #[error("chunk {index} was already stored with different content")]
     ChunkConflict { index: i64 },
     #[error("chunk {index} is missing")]
@@ -119,6 +131,8 @@ impl CatalogError {
             CatalogError::UnknownPriceBook { .. } => "CATALOG_UNKNOWN_PRICE_BOOK",
             CatalogError::DuplicatePriceEntry { .. } => "CATALOG_DUPLICATE_PRICE_ENTRY",
             CatalogError::InvalidValidity { .. } => "CATALOG_INVALID_VALIDITY",
+            CatalogError::AmbiguousPromotion { .. } => "AMBIGUOUS_PROMOTION",
+            CatalogError::UnknownPromotion { .. } => "CATALOG_UNKNOWN_PROMOTION",
             CatalogError::ChunkConflict { .. } => "CATALOG_CHUNK_CONFLICT",
             CatalogError::MissingChunk { .. } => "CATALOG_IMPORT_INCOMPLETE",
             CatalogError::CountMismatch { .. } => "CATALOG_COUNT_MISMATCH",

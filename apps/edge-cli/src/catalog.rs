@@ -13,13 +13,13 @@ use std::path::Path;
 
 use edge_catalog::{
     hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceBook, PriceEntry,
-    SnapshotContent, TaxProfile,
+    Promotion, SnapshotContent, TaxProfile,
 };
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
-    CommitCatalogImportRequestV1, PriceBookV1, PutCatalogChunkRequestV1, SnapshotCountsV1,
-    TaxProfileV1,
+    CommitCatalogImportRequestV1, PriceBookV1, PromotionRecordV1, PutCatalogChunkRequestV1,
+    SnapshotCountsV1, TaxProfileV1,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -47,6 +47,9 @@ pub struct CatalogFixture {
     /// A snapshot must declare at least one price book.
     pub price_books: Vec<PriceBookV1>,
     pub products: Vec<CatalogProductRecordV1>,
+    /// Promotions the snapshot carries. PI.Edge never creates one.
+    #[serde(default)]
+    pub promotions: Vec<PromotionRecordV1>,
 }
 
 /// One record with its validated domain form, so hashes and payloads agree.
@@ -117,12 +120,21 @@ pub fn import_catalog(
         .iter()
         .flat_map(|record| record.barcodes.clone())
         .collect();
+    let all_promotions: Vec<Promotion> = fixture
+        .promotions
+        .iter()
+        .cloned()
+        .map(|record| record.into_domain(currency))
+        .collect::<Result<_, _>>()
+        .map_err(|error| CliError::Input(format!("invalid promotion: {error}")))?;
+
     let declared_hash = hash_snapshot(SnapshotContent {
         tax_profiles: &profiles,
         price_books: &books,
         products: &all_products,
         price_entries: &all_prices,
         barcodes: &all_barcodes,
+        promotions: &all_promotions,
     });
 
     let expected = SnapshotCountsV1 {
@@ -131,6 +143,7 @@ pub fn import_catalog(
         products: i64::try_from(all_products.len()).unwrap_or(i64::MAX),
         price_entries: i64::try_from(all_prices.len()).unwrap_or(i64::MAX),
         barcodes: i64::try_from(all_barcodes.len()).unwrap_or(i64::MAX),
+        promotions: i64::try_from(all_promotions.len()).unwrap_or(i64::MAX),
     };
 
     // Opening an import for content that is already open returns its progress,
@@ -154,6 +167,9 @@ pub fn import_catalog(
     let import_is_open = opened.snapshot.status == "IMPORTING";
 
     let chunks = split_by_bytes(&records, chunk_budget_bytes);
+    // A promotion that names a product must travel in that product's chunk;
+    // one that applies to anything rides in the first chunk.
+    let promotion_chunk = assign_promotions(&chunks, &fixture.promotions, &all_promotions);
     let mut chunks_sent = 0;
     let mut chunks_skipped = 0;
     for (index, chunk) in chunks.iter().enumerate() {
@@ -176,11 +192,21 @@ pub fn import_catalog(
             .iter()
             .flat_map(|record| record.barcodes.clone())
             .collect();
+        let promotions: Vec<Promotion> = promotion_chunk
+            .iter()
+            .filter(|(assigned, _, _)| *assigned == index)
+            .map(|(_, promotion, _)| promotion.clone())
+            .collect();
         client.put_catalog_chunk(PutCatalogChunkRequestV1 {
             snapshot_id: snapshot_id.clone(),
             chunk_index,
-            chunk_hash: hash_chunk(&products, &prices, &barcodes),
+            chunk_hash: hash_chunk(&products, &prices, &barcodes, &promotions),
             products: chunk.iter().map(|record| record.wire.clone()).collect(),
+            promotions: promotion_chunk
+                .iter()
+                .filter(|(assigned, _, _)| *assigned == index)
+                .map(|(_, _, wire)| wire.clone())
+                .collect(),
         })?;
         chunks_sent += 1;
     }
@@ -261,6 +287,36 @@ fn split_by_bytes(records: &[PreparedRecord], budget: usize) -> Vec<Vec<&Prepare
         chunks.push(current);
     }
     chunks
+}
+
+/// Decide which chunk each promotion travels in.
+///
+/// A promotion that names a product has to land in the same chunk — and so the
+/// same database transaction — as that product, because the snapshot's foreign
+/// key says so. One that applies to any product has nothing to wait for and
+/// rides in the first chunk.
+fn assign_promotions<'a>(
+    chunks: &[Vec<&PreparedRecord>],
+    wire: &'a [PromotionRecordV1],
+    domain: &'a [Promotion],
+) -> Vec<(usize, Promotion, PromotionRecordV1)> {
+    let mut assigned = Vec::with_capacity(domain.len());
+    for (promotion, record) in domain.iter().zip(wire.iter()) {
+        let target = promotion
+            .rule
+            .applicability()
+            .and_then(|applies| applies.product_ref())
+            .and_then(|product_ref| {
+                chunks.iter().position(|chunk| {
+                    chunk
+                        .iter()
+                        .any(|candidate| &candidate.product.product_ref == product_ref)
+                })
+            })
+            .unwrap_or(0);
+        assigned.push((target, promotion.clone(), record.clone()));
+    }
+    assigned
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

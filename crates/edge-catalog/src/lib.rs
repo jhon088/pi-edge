@@ -18,14 +18,21 @@
 //!      -> edge-domain computes the line and the totals
 //! ```
 
+pub mod basket;
 pub mod content;
 pub mod error;
 pub mod pricing;
 pub mod product;
+pub mod promotions;
 pub mod resolution;
+pub mod scope;
 pub mod snapshot;
 pub mod tax;
 
+pub use basket::{
+    evaluate, AdjustmentTarget, BasketLine, NewBasketLine, PricedBasket, PromotionAdjustment,
+    PromotionContext, PromotionResult,
+};
 pub use content::{hash_chunk, hash_snapshot, ContentHasher, SnapshotContent};
 pub use error::CatalogError;
 pub use pricing::{
@@ -33,7 +40,9 @@ pub use pricing::{
     PriceEntry, PricingContext, ResolvedPrice,
 };
 pub use product::{Barcode, CatalogBarcode, CatalogProduct, ProductSelector};
+pub use promotions::{NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability};
 pub use resolution::{resolve_sale_line, ResolvedSaleLine};
+pub use scope::CatalogScope;
 pub use snapshot::{
     CatalogSnapshot, CatalogSnapshotStatus, ImportProgress, NewCatalogSnapshot, SnapshotCounts,
 };
@@ -42,7 +51,8 @@ pub use tax::{TaxProfile, TaxProfileCode};
 /// Re-exported so a producer of snapshots (the server, the CLI importer) can
 /// speak the content model without depending on the sale domain directly.
 pub use edge_domain::prelude::{
-    Currency, Money, PriceBookId, PriceMode, ProductRef, Quantity, StoreId, TaxRate, Timestamp,
+    Currency, Money, Percentage, PriceBookId, PriceMode, ProductRef, PromotionId, Quantity,
+    StoreId, TaxRate, Timestamp,
 };
 
 /// Version of the catalog model, reported in diagnostics.

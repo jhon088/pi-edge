@@ -157,6 +157,10 @@ opaque_id!(
     /// master data.
     PriceBookId
 );
+opaque_id!(
+    /// Reference to a promotion, assigned upstream.
+    PromotionId
+);
 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]

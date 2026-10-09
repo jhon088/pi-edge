@@ -29,52 +29,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CatalogError;
 
-/// Where a price book applies.
-///
-/// Two levels on purpose: tenant-wide and per store. Arbitrary hierarchies are
-/// not modelled until a real requirement asks for one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "scope", rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum PriceBookScope {
-    /// Applies to every store of the tenant.
-    Tenant,
-    /// Applies to one store only.
-    Store { store_id: StoreId },
-}
-
-impl PriceBookScope {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            PriceBookScope::Tenant => "TENANT",
-            PriceBookScope::Store { .. } => "STORE",
-        }
-    }
-
-    pub fn store_id(&self) -> Option<&StoreId> {
-        match self {
-            PriceBookScope::Tenant => None,
-            PriceBookScope::Store { store_id } => Some(store_id),
-        }
-    }
-
-    /// Whether this scope covers the given store.
-    pub fn applies_to(&self, store_id: &StoreId) -> bool {
-        match self {
-            PriceBookScope::Tenant => true,
-            PriceBookScope::Store { store_id: scoped } => scoped == store_id,
-        }
-    }
-
-    /// Specificity rank. A more specific scope always wins, regardless of
-    /// priority, so "the store price overrides the base price" is structural
-    /// rather than a property of the data.
-    pub const fn rank(&self) -> u8 {
-        match self {
-            PriceBookScope::Tenant => 0,
-            PriceBookScope::Store { .. } => 1,
-        }
-    }
-}
+/// Where a price book applies. See [`crate::scope::CatalogScope`].
+pub type PriceBookScope = crate::scope::CatalogScope;
 
 /// A named set of prices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
