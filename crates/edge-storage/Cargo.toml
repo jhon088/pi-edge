@@ -16,6 +16,7 @@ fault-injection = []
 edge-application = { workspace = true }
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
+edge-inventory = { workspace = true }
 edge-domain = { workspace = true }
 edge-payments = { workspace = true }
 rusqlite = { workspace = true }

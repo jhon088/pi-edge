@@ -6,6 +6,7 @@
 use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
+use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -21,6 +22,9 @@ pub enum AppError {
 
     #[error(transparent)]
     Cash(#[from] CashError),
+
+    #[error(transparent)]
+    Inventory(#[from] InventoryError),
 
     #[error("the session cannot close yet: {}", blockers.join(", "))]
     SessionCloseBlocked { blockers: Vec<String> },
@@ -101,6 +105,8 @@ impl AppError {
             AppError::Payment(error) => error.code(),
             // The cash context publishes its own codes.
             AppError::Cash(error) => error.code(),
+            // The inventory context publishes its own codes.
+            AppError::Inventory(error) => error.code(),
             AppError::SessionCloseBlocked { .. } => "SESSION_CLOSE_BLOCKED",
             AppError::BusinessDayCloseBlocked { .. } => "BUSINESS_DAY_CLOSE_BLOCKED",
             AppError::Storage(_) => "STORAGE_FAILURE",

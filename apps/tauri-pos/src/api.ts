@@ -16,6 +16,7 @@ import type {
   ConnectionStatus,
   CoreInfo,
   EdgeState,
+  InventoryPosition,
   ProductLookup,
   StateChangedEvent,
   TransactionPayments,
@@ -78,6 +79,22 @@ export function fetchTransactionPayments(
  */
 export function fetchCashPosition(): Promise<CashPosition> {
   return invoke<CashPosition>("cash_position");
+}
+
+/**
+ * What the ledger says is here, and the movements that explain it.
+ *
+ * Read-only. The balance is the core's fold over its own append-only ledger;
+ * this side adds nothing up.
+ */
+export function fetchInventoryPosition(
+  productRef: string,
+  movementLimit: number,
+): Promise<InventoryPosition> {
+  return invoke<InventoryPosition>("inventory_position", {
+    productRef,
+    movementLimit,
+  });
 }
 
 /** Resolve a barcode the way a sale would. The core prices it, not this code. */

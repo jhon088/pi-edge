@@ -7,8 +7,10 @@ use edge_protocol::{
     CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
     CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1,
     DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
-    InitDeviceRequestV1, JournalEventV1, OpenRegisterSessionRequestV1, PaymentRequestV1,
-    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    ImportInventoryBootstrapRequestV1, InitDeviceRequestV1, InventoryBootstrapV1,
+    InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1, InventoryQueryV1,
+    JournalEventV1, OpenRegisterSessionRequestV1, PaymentRequestV1, PaymentResultV1,
+    PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
     RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RetailTransactionV1,
     SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
     TransactionPaymentsV1, TransactionRequestV1,
@@ -109,6 +111,35 @@ pub trait EdgeClient: Debug + Send + Sync {
         &self,
         request_id: Option<Uuid>,
     ) -> Result<RetailTransactionV1, ClientError>;
+    // ------------------------------------------------------------- inventory
+
+    /// Import the opening baseline. One per installation, ever (ADR 028).
+    fn import_inventory_bootstrap(
+        &self,
+        request: ImportInventoryBootstrapRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryBootstrapV1, ClientError>;
+    /// What the ledger says is here, optionally with the movements that
+    /// explain it.
+    fn inventory_position(
+        &self,
+        request: InventoryQueryV1,
+    ) -> Result<InventoryPositionV1, ClientError>;
+    fn inventory_movements(
+        &self,
+        request: InventoryQueryV1,
+    ) -> Result<Vec<InventoryMovementV1>, ClientError>;
+    fn inventory_in(
+        &self,
+        request: InventoryMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryPositionV1, ClientError>;
+    fn inventory_out(
+        &self,
+        request: InventoryMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryPositionV1, ClientError>;
+
     // ------------------------------------------------------- cash management
 
     /// What the drawer should contain, and the movements that explain it.

@@ -9,6 +9,7 @@ use edge_application::testing::{CatalogFixture, FixedClock, SequentialIdFactory,
 use edge_application::EdgeApplication;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
+use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_storage::SqliteEdgeStore;
 
@@ -54,6 +55,7 @@ pub fn open_register(core: &TestCore) {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory: true,
     })
     .unwrap();
     CatalogFixture::demo(1).activate(core).unwrap();
@@ -66,6 +68,46 @@ pub fn open_register(core: &TestCore) {
         opening_cash_minor: 100_000,
     })
     .unwrap();
+}
+
+/// Import an opening position: `(product_ref, units)` pairs.
+pub fn bootstrap_stock(core: &TestCore, items: &[(&str, i64)]) {
+    core.import_inventory_bootstrap(bootstrap_command("WMS-SNAPSHOT-1", items))
+        .unwrap();
+}
+
+/// The command a bootstrap import would arrive as, so a test can replay it or
+/// arm a crash around it.
+pub fn bootstrap_command(
+    source_snapshot_id: &str,
+    items: &[(&str, i64)],
+) -> ImportInventoryBootstrapCommand {
+    ImportInventoryBootstrapCommand {
+        request_id: None,
+        source_snapshot_id: source_snapshot_id.to_owned(),
+        generated_at: Timestamp::from_datetime(start_instant()),
+        items: items
+            .iter()
+            .map(|(product_ref, units)| BootstrapItem {
+                product_ref: ProductRef::new(*product_ref).unwrap(),
+                quantity: Quantity::from_units(*units).unwrap(),
+            })
+            .collect(),
+    }
+}
+
+/// On hand in thousandths, straight from the core's own fold.
+pub fn on_hand(core: &TestCore, product_ref: &str) -> i64 {
+    core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 100)
+        .unwrap()
+        .position
+        .on_hand_thousandths
+}
+
+/// Every movement of one product, oldest first.
+pub fn movements(core: &TestCore, product_ref: &str) -> Vec<edge_inventory::InventoryMovement> {
+    core.get_inventory_movements(ProductRef::new(product_ref).unwrap(), 100, 0)
+        .unwrap()
 }
 
 pub fn demo_item() -> AddItemCommand {
@@ -119,6 +161,7 @@ pub fn open_register_with_float(core: &TestCore, opening_cash_minor: i64) {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory: true,
     })
     .unwrap();
     CatalogFixture::demo(1).activate(core).unwrap();

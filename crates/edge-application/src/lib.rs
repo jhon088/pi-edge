@@ -14,6 +14,7 @@ pub mod commands;
 /// construction and the single-terminal context rule.
 pub(crate) mod context;
 pub mod error;
+pub mod inventory_service;
 pub mod payment_service;
 pub mod ports;
 pub mod queries;
@@ -25,8 +26,8 @@ pub mod testing;
 pub use error::AppError;
 pub use payment_service::PaymentOutcome;
 pub use ports::{
-    CashUnitOfWork, Clock, DeviceProfile, EdgeStore, IdFactory, PaymentUnitOfWork, SystemClock,
-    UnitOfWork, UuidFactory,
+    CashUnitOfWork, Clock, DeviceProfile, EdgeStore, IdFactory, InventoryUnitOfWork,
+    PaymentUnitOfWork, SystemClock, UnitOfWork, UuidFactory,
 };
 pub use service::EdgeApplication;
 

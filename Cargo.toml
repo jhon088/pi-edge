@@ -21,6 +21,7 @@ edge-domain = { path = "crates/edge-domain" }
 edge-application = { path = "crates/edge-application" }
 edge-storage = { path = "crates/edge-storage" }
 edge-protocol = { path = "crates/edge-protocol" }
+edge-inventory = { path = "crates/edge-inventory" }
 edge-ipc = { path = "crates/edge-ipc" }
 edge-client = { path = "crates/edge-client" }
 edge-payments = { path = "crates/edge-payments" }

@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex};
 
 use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
 use edge_protocol::{
-    CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, ProductLookupV1,
-    ProductSelectorV1, TransactionPaymentsV1, TransactionRequestV1,
+    CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, InventoryPositionV1,
+    InventoryQueryV1, ProductLookupV1, ProductSelectorV1, TransactionPaymentsV1,
+    TransactionRequestV1,
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -147,6 +148,33 @@ fn cash_position(bridge: tauri::State<'_, EdgeBridge>) -> Result<CashPositionV1,
     bridge.client.cash_position().map_err(BridgeError::from)
 }
 
+/// What the ledger says is here, and the movements that explain it.
+///
+/// A diagnostic read. There is deliberately no command here for a manual
+/// movement or a bootstrap import: this window is read-only in this milestone
+/// and those are exercised through the CLI.
+///
+/// `on_hand` is what *this* installation's ledger projects, not a store-wide
+/// count (ADR 026). It can be negative, and the screen shows it as such: a
+/// till that sold what it did not have on record is a reportable condition,
+/// and hiding it behind a zero would be the one thing a diagnostic window must
+/// not do (ADR 029).
+#[tauri::command]
+fn inventory_position(
+    bridge: tauri::State<'_, EdgeBridge>,
+    product_ref: String,
+    movement_limit: i64,
+) -> Result<InventoryPositionV1, BridgeError> {
+    bridge
+        .client
+        .inventory_position(InventoryQueryV1 {
+            product_ref,
+            movement_limit,
+            offset: 0,
+        })
+        .map_err(BridgeError::from)
+}
+
 #[tauri::command]
 fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDto {
     let status = bridge.client.connection();
@@ -193,6 +221,7 @@ pub fn run() {
             lookup_barcode,
             transaction_payments,
             cash_position,
+            inventory_position,
             connection_status
         ])
         .run(tauri::generate_context!());

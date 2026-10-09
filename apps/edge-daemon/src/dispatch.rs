@@ -22,10 +22,11 @@ use edge_domain::prelude::{DomainError, RetailTransaction};
 use edge_payments::{PaymentError, SimulatorPaymentProvider};
 use edge_protocol::{
     error_codes, BusinessDayV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
-    CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, JournalEventV1, OperationV1,
-    PaymentResultV1, PendingOutboxV1, ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1,
-    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
-    SessionCloseResultV1, TransactionPaymentsV1, PROTOCOL_VERSION,
+    CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, InventoryBootstrapV1,
+    InventoryMovementV1, InventoryPositionV1, JournalEventV1, OperationV1, PaymentResultV1,
+    PendingOutboxV1, ProductLookupV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1,
+    ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
+    TransactionPaymentsV1, PROTOCOL_VERSION,
 };
 use edge_storage::SqliteEdgeStore;
 use uuid::Uuid;
@@ -298,6 +299,62 @@ impl Dispatcher {
                     })
                     .map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::Transaction(dto(&transaction)?))
+            }
+            OperationV1::ImportInventoryBootstrap(payload) => {
+                let command = payload
+                    .into_command(Some(request_id))
+                    .map_err(domain_error)?;
+                let state = self
+                    .core
+                    .import_inventory_bootstrap(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::InventoryBootstrap(InventoryBootstrapV1::from(
+                    &state,
+                )))
+            }
+            OperationV1::GetInventoryPosition(payload) => {
+                let product = payload.product().map_err(domain_error)?;
+                let view = self
+                    .core
+                    .get_inventory_position(product, payload.movement_limit)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::InventoryPosition(InventoryPositionV1::from(
+                    &view,
+                )))
+            }
+            OperationV1::GetInventoryMovements(payload) => {
+                let product = payload.product().map_err(domain_error)?;
+                let movements = self
+                    .core
+                    .get_inventory_movements(product, payload.movement_limit, payload.offset)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::InventoryMovements(
+                    movements.iter().map(InventoryMovementV1::from).collect(),
+                ))
+            }
+            OperationV1::InventoryIn(payload) => {
+                let command = payload
+                    .into_inventory_in(Some(request_id))
+                    .map_err(domain_error)?;
+                let view = self
+                    .core
+                    .inventory_in(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::InventoryPosition(InventoryPositionV1::from(
+                    &view,
+                )))
+            }
+            OperationV1::InventoryOut(payload) => {
+                let command = payload
+                    .into_inventory_out(Some(request_id))
+                    .map_err(domain_error)?;
+                let view = self
+                    .core
+                    .inventory_out(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::InventoryPosition(InventoryPositionV1::from(
+                    &view,
+                )))
             }
             OperationV1::GetCashPosition => {
                 let view = self

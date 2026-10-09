@@ -8,6 +8,7 @@ use edge_catalog::{
     CatalogProduct, CatalogSnapshot, ImportProgress, ResolvedPrice, SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
+use edge_inventory::{InventoryMovement, InventoryPosition};
 use serde::{Deserialize, Serialize};
 
 use crate::ports::DeviceProfile;
@@ -102,4 +103,17 @@ pub struct SessionCloseResult {
     /// `BALANCED`, `SHORTAGE`, `OVERAGE` or `UNDECLARED` — so a report never
     /// renders an unknown variance as zero.
     pub variance_label: String,
+}
+
+/// A product's position, with the movements that explain it.
+///
+/// `on_hand` rather than `available`: there are no reservations, so the only
+/// honest figure is what the ledger says is here (ADR 029).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryPositionView {
+    pub position: InventoryPosition,
+    /// Rendered the way every other quantity is: `9.250`.
+    pub on_hand_display: String,
+    /// Empty unless the caller asked for movements.
+    pub movements: Vec<InventoryMovement>,
 }

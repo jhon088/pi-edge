@@ -9,11 +9,13 @@ use edge_application::AppError;
 use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, MoneyError};
+use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
 use edge_protocol::{
     error_codes, AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1,
     ChangeQuantityRequestV1, DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1,
-    OperationV1, PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1, ReopenSessionRequestV1,
+    ImportInventoryBootstrapRequestV1, InventoryMovementRequestV1, InventoryQueryV1, OperationV1,
+    PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1, ReopenSessionRequestV1,
     SessionCloseRequirementsV1, StartPaymentRequestV1, TransactionRequestV1,
 };
 
@@ -435,5 +437,143 @@ fn the_pre_close_dto_has_no_amount_bearing_field() {
         ],
         "adding a field here needs a deliberate review: it is the payload a \
          cashier sees before counting the drawer"
+    );
+}
+
+#[test]
+fn inventory_codes_are_stable() {
+    for (error, expected) in [
+        (
+            InventoryError::WrongDirection {
+                movement_type: "SALE",
+                expected: "OUT",
+                actual: "IN",
+            },
+            error_codes::INVENTORY_INVALID_MOVEMENT,
+        ),
+        (
+            InventoryError::MissingReason {
+                field: "reason_code",
+            },
+            error_codes::INVENTORY_REASON_REQUIRED,
+        ),
+        (
+            InventoryError::UnknownProduct {
+                product_ref: "SKU-GHOST".to_owned(),
+            },
+            error_codes::INVENTORY_UNKNOWN_PRODUCT,
+        ),
+        (
+            InventoryError::CatalogRequired,
+            error_codes::INVENTORY_CATALOG_REQUIRED,
+        ),
+        (
+            InventoryError::AlreadyBootstrapped {
+                source_snapshot_id: "WMS-1".to_owned(),
+            },
+            error_codes::INVENTORY_ALREADY_BOOTSTRAPPED,
+        ),
+        (
+            InventoryError::EmptyBootstrap,
+            error_codes::INVENTORY_INVALID_BOOTSTRAP,
+        ),
+        (
+            InventoryError::DuplicateBootstrapItem {
+                product_ref: "SKU-001".to_owned(),
+            },
+            error_codes::INVENTORY_INVALID_BOOTSTRAP,
+        ),
+        (
+            InventoryError::InsufficientStock {
+                product_ref: "SKU-001".to_owned(),
+                on_hand: "1.000".to_owned(),
+                requested: "2.000".to_owned(),
+            },
+            error_codes::INVENTORY_INSUFFICIENT_STOCK,
+        ),
+        (
+            InventoryError::InvalidRecord {
+                field: "source_ref",
+                reason: "duplicate".to_owned(),
+            },
+            error_codes::INVENTORY_INVALID_RECORD,
+        ),
+    ] {
+        assert_eq!(error.code(), expected);
+        assert_eq!(AppError::Inventory(error).kind(), expected);
+    }
+}
+
+#[test]
+fn inventory_operations_have_stable_names() {
+    let query = InventoryQueryV1 {
+        product_ref: "SKU-001".to_owned(),
+        movement_limit: 10,
+        offset: 0,
+    };
+    let movement = InventoryMovementRequestV1 {
+        product_ref: "SKU-001".to_owned(),
+        quantity_thousandths: 1_000,
+        reason_code: "DAMAGE".to_owned(),
+    };
+    for (operation, expected, is_command) in [
+        (
+            OperationV1::ImportInventoryBootstrap(ImportInventoryBootstrapRequestV1 {
+                source_snapshot_id: "WMS-1".to_owned(),
+                generated_at: "2026-10-08T14:00:00Z".to_owned(),
+                items: Vec::new(),
+            }),
+            "IMPORT_INVENTORY_BOOTSTRAP",
+            true,
+        ),
+        (
+            OperationV1::GetInventoryPosition(query.clone()),
+            "GET_INVENTORY_POSITION",
+            false,
+        ),
+        (
+            OperationV1::GetInventoryMovements(query),
+            "GET_INVENTORY_MOVEMENTS",
+            false,
+        ),
+        (
+            OperationV1::InventoryIn(movement.clone()),
+            "INVENTORY_IN",
+            true,
+        ),
+        (OperationV1::InventoryOut(movement), "INVENTORY_OUT", true),
+    ] {
+        assert_eq!(operation.name(), expected);
+        assert_eq!(operation.is_command(), is_command, "{expected}");
+    }
+}
+
+/// A stock figure never crosses the wire as a float, and a direction is never
+/// the sign of a quantity.
+#[test]
+fn an_inventory_movement_carries_a_magnitude_and_an_explicit_direction() {
+    let rendered = serde_json::to_value(edge_protocol::InventoryMovementV1 {
+        movement_id: "11111111-1111-1111-1111-111111111111".to_owned(),
+        product_ref: "SKU-001".to_owned(),
+        movement_type: "MANUAL_OUT".to_owned(),
+        direction: "OUT".to_owned(),
+        quantity: "0.750".to_owned(),
+        quantity_thousandths: 750,
+        source_ref: "req-1".to_owned(),
+        transaction_id: None,
+        line_number: None,
+        reason_code: Some("DAMAGE".to_owned()),
+        occurred_at: "2026-10-08T15:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(rendered["direction"], "OUT");
+    // Positive even though the movement goes out: the magnitude and the
+    // direction are two fields, and neither encodes the other.
+    assert_eq!(rendered["quantity_thousandths"], 750);
+    assert_eq!(rendered["quantity"], "0.750");
+    assert!(
+        rendered["quantity_thousandths"].is_i64(),
+        "a quantity is an integer on the wire, in thousandths"
     );
 }

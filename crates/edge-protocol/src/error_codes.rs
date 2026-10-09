@@ -151,6 +151,31 @@ pub const SESSION_CLOSE_BLOCKED: &str = "SESSION_CLOSE_BLOCKED";
 /// The business day cannot close yet; the message names every blocker.
 pub const BUSINESS_DAY_CLOSE_BLOCKED: &str = "BUSINESS_DAY_CLOSE_BLOCKED";
 
+// Inventory codes, produced by the inventory context.
+
+/// A movement contradicts its own type: `SALE` without a transaction, a type
+/// recorded against the wrong direction, a sale line with no source.
+pub const INVENTORY_INVALID_MOVEMENT: &str = "INVENTORY_INVALID_MOVEMENT";
+/// A manual movement arrived with no reason. Stock that moves for no stated
+/// reason is not a ledger.
+pub const INVENTORY_REASON_REQUIRED: &str = "INVENTORY_REASON_REQUIRED";
+/// The active catalog snapshot does not know that product. PI.Edge never
+/// invents product master data (ADR 011).
+pub const INVENTORY_UNKNOWN_PRODUCT: &str = "INVENTORY_UNKNOWN_PRODUCT";
+/// No active catalog snapshot, so no product can be validated.
+pub const INVENTORY_CATALOG_REQUIRED: &str = "INVENTORY_CATALOG_REQUIRED";
+/// The store already has an opening position from a *different* upstream
+/// snapshot. Replaying the same one is a no-op; a different one is refused
+/// rather than guessed at (ADR 028).
+pub const INVENTORY_ALREADY_BOOTSTRAPPED: &str = "INVENTORY_ALREADY_BOOTSTRAPPED";
+/// The opening position is empty, or names the same product twice.
+pub const INVENTORY_INVALID_BOOTSTRAP: &str = "INVENTORY_INVALID_BOOTSTRAP";
+/// The sale needs more than the ledger says is here, and this installation
+/// does not allow selling into negative stock (ADR 029).
+pub const INVENTORY_INSUFFICIENT_STOCK: &str = "INVENTORY_INSUFFICIENT_STOCK";
+/// An inventory record failed validation at the boundary.
+pub const INVENTORY_INVALID_RECORD: &str = "INVENTORY_INVALID_RECORD";
+
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";
 /// A request arrived before a successful handshake.

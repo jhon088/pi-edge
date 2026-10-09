@@ -12,6 +12,7 @@ edge-application = { workspace = true, features = ["testing"] }
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
+edge-inventory = { workspace = true }
 edge-payments = { workspace = true }
 edge-storage = { workspace = true, features = ["fault-injection"] }
 chrono = { workspace = true }

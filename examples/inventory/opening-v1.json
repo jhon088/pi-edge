@@ -1,0 +1,13 @@
+{
+  "source_snapshot_id": "WMS-2026-10-08-001",
+  "generated_at": "2026-10-08T14:00:00Z",
+  "items": [
+    { "product_ref": "P-LECHE-1L", "quantity_thousandths": 24000 },
+    { "product_ref": "P-TORTILLA-1K", "quantity_thousandths": 18000 },
+    { "product_ref": "P-REFRESCO-600", "quantity_thousandths": 48000 },
+    { "product_ref": "P-CAFE-500", "quantity_thousandths": 9000 },
+    { "product_ref": "P-JAMON-GRANEL", "quantity_thousandths": 6500 },
+    { "product_ref": "P-ACEITE-1L", "quantity_thousandths": 12000 },
+    { "product_ref": "P-ARROZ-1K", "quantity_thousandths": 15000 }
+  ]
+}

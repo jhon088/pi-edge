@@ -1,0 +1,36 @@
+{
+  "store_id": "STORE-DEMO",
+  "product_ref": "SKU-8",
+  "on_hand": "7.000",
+  "on_hand_thousandths": 7000,
+  "movement_count": 2,
+  "last_movement_at": "2026-10-08T15:00:00.000000Z",
+  "movements": [
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000000a",
+      "product_ref": "SKU-8",
+      "movement_type": "OPENING_BALANCE",
+      "direction": "IN",
+      "quantity": "10.000",
+      "quantity_thousandths": 10000,
+      "source_ref": "WMS-SNAPSHOT-1",
+      "transaction_id": null,
+      "line_number": null,
+      "reason_code": null,
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-000000000017",
+      "product_ref": "SKU-8",
+      "movement_type": "SALE",
+      "direction": "OUT",
+      "quantity": "3.000",
+      "quantity_thousandths": 3000,
+      "source_ref": "00000000-0000-0000-0000-00000000000b:1",
+      "transaction_id": "00000000-0000-0000-0000-00000000000b",
+      "line_number": 1,
+      "reason_code": null,
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    }
+  ]
+}

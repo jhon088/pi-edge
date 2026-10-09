@@ -226,6 +226,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-inventory",
  "edge-payments",
  "serde",
  "serde_json",
@@ -292,6 +293,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-inventory",
  "edge-payments",
  "edge-storage",
  "serde_json",
@@ -309,6 +311,7 @@ dependencies = [
  "edge-catalog",
  "edge-client",
  "edge-domain",
+ "edge-inventory",
  "edge-ipc",
  "edge-payments",
  "edge-protocol",
@@ -342,6 +345,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-inventory",
  "edge-payments",
  "edge-protocol",
  "edge-storage",
@@ -357,11 +361,22 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-inventory",
  "edge-payments",
  "edge-protocol",
  "edge-storage",
  "serde_json",
  "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "edge-inventory"
+version = "0.1.0"
+dependencies = [
+ "edge-domain",
+ "serde",
+ "thiserror",
  "uuid",
 ]
 
@@ -398,6 +413,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-inventory",
  "edge-payments",
  "serde",
  "serde_json",
@@ -412,6 +428,7 @@ dependencies = [
  "edge-cash",
  "edge-catalog",
  "edge-domain",
+ "edge-inventory",
  "edge-payments",
  "rusqlite",
  "serde_json",

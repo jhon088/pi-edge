@@ -12,6 +12,7 @@
 
 mod catalog;
 mod error;
+mod inventory;
 mod render;
 
 use std::path::PathBuf;
@@ -22,8 +23,9 @@ use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, ApproveSafeDropRequestV1, CashMovementRequestV1, ChangeQuantityRequestV1,
     DeclareClosingCashRequestV1, ForceCloseBusinessDayRequestV1, InitDeviceRequestV1,
-    OpenRegisterSessionRequestV1, PaymentRequestV1, ProductSelectorV1, RemoveItemRequestV1,
-    ReopenSessionRequestV1, StartPaymentRequestV1, TransactionRequestV1, PROTOCOL_VERSION,
+    InventoryMovementRequestV1, InventoryQueryV1, OpenRegisterSessionRequestV1, PaymentRequestV1,
+    ProductSelectorV1, RemoveItemRequestV1, ReopenSessionRequestV1, StartPaymentRequestV1,
+    TransactionRequestV1, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -101,6 +103,10 @@ enum Command {
         store: String,
         #[arg(long, default_value = "MXN")]
         currency: String,
+        /// Refuse a sale the ledger cannot cover. Off by default: a stale
+        /// position must not stop the counter (ADR 029).
+        #[arg(long)]
+        block_negative_inventory: bool,
     },
     /// Open the business day for this store.
     OpenBusinessDay,
@@ -212,6 +218,49 @@ enum Command {
     GetState,
     /// Print the active transaction, if any.
     ActiveSale,
+    /// Import the opening stock baseline. One per installation, ever
+    /// (ADR 028).
+    InventoryImport {
+        /// Opening-position file produced upstream (a fixture, for now).
+        file: PathBuf,
+    },
+    /// What the ledger says is here, and the movements that explain it.
+    InventoryPosition {
+        #[arg(long = "product")]
+        product_ref: String,
+        /// How many movements to include. Zero for the position alone.
+        #[arg(long, default_value_t = 10)]
+        movements: i64,
+    },
+    /// One product's movements, oldest first.
+    InventoryMovements {
+        #[arg(long = "product")]
+        product_ref: String,
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
+    },
+    /// Put stock in, with a stated reason.
+    InventoryIn {
+        #[arg(long = "product")]
+        product_ref: String,
+        /// Thousandths: `1500` is `1.500`.
+        #[arg(long = "qty")]
+        quantity_thousandths: i64,
+        /// Why. A blank reason is refused.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Take stock out, with a stated reason.
+    InventoryOut {
+        #[arg(long = "product")]
+        product_ref: String,
+        #[arg(long = "qty")]
+        quantity_thousandths: i64,
+        #[arg(long)]
+        reason: String,
+    },
     /// What the drawer should contain, and the movements that explain it.
     CashPosition,
     /// Put money into the drawer.
@@ -335,11 +384,13 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             tenant,
             store,
             currency,
+            block_negative_inventory,
         } => {
             let device = client.init_device(InitDeviceRequestV1 {
                 tenant_id: tenant.clone(),
                 store_id: store.clone(),
                 currency: currency.clone(),
+                allow_negative_inventory: !*block_negative_inventory,
             })?;
             to_value(&json!({
                 "protocol_version": PROTOCOL_VERSION,
@@ -463,6 +514,50 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             }))
         }
         Command::ActiveSale => to_value(&client.get_active_transaction()?),
+        Command::InventoryImport { file } => {
+            to_value(&inventory::import_bootstrap(&client, file, request_id)?)
+        }
+        Command::InventoryPosition {
+            product_ref,
+            movements,
+        } => to_value(&client.inventory_position(InventoryQueryV1 {
+            product_ref: product_ref.clone(),
+            movement_limit: *movements,
+            offset: 0,
+        })?),
+        Command::InventoryMovements {
+            product_ref,
+            limit,
+            offset,
+        } => to_value(&client.inventory_movements(InventoryQueryV1 {
+            product_ref: product_ref.clone(),
+            movement_limit: *limit,
+            offset: *offset,
+        })?),
+        Command::InventoryIn {
+            product_ref,
+            quantity_thousandths,
+            reason,
+        } => to_value(&client.inventory_in(
+            InventoryMovementRequestV1 {
+                product_ref: product_ref.clone(),
+                quantity_thousandths: *quantity_thousandths,
+                reason_code: reason.clone(),
+            },
+            request_id,
+        )?),
+        Command::InventoryOut {
+            product_ref,
+            quantity_thousandths,
+            reason,
+        } => to_value(&client.inventory_out(
+            InventoryMovementRequestV1 {
+                product_ref: product_ref.clone(),
+                quantity_thousandths: *quantity_thousandths,
+                reason_code: reason.clone(),
+            },
+            request_id,
+        )?),
         Command::CashPosition => to_value(&client.cash_position()?),
         Command::CashIn { amount, reason } => to_value(&client.cash_in(
             CashMovementRequestV1 {

@@ -1,0 +1,62 @@
+{
+  "store_id": "STORE-DEMO",
+  "product_ref": "SKU-16",
+  "on_hand": "11.000",
+  "on_hand_thousandths": 11000,
+  "movement_count": 4,
+  "last_movement_at": "2026-10-08T15:00:00.000000Z",
+  "movements": [
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000000a",
+      "product_ref": "SKU-16",
+      "movement_type": "OPENING_BALANCE",
+      "direction": "IN",
+      "quantity": "10.000",
+      "quantity_thousandths": 10000,
+      "source_ref": "WMS-SNAPSHOT-1",
+      "transaction_id": null,
+      "line_number": null,
+      "reason_code": null,
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000000b",
+      "product_ref": "SKU-16",
+      "movement_type": "MANUAL_IN",
+      "direction": "IN",
+      "quantity": "2.500",
+      "quantity_thousandths": 2500,
+      "source_ref": "00000000-0000-0000-0000-00000000000b",
+      "transaction_id": null,
+      "line_number": null,
+      "reason_code": "RECEIPT",
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000000d",
+      "product_ref": "SKU-16",
+      "movement_type": "MANUAL_OUT",
+      "direction": "OUT",
+      "quantity": "0.500",
+      "quantity_thousandths": 500,
+      "source_ref": "00000000-0000-0000-0000-00000000000d",
+      "transaction_id": null,
+      "line_number": null,
+      "reason_code": "DAMAGE",
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000001b",
+      "product_ref": "SKU-16",
+      "movement_type": "SALE",
+      "direction": "OUT",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "source_ref": "00000000-0000-0000-0000-00000000000f:1",
+      "transaction_id": "00000000-0000-0000-0000-00000000000f",
+      "line_number": 1,
+      "reason_code": null,
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    }
+  ]
+}

@@ -156,6 +156,79 @@ for payment states that do not exist yet.
 * **A movement type arrives with its operation.** No type exists without the
   command, authorisation policy and workflow that produce it.
 
+## Inventory (milestone 8)
+
+* **Three levels of authority, stated rather than assumed** (ADR 026):
+  * an **external ERP/WMS** is the enterprise-wide / global inventory of
+    record, as the customer's integration defines it;
+  * **PI.COMMERCE Server** is the central operational consolidation of retail
+    movements and state;
+  * **PI.Edge** has durable authority over the movements **originated or
+    observed by that Edge installation**, and keeps a local projection of
+    `on_hand` from the last known baseline plus those movements.
+* **The unit of authority is the installation, not the store.** PI.Edge runs
+  per POS and a store may have several, each with its own database and no
+  knowledge of the others' movements while offline. **PI.Edge may not claim
+  that its `on_hand` is the complete, current inventory of the whole store**
+  when several POS operate without coordination. In a single-Edge store the two
+  coincide; in a multi-register store they do not. (ADR 026)
+* **Strong store-wide consistency is explicitly out of scope.** It will require
+  connectivity with PI.COMMERCE Server, a store-level Store Hub, or another
+  explicit coordination/reservation strategy. None is implemented and none is
+  chosen. (ADR 026)
+* **There is no mutable stock field.** `on_hand = Σ(IN) − Σ(OUT)` is derived
+  from the ledger on every read, because a quantity that is overwritten cannot
+  answer when it changed, why, or because of what. (ADR 026)
+* **The movement ledger is append-only**, enforced by database triggers. A
+  wrong figure is corrected by a compensating movement and the mistake stays on
+  the record.
+* **Direction is explicit** (`IN`/`OUT`), never the sign of a quantity, and
+  **each movement type moves exactly one way** — checked by the domain and by
+  SQL.
+* **A movement type arrives with its operation.** V1 has four types and four
+  operations; `MANUAL_IN`/`MANUAL_OUT` are named for what they are, not called
+  "adjustment".
+* **Stock moves at `FINALIZED` and at no other moment.** Not at scan, not at
+  totalize, not when money is taken. `RECEIPT_COMPLETED` is not a competing
+  moment. (ADR 027)
+* **One movement per sale line, in the same database transaction as the
+  finalization**, keyed by `{transaction_id}:{line_number}` — so a replay or a
+  crash-and-retry can never move stock twice.
+* **The physical quantity moves, not the billed one.** A buy-2-get-1 line at
+  quantity 3 moves 3. A promotion changes the money, never the goods.
+  (ADR 027)
+* **Quantities are thousandths**, everywhere, so `0.750` is exact. No float
+  ever touches a stock figure.
+* **A movement is accepted only for a product the active catalog snapshot
+  knows.** PI.Edge still creates no product master data.
+* **The opening position is imported once per installation, ever.** The same
+  `source_snapshot_id` replayed is a no-op; a different one is refused with
+  `INVENTORY_ALREADY_BOOTSTRAPPED`. The import is atomic and overwrites
+  nothing. (ADR 028)
+* **`OPENING_BALANCE` is the initial baseline and nothing else.** It is
+  `IN`-only, fires once, and every quantity is **strictly positive** — a
+  zero-stock product is an omitted line, not a line of zero. A bootstrap can
+  therefore never lower a position nor produce a negative one. **A negative
+  position arriving from a future upstream reconciliation is not resolved
+  through `OPENING_BALANCE`**: it belongs to the reconciliation workflow, which
+  stays out of scope. (ADR 028)
+* **Reconciliation of a second upstream position is refused rather than
+  guessed at**, and is a later milestone with its own movement type, command,
+  authority and audit. (ADR 028)
+* **A position can be negative and is reported as such.** Clamping to zero
+  would hide a reportable condition.
+* **`allow_negative_inventory` belongs to the installation**, is checked at
+  `StartPayment` — before money moves — and is **never** re-checked at
+  finalization: after money moves, the ledger records what happened rather than
+  enforcing a policy that can no longer change the outcome. (ADR 029)
+* **`allow_negative_inventory = false` means**: block the start of payment when
+  *this* Edge installation's local projection says existence is insufficient.
+  It does **not** mean the store physically holds enough, because other
+  registers may be selling offline. That is a known distributed limitation, not
+  a bug. (ADR 029)
+* **There are no reservations in V1.** The window between the availability
+  check and the finalization is documented, not closed. (ADR 029)
+
 ## Engineering rules (frozen in milestone 7)
 
 The organisation and quality rules in **`CLAUDE.md`** at the repository root are

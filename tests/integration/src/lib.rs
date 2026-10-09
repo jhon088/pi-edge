@@ -3,12 +3,15 @@
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
+use edge_application::ports::InventoryBootstrapState;
+use edge_application::queries::InventoryPositionView;
 use edge_application::testing::{
     CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory, DEMO_BARCODE,
 };
 use edge_application::EdgeApplication;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
+use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_storage::SqliteEdgeStore;
 
@@ -38,10 +41,19 @@ pub fn in_memory_core() -> TestCore {
 }
 
 pub fn init_device(core: &TestCore) {
+    init_device_with_policy(core, true);
+}
+
+/// Provision the device, stating the negative-inventory policy explicitly.
+///
+/// The permissive default is what a shop floor wants; `false` is the strict
+/// installation that refuses a sale the ledger cannot cover (ADR 029).
+pub fn init_device_with_policy(core: &TestCore, allow_negative_inventory: bool) {
     core.init_device(InitDeviceCommand {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory,
     })
     .unwrap();
 }
@@ -192,6 +204,49 @@ pub fn cash_sale(core: &TestCore, tendered_minor: i64) {
     .unwrap();
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
+}
+
+/// A register on an installation that refuses to sell into negative stock.
+pub fn open_strict_register(core: &TestCore) {
+    init_device_with_policy(core, false);
+    activate_demo_catalog(core);
+    open_day_and_session(core);
+}
+
+/// Import an opening position: `(product_ref, units)` pairs.
+pub fn bootstrap_stock(core: &TestCore, items: &[(&str, i64)]) -> InventoryBootstrapState {
+    core.import_inventory_bootstrap(bootstrap_command("WMS-SNAPSHOT-1", items))
+        .unwrap()
+}
+
+/// The command a bootstrap import would arrive as, for the tests that need to
+/// replay it or send a competing one.
+pub fn bootstrap_command(
+    source_snapshot_id: &str,
+    items: &[(&str, i64)],
+) -> ImportInventoryBootstrapCommand {
+    ImportInventoryBootstrapCommand {
+        request_id: None,
+        source_snapshot_id: source_snapshot_id.to_owned(),
+        generated_at: Timestamp::from_datetime(start_instant()),
+        items: items
+            .iter()
+            .map(|(product_ref, units)| BootstrapItem {
+                product_ref: ProductRef::new(*product_ref).unwrap(),
+                quantity: Quantity::from_units(*units).unwrap(),
+            })
+            .collect(),
+    }
+}
+
+/// On hand in thousandths, straight from the core's own fold.
+pub fn on_hand(core: &TestCore, product_ref: &str) -> i64 {
+    position(core, product_ref).position.on_hand_thousandths
+}
+
+pub fn position(core: &TestCore, product_ref: &str) -> InventoryPositionView {
+    core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 100)
+        .unwrap()
 }
 
 /// A supervisor identity, distinct from the demo cashier.

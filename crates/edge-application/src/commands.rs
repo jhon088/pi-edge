@@ -9,6 +9,7 @@ use edge_catalog::{
     SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
+use edge_inventory::BootstrapItem;
 use edge_payments::TenderType;
 use uuid::Uuid;
 
@@ -18,6 +19,10 @@ pub struct InitDeviceCommand {
     pub tenant_id: TenantId,
     pub store_id: StoreId,
     pub currency: Currency,
+    /// Whether this installation may sell what it does not have on record.
+    /// Defaults to permissive: a stale position must not block the counter
+    /// (ADR 029).
+    pub allow_negative_inventory: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +68,36 @@ pub struct ChangeQuantityCommand {
     pub request_id: Option<Uuid>,
     pub line_number: i64,
     pub quantity: Quantity,
+}
+
+/// Import the opening inventory baseline. One per installation, ever
+/// (ADR 028).
+#[derive(Debug, Clone)]
+pub struct ImportInventoryBootstrapCommand {
+    pub request_id: Option<Uuid>,
+    /// The upstream snapshot this position came from. Also the idempotency
+    /// key: the same id replayed is a no-op, a different one is refused.
+    pub source_snapshot_id: String,
+    pub generated_at: Timestamp,
+    pub items: Vec<BootstrapItem>,
+}
+
+/// Put stock in, with a stated reason.
+#[derive(Debug, Clone)]
+pub struct InventoryInCommand {
+    pub request_id: Option<Uuid>,
+    pub product_ref: ProductRef,
+    pub quantity: Quantity,
+    pub reason_code: String,
+}
+
+/// Take stock out, with a stated reason.
+#[derive(Debug, Clone)]
+pub struct InventoryOutCommand {
+    pub request_id: Option<Uuid>,
+    pub product_ref: ProductRef,
+    pub quantity: Quantity,
+    pub reason_code: String,
 }
 
 /// Open an import and declare what is coming.

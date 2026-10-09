@@ -75,6 +75,15 @@ where
                 // official yet. Checked before the amounts so the refusal says
                 // "totalize first" rather than "there is nothing to pay".
                 context.require_payable()?;
+                // Availability goes here: the last moment at which nothing has
+                // been charged and refusing costs the customer a re-scan
+                // instead of a reversal. It is never checked after the money
+                // moves (ADR 029).
+                crate::inventory_service::require_available_stock(
+                    uow,
+                    &context.device,
+                    &context.transaction,
+                )?;
                 let settlement = context.settlement(uow)?;
 
                 // An unresolved payment makes the remaining balance unknowable

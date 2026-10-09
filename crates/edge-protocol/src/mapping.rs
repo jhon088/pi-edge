@@ -11,19 +11,21 @@
 use edge_application::commands::{
     AddItemCommand, ApproveSafeDropCommand, BeginCatalogImportCommand, CashInCommand,
     CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand, DeclareClosingCashCommand,
-    ForceCloseBusinessDayCommand, InitDeviceCommand, OpenRegisterSessionCommand,
-    PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand,
-    RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand,
+    ForceCloseBusinessDayCommand, ImportInventoryBootstrapCommand, InitDeviceCommand,
+    InventoryInCommand, InventoryOutCommand, OpenRegisterSessionCommand, PutCatalogChunkCommand,
+    ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand, RequestSafeDropCommand,
+    ReversePaymentCommand, StartPaymentCommand,
 };
-use edge_application::ports::DeviceProfile;
+use edge_application::ports::{DeviceProfile, InventoryBootstrapState};
 use edge_application::queries::{
     CashPositionView, CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState,
-    PendingOutbox, ProductLookup, SessionCloseResult,
+    InventoryPositionView, PendingOutbox, ProductLookup, SessionCloseResult,
 };
 use edge_application::{AppError, PaymentOutcome};
 use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
 use edge_catalog::CatalogError;
 use edge_domain::prelude::*;
+use edge_inventory::{BootstrapItem, InventoryMovement};
 use edge_payments::{PaymentAttempt, PaymentError, PaymentView, Settlement, TenderType};
 use uuid::Uuid;
 
@@ -279,6 +281,7 @@ impl InitDeviceRequestV1 {
             tenant_id: TenantId::new(self.tenant_id)?,
             store_id: StoreId::new(self.store_id)?,
             currency: Currency::from_code(&self.currency)?,
+            allow_negative_inventory: self.allow_negative_inventory,
         })
     }
 }
@@ -749,5 +752,118 @@ impl ForceCloseBusinessDayRequestV1 {
             reason: self.reason,
             actor: self.actor,
         }
+    }
+}
+
+// ------------------------------------------------------------------- inventory
+
+impl From<&InventoryMovement> for InventoryMovementV1 {
+    fn from(movement: &InventoryMovement) -> Self {
+        Self {
+            movement_id: movement.movement_id.to_string(),
+            product_ref: movement.product_ref.to_string(),
+            movement_type: movement.movement_type.as_str().to_owned(),
+            direction: movement.direction.as_str().to_owned(),
+            quantity: movement.quantity.to_string(),
+            quantity_thousandths: movement.quantity.thousandths(),
+            source_ref: movement.source_ref.clone(),
+            transaction_id: movement.transaction_id.map(|id| id.to_string()),
+            line_number: movement.line_number,
+            reason_code: movement.reason_code.clone(),
+            occurred_at: movement.occurred_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<&InventoryPositionView> for InventoryPositionV1 {
+    fn from(view: &InventoryPositionView) -> Self {
+        let position = &view.position;
+        Self {
+            store_id: position.store_id.to_string(),
+            product_ref: position.product_ref.to_string(),
+            on_hand: view.on_hand_display.clone(),
+            on_hand_thousandths: position.on_hand_thousandths,
+            movement_count: position.movement_count,
+            last_movement_at: position.last_movement_at.map(|ts| ts.to_rfc3339()),
+            movements: view
+                .movements
+                .iter()
+                .map(InventoryMovementV1::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&InventoryBootstrapState> for InventoryBootstrapV1 {
+    fn from(state: &InventoryBootstrapState) -> Self {
+        Self {
+            store_id: state.store_id.to_string(),
+            source_snapshot_id: state.source_snapshot_id.clone(),
+            generated_at: state.generated_at.to_rfc3339(),
+            item_count: state.item_count,
+            bootstrapped_at: state.bootstrapped_at.to_rfc3339(),
+        }
+    }
+}
+
+impl ImportInventoryBootstrapRequestV1 {
+    /// Fails with a `DomainError`, like every other inbound payload: a bad
+    /// timestamp, product reference or quantity here is a malformed request,
+    /// not a refused business rule, and `domain_error` in the daemon is what
+    /// turns that into `INVALID_ARGUMENT`.
+    pub fn into_command(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<ImportInventoryBootstrapCommand, DomainError> {
+        let generated_at = Timestamp::parse_rfc3339(&self.generated_at)?;
+        let items = self
+            .items
+            .into_iter()
+            .map(|item| {
+                Ok(BootstrapItem {
+                    product_ref: ProductRef::new(item.product_ref)?,
+                    quantity: Quantity::from_thousandths(item.quantity_thousandths)?,
+                })
+            })
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        Ok(ImportInventoryBootstrapCommand {
+            request_id,
+            source_snapshot_id: self.source_snapshot_id,
+            generated_at,
+            items,
+        })
+    }
+}
+
+impl InventoryMovementRequestV1 {
+    pub fn into_inventory_in(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryInCommand, DomainError> {
+        Ok(InventoryInCommand {
+            request_id,
+            product_ref: ProductRef::new(self.product_ref)?,
+            quantity: Quantity::from_thousandths(self.quantity_thousandths)?,
+            reason_code: self.reason_code,
+        })
+    }
+
+    pub fn into_inventory_out(
+        self,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryOutCommand, DomainError> {
+        Ok(InventoryOutCommand {
+            request_id,
+            product_ref: ProductRef::new(self.product_ref)?,
+            quantity: Quantity::from_thousandths(self.quantity_thousandths)?,
+            reason_code: self.reason_code,
+        })
+    }
+}
+
+impl InventoryQueryV1 {
+    /// A product reference is validated at the boundary, like every other id.
+    pub fn product(&self) -> Result<ProductRef, DomainError> {
+        Ok(ProductRef::new(self.product_ref.clone())?)
     }
 }

@@ -21,6 +21,7 @@ fn provision(client: &edge_client::IpcEdgeClient) {
             tenant_id: "TENANT-DEMO".to_owned(),
             store_id: "STORE-DEMO".to_owned(),
             currency: "MXN".to_owned(),
+            allow_negative_inventory: true,
         })
         .unwrap();
 }

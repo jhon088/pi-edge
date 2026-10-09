@@ -13,9 +13,10 @@ use edge_catalog::{
 use edge_client::{ClientError, EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
-    CommitCatalogImportRequestV1, InitDeviceRequestV1, OpenRegisterSessionRequestV1, PriceBookV1,
-    PriceRecordV1, ProductSelectorV1, PromotionRecordV1, PromotionRuleV1, PutCatalogChunkRequestV1,
-    SnapshotCountsV1, TaxProfileV1,
+    CommitCatalogImportRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
+    InventoryBootstrapItemV1, InventoryBootstrapV1, InventoryPositionV1, InventoryQueryV1,
+    OpenRegisterSessionRequestV1, PriceBookV1, PriceRecordV1, ProductSelectorV1, PromotionRecordV1,
+    PromotionRuleV1, PutCatalogChunkRequestV1, SnapshotCountsV1, TaxProfileV1,
 };
 
 /// A spawned daemon process. Killed on drop so a failing test cannot leak a
@@ -444,11 +445,17 @@ pub fn product(
 
 /// Provision the device, import a catalog, open the day and open a session.
 pub fn open_register(client: &IpcEdgeClient) {
+    open_register_with_policy(client, true);
+}
+
+/// Same, stating the negative-inventory policy of the installation.
+pub fn open_register_with_policy(client: &IpcEdgeClient, allow_negative_inventory: bool) {
     client
         .init_device(InitDeviceRequestV1 {
             tenant_id: "TENANT-DEMO".to_owned(),
             store_id: "STORE-DEMO".to_owned(),
             currency: "MXN".to_owned(),
+            allow_negative_inventory,
         })
         .unwrap();
     CatalogSpec::demo(1).import(client, true);
@@ -463,6 +470,37 @@ pub fn open_register(client: &IpcEdgeClient) {
             None,
         )
         .unwrap();
+}
+
+/// Import an opening position over the wire: `(product_ref, units)` pairs.
+pub fn bootstrap_stock(client: &IpcEdgeClient, items: &[(&str, i64)]) -> InventoryBootstrapV1 {
+    client
+        .import_inventory_bootstrap(
+            ImportInventoryBootstrapRequestV1 {
+                source_snapshot_id: "WMS-SNAPSHOT-1".to_owned(),
+                generated_at: "2026-10-08T14:00:00Z".to_owned(),
+                items: items
+                    .iter()
+                    .map(|(product_ref, units)| InventoryBootstrapItemV1 {
+                        product_ref: (*product_ref).to_owned(),
+                        quantity_thousandths: units * 1_000,
+                    })
+                    .collect(),
+            },
+            None,
+        )
+        .unwrap()
+}
+
+/// One product's position, with its movements.
+pub fn inventory_position(client: &IpcEdgeClient, product_ref: &str) -> InventoryPositionV1 {
+    client
+        .inventory_position(InventoryQueryV1 {
+            product_ref: product_ref.to_owned(),
+            movement_limit: 50,
+            offset: 0,
+        })
+        .unwrap()
 }
 
 /// Scan the demo product: the core resolves 100.00 MXN at 16%.

@@ -48,6 +48,7 @@ Group code by **stable responsibility and business domain**, not by task.
 ```
 crates/edge-payments/   payment.rs attempt.rs settlement.rs provider.rs …
 crates/edge-cash/       movement.rs position.rs safe_drop.rs close.rs …
+crates/edge-inventory/  movement.rs balance.rs error.rs …
 ```
 
 Do **not** create `foo_command.rs`, `foo_query.rs`, `foo_mapper.rs`,
@@ -70,7 +71,8 @@ If no, it stays with the context it belongs to.
   wrapper "in case it is useful later". A trait with no implementation does not
   constrain anything; it only looks like it does.
 * **Crates** exist for a real domain, dependency or runtime boundary.
-  `edge-payments` and `edge-cash` qualify. A feature does not.
+  `edge-payments`, `edge-cash` and `edge-inventory` qualify. A feature does
+  not.
 * **Visibility** is as small as it goes: private, then `pub(crate)`, then `pub`
   only with a real external consumer.
 * **Imports** are clean and grouped. No re-export that exists only to shorten a
@@ -85,8 +87,10 @@ in the same milestone. Minimal own development — do not build what is not
 asked for, and do not stub what has no use case yet.
 
 Currently out of scope: HTTP catalog sync, ERP, coupons, loyalty, customer
-pricing, inventory, commercial refunds, real Mercado Pago, physical terminals,
-CFDI, Android service, RBAC, EOD scheduler, production checkout UI.
+pricing, inventory sync and reconciliation, store-wide inventory coordination
+(Store Hub, shared ledger, reservations), commercial refunds, real Mercado
+Pago, physical terminals, CFDI, Android service, RBAC, EOD scheduler,
+production checkout UI.
 
 Never: Flutter, Dart, Odoo, ERP logic in the core, local microservices,
 overengineering.

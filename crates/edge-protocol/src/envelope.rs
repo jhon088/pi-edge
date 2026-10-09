@@ -112,6 +112,11 @@ pub enum OperationV1 {
     GetPayment(PaymentRequestV1),
     GetTransactionPayments(TransactionRequestV1),
     FinalizeTransaction,
+    ImportInventoryBootstrap(ImportInventoryBootstrapRequestV1),
+    GetInventoryPosition(InventoryQueryV1),
+    GetInventoryMovements(InventoryQueryV1),
+    InventoryIn(InventoryMovementRequestV1),
+    InventoryOut(InventoryMovementRequestV1),
     GetCashPosition,
     CashIn(CashMovementRequestV1),
     CashOut(CashMovementRequestV1),
@@ -158,6 +163,11 @@ impl OperationV1 {
             OperationV1::GetPayment(_) => "GET_PAYMENT",
             OperationV1::GetTransactionPayments(_) => "GET_TRANSACTION_PAYMENTS",
             OperationV1::FinalizeTransaction => "FINALIZE_TRANSACTION",
+            OperationV1::ImportInventoryBootstrap(_) => "IMPORT_INVENTORY_BOOTSTRAP",
+            OperationV1::GetInventoryPosition(_) => "GET_INVENTORY_POSITION",
+            OperationV1::GetInventoryMovements(_) => "GET_INVENTORY_MOVEMENTS",
+            OperationV1::InventoryIn(_) => "INVENTORY_IN",
+            OperationV1::InventoryOut(_) => "INVENTORY_OUT",
             OperationV1::GetCashPosition => "GET_CASH_POSITION",
             OperationV1::CashIn(_) => "CASH_IN",
             OperationV1::CashOut(_) => "CASH_OUT",
@@ -193,6 +203,9 @@ impl OperationV1 {
                 | OperationV1::ReconcilePayment(_)
                 | OperationV1::ReversePayment(_)
                 | OperationV1::FinalizeTransaction
+                | OperationV1::ImportInventoryBootstrap(_)
+                | OperationV1::InventoryIn(_)
+                | OperationV1::InventoryOut(_)
                 | OperationV1::CashIn(_)
                 | OperationV1::CashOut(_)
                 | OperationV1::RequestSafeDrop(_)
@@ -296,6 +309,9 @@ pub enum ResultV1 {
     SafeDrop(SafeDropV1),
     SessionCloseRequirements(SessionCloseRequirementsV1),
     SessionCloseResult(SessionCloseResultV1),
+    InventoryPosition(InventoryPositionV1),
+    InventoryMovements(Vec<InventoryMovementV1>),
+    InventoryBootstrap(InventoryBootstrapV1),
 }
 
 impl ResultV1 {
@@ -321,6 +337,9 @@ impl ResultV1 {
             ResultV1::SafeDrop(_) => "SAFE_DROP",
             ResultV1::SessionCloseRequirements(_) => "SESSION_CLOSE_REQUIREMENTS",
             ResultV1::SessionCloseResult(_) => "SESSION_CLOSE_RESULT",
+            ResultV1::InventoryPosition(_) => "INVENTORY_POSITION",
+            ResultV1::InventoryMovements(_) => "INVENTORY_MOVEMENTS",
+            ResultV1::InventoryBootstrap(_) => "INVENTORY_BOOTSTRAP",
         }
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "edge-inventory"
+description = "Local inventory for PI.Edge: the append-only movement ledger, the on-hand balance derived from it, and the bootstrap position. Knows nothing about SQLite, HTTP, an ERP, payments or cash."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Pure Rust, like edge-domain, edge-catalog, edge-payments and edge-cash: no
+# SQLite, no HTTP, no transport, no clock, no ERP client.
+[dependencies]
+edge-domain = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

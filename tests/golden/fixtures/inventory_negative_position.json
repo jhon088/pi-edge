@@ -1,0 +1,36 @@
+{
+  "store_id": "STORE-DEMO",
+  "product_ref": "SKU-FRACTIONAL",
+  "on_hand": "-0.750",
+  "on_hand_thousandths": -750,
+  "movement_count": 2,
+  "last_movement_at": "2026-10-08T15:00:00.000000Z",
+  "movements": [
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000000a",
+      "product_ref": "SKU-FRACTIONAL",
+      "movement_type": "OPENING_BALANCE",
+      "direction": "IN",
+      "quantity": "1.000",
+      "quantity_thousandths": 1000,
+      "source_ref": "WMS-SNAPSHOT-1",
+      "transaction_id": null,
+      "line_number": null,
+      "reason_code": null,
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    },
+    {
+      "movement_id": "00000000-0000-0000-0000-00000000000b",
+      "product_ref": "SKU-FRACTIONAL",
+      "movement_type": "MANUAL_OUT",
+      "direction": "OUT",
+      "quantity": "1.750",
+      "quantity_thousandths": 1750,
+      "source_ref": "00000000-0000-0000-0000-00000000000b",
+      "transaction_id": null,
+      "line_number": null,
+      "reason_code": "SHRINKAGE",
+      "occurred_at": "2026-10-08T15:00:00.000000Z"
+    }
+  ]
+}

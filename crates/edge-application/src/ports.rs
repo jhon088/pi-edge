@@ -4,12 +4,13 @@
 //! application never depends on an adapter crate.
 
 use chrono::Utc;
-use edge_cash::{Approval, CashMovement, CloseDeclaration, MovementType, SafeDrop};
+use edge_cash::{Approval, CashMovement, CloseDeclaration, SafeDrop};
 use edge_catalog::{
     CatalogBarcode, CatalogProduct, CatalogSnapshot, ImportProgress, PriceBook, PriceCandidate,
     PriceEntry, ProductSelector, Promotion, SnapshotCounts, TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
+use edge_inventory::{InventoryMovement, InventoryPosition, MovementType};
 use edge_payments::{Payment, PaymentAttempt, PaymentView};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -33,6 +34,12 @@ pub struct DeviceProfile {
     pub tenant_id: TenantId,
     pub store_id: StoreId,
     pub currency: Currency,
+    /// Whether this installation may sell what it does not have on record.
+    ///
+    /// On by default: a till whose position is a day old must not refuse sales
+    /// over a number it knows is stale. Off means availability is enforced
+    /// before any money moves (ADR 029).
+    pub allow_negative_inventory: bool,
 }
 
 /// Durable record of one accepted import chunk.
@@ -235,7 +242,7 @@ pub trait CashUnitOfWork {
     fn find_cash_movement_by_source(
         &mut self,
         session_id: SessionId,
-        movement_type: MovementType,
+        movement_type: edge_cash::MovementType,
         source_ref: &str,
     ) -> Result<Option<CashMovement>, AppError>;
 
@@ -270,7 +277,60 @@ pub trait CashUnitOfWork {
     ) -> Result<Option<RegisterSession>, AppError>;
 }
 
-pub trait UnitOfWork: CatalogUnitOfWork + PaymentUnitOfWork + CashUnitOfWork {
+/// Inventory persistence.
+///
+/// The ledger is append-only, so there is no `update_inventory_movement` and
+/// there never will be: a correction is a new movement (ADR 026). The bootstrap
+/// is recorded once for the same reason.
+pub trait InventoryUnitOfWork {
+    fn insert_inventory_movement(&mut self, movement: &InventoryMovement) -> Result<(), AppError>;
+    /// Every movement of one product, oldest first.
+    fn list_inventory_movements(
+        &mut self,
+        store_id: &StoreId,
+        product_ref: &ProductRef,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<InventoryMovement>, AppError>;
+    /// The position of one product, folded by the database so a long ledger
+    /// does not travel just to be summed.
+    fn inventory_position(
+        &mut self,
+        store_id: &StoreId,
+        product_ref: &ProductRef,
+    ) -> Result<InventoryPosition, AppError>;
+    /// Whether a cause has already moved this product, so a replay cannot.
+    fn inventory_movement_exists(
+        &mut self,
+        store_id: &StoreId,
+        movement_type: MovementType,
+        product_ref: &ProductRef,
+        source_ref: &str,
+    ) -> Result<bool, AppError>;
+
+    fn find_inventory_bootstrap(
+        &mut self,
+        store_id: &StoreId,
+    ) -> Result<Option<InventoryBootstrapState>, AppError>;
+    fn record_inventory_bootstrap(
+        &mut self,
+        state: &InventoryBootstrapState,
+    ) -> Result<(), AppError>;
+}
+
+/// Which upstream position this store's ledger started from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryBootstrapState {
+    pub store_id: StoreId,
+    pub source_snapshot_id: String,
+    pub generated_at: Timestamp,
+    pub item_count: i64,
+    pub bootstrapped_at: Timestamp,
+}
+
+pub trait UnitOfWork:
+    CatalogUnitOfWork + PaymentUnitOfWork + CashUnitOfWork + InventoryUnitOfWork
+{
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;
     fn put_device_profile(
         &mut self,

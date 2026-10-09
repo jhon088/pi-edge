@@ -46,6 +46,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0006_cash_management",
         sql: include_str!("../migrations/0006_cash_management.sql"),
     },
+    Migration {
+        version: 7,
+        name: "0007_inventory",
+        sql: include_str!("../migrations/0007_inventory.sql"),
+    },
 ];
 
 /// Schema version this binary expects.
@@ -177,6 +182,111 @@ mod tests {
             )
             .unwrap();
         assert_eq!(amount, 1000);
+    }
+
+    /// The inventory ledger is the local record of what happened here. A
+    /// movement cannot be edited away, and a bootstrap is recorded once
+    /// (ADR 026, ADR 028).
+    #[test]
+    fn the_inventory_ledger_is_immutable_in_the_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        apply(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO inventory_movements
+                 (movement_id, store_id, product_ref, movement_type, direction,
+                  quantity_thousandths, source_ref, occurred_at)
+             VALUES ('m1', 'S', 'SKU-001', 'OPENING_BALANCE', 'IN', 5000, 'WMS-1', 'now');
+             INSERT INTO inventory_bootstrap_state
+                 (store_id, source_snapshot_id, generated_at, item_count, bootstrapped_at)
+             VALUES ('S', 'WMS-1', 'now', 1, 'now');",
+        )
+        .unwrap();
+
+        for sql in [
+            "UPDATE inventory_movements SET quantity_thousandths = 1 WHERE movement_id = 'm1'",
+            "DELETE FROM inventory_movements WHERE movement_id = 'm1'",
+            "UPDATE inventory_bootstrap_state SET source_snapshot_id = 'WMS-2'",
+        ] {
+            let refused = conn.execute(sql, []).is_err();
+            assert!(refused, "the database must refuse `{sql}`");
+        }
+
+        let quantity: i64 = conn
+            .query_row(
+                "SELECT quantity_thousandths FROM inventory_movements WHERE movement_id = 'm1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(quantity, 5000);
+    }
+
+    /// Each movement type moves exactly one way, a sale movement names its
+    /// document, and a manual movement states a reason. These are not
+    /// application conventions: the table refuses the row (ADR 026).
+    #[test]
+    fn the_database_refuses_a_movement_that_contradicts_its_own_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        apply(&conn).unwrap();
+
+        for (what, sql) in [
+            (
+                "an opening balance going out",
+                "INSERT INTO inventory_movements
+                     (movement_id, store_id, product_ref, movement_type, direction,
+                      quantity_thousandths, source_ref, occurred_at)
+                 VALUES ('x', 'S', 'P', 'OPENING_BALANCE', 'OUT', 1000, 'r', 'now')",
+            ),
+            (
+                "a sale with no transaction",
+                "INSERT INTO inventory_movements
+                     (movement_id, store_id, product_ref, movement_type, direction,
+                      quantity_thousandths, source_ref, occurred_at)
+                 VALUES ('x', 'S', 'P', 'SALE', 'OUT', 1000, 'r', 'now')",
+            ),
+            (
+                "a manual movement with a blank reason",
+                "INSERT INTO inventory_movements
+                     (movement_id, store_id, product_ref, movement_type, direction,
+                      quantity_thousandths, source_ref, reason_code, occurred_at)
+                 VALUES ('x', 'S', 'P', 'MANUAL_OUT', 'OUT', 1000, 'r', '  ', 'now')",
+            ),
+            (
+                "a non-positive magnitude",
+                "INSERT INTO inventory_movements
+                     (movement_id, store_id, product_ref, movement_type, direction,
+                      quantity_thousandths, source_ref, occurred_at)
+                 VALUES ('x', 'S', 'P', 'OPENING_BALANCE', 'IN', 0, 'r', 'now')",
+            ),
+        ] {
+            let refused = conn.execute(sql, []).is_err();
+            assert!(refused, "the database must refuse {what}");
+        }
+    }
+
+    /// One movement per cause. A replay cannot write a second movement for the
+    /// same source, and the uniqueness is per store (ADR 027).
+    #[test]
+    fn the_database_refuses_a_second_movement_for_the_same_source() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        apply(&conn).unwrap();
+        let insert = |id: &str, store: &str| {
+            conn.execute(
+                "INSERT INTO inventory_movements
+                     (movement_id, store_id, product_ref, movement_type, direction,
+                      quantity_thousandths, source_ref, reason_code, occurred_at)
+                 VALUES (?1, ?2, 'P', 'MANUAL_IN', 'IN', 1000, 'req-1', 'RECOUNT', 'now')",
+                rusqlite::params![id, store],
+            )
+        };
+        insert("m1", "STORE-A").unwrap();
+        assert!(insert("m2", "STORE-A").is_err());
+        // A different store is a different ledger, so the same source id there
+        // is not a duplicate.
+        insert("m3", "STORE-B").unwrap();
     }
 
     /// A cash sale states what stayed in the drawer, and the tender audit has

@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
+use edge_application::ports::InventoryBootstrapState;
+use edge_application::queries::InventoryPositionView;
 use edge_application::testing::{
     CatalogFixture, FixedClock, FixturePrice, FixtureProduct, SequentialIdFactory,
 };
@@ -19,6 +21,7 @@ use edge_catalog::promotions::{
 use edge_catalog::scope::CatalogScope;
 use edge_catalog::{Barcode, ProductSelector};
 use edge_domain::prelude::*;
+use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
 use edge_storage::SqliteEdgeStore;
 use serde_json::Value;
@@ -57,6 +60,7 @@ pub fn open_register_with(core: &GoldenCore, catalog: &CatalogFixture) {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory: true,
     })
     .unwrap();
     catalog.activate(core).unwrap();
@@ -426,6 +430,7 @@ pub fn open_scripted_register(core: &ScriptedGoldenCore, catalog: &CatalogFixtur
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory: true,
     })
     .unwrap();
     catalog.activate(core).unwrap();
@@ -456,6 +461,7 @@ pub fn open_register_with_float(core: &GoldenCore, opening_cash_minor: i64) {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory: true,
     })
     .unwrap();
     golden_catalog(1).activate(core).unwrap();
@@ -468,6 +474,28 @@ pub fn open_register_with_float(core: &GoldenCore, opening_cash_minor: i64) {
         opening_cash_minor,
     })
     .unwrap();
+}
+
+/// Import an opening position: `(product_ref, thousandths)` pairs.
+pub fn golden_bootstrap(core: &GoldenCore, items: &[(&str, i64)]) -> InventoryBootstrapState {
+    core.import_inventory_bootstrap(ImportInventoryBootstrapCommand {
+        request_id: None,
+        source_snapshot_id: "WMS-SNAPSHOT-1".to_owned(),
+        generated_at: Timestamp::parse_rfc3339("2026-10-08T14:00:00Z").unwrap(),
+        items: items
+            .iter()
+            .map(|(product_ref, thousandths)| BootstrapItem {
+                product_ref: ProductRef::new(*product_ref).unwrap(),
+                quantity: Quantity::from_thousandths(*thousandths).unwrap(),
+            })
+            .collect(),
+    })
+    .unwrap()
+}
+
+pub fn golden_position(core: &GoldenCore, product_ref: &str) -> InventoryPositionView {
+    core.get_inventory_position(ProductRef::new(product_ref).unwrap(), 50)
+        .unwrap()
 }
 
 /// A finished cash sale of the 16% product: 116.00, tendered `tendered_minor`.

@@ -332,6 +332,10 @@ pub struct InitDeviceRequestV1 {
     pub tenant_id: String,
     pub store_id: String,
     pub currency: String,
+    /// Whether this installation may sell what it does not have on record.
+    /// Defaults to permissive: a stale position must not block the counter.
+    #[serde(default = "default_true")]
+    pub allow_negative_inventory: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -656,6 +660,95 @@ pub struct CommitCatalogImportRequestV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogSnapshotRequestV1 {
     pub snapshot_id: String,
+}
+
+// ------------------------------------------------------------------ inventory
+
+/// One movement of the inventory ledger. Append-only: there is no update DTO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryMovementV1 {
+    pub movement_id: String,
+    pub product_ref: String,
+    /// `OPENING_BALANCE`, `SALE`, `MANUAL_IN` or `MANUAL_OUT`.
+    pub movement_type: String,
+    /// `IN` or `OUT`. Explicit, never the sign of the quantity.
+    pub direction: String,
+    /// A magnitude, in thousandths and rendered: `0.750`.
+    pub quantity: String,
+    pub quantity_thousandths: i64,
+    /// What caused it: a bootstrap snapshot, a `transaction:line`, or the
+    /// request that asked for a manual movement.
+    pub source_ref: String,
+    pub transaction_id: Option<String>,
+    pub line_number: Option<i64>,
+    pub reason_code: Option<String>,
+    pub occurred_at: String,
+}
+
+/// What one Edge installation's ledger says of one product.
+///
+/// A projection — last known baseline plus this installation's own movements —
+/// not a store-wide count: PI.Edge runs per POS (ADR 026).
+///
+/// `on_hand` rather than `available`: there are no reservations, so the only
+/// honest figure is what this ledger says is here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryPositionV1 {
+    pub store_id: String,
+    pub product_ref: String,
+    /// Rendered the way every other quantity is: `9.250`, and signed when this
+    /// installation sold what it did not have on record.
+    pub on_hand: String,
+    pub on_hand_thousandths: i64,
+    pub movement_count: i64,
+    pub last_movement_at: Option<String>,
+    /// Empty unless movements were asked for.
+    pub movements: Vec<InventoryMovementV1>,
+}
+
+/// Which upstream baseline this installation's ledger started from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryBootstrapV1 {
+    pub store_id: String,
+    pub source_snapshot_id: String,
+    pub generated_at: String,
+    pub item_count: i64,
+    pub bootstrapped_at: String,
+}
+
+/// One line of an opening baseline. The quantity is strictly positive: a
+/// zero-stock product is an omitted line, not a line of zero (ADR 028).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryBootstrapItemV1 {
+    pub product_ref: String,
+    pub quantity_thousandths: i64,
+}
+
+/// Import the opening baseline. One per installation, ever (ADR 028).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportInventoryBootstrapRequestV1 {
+    pub source_snapshot_id: String,
+    pub generated_at: String,
+    pub items: Vec<InventoryBootstrapItemV1>,
+}
+
+/// Record a manual stock movement. A blank reason is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryMovementRequestV1 {
+    pub product_ref: String,
+    pub quantity_thousandths: i64,
+    pub reason_code: String,
+}
+
+/// Ask about one product.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryQueryV1 {
+    pub product_ref: String,
+    /// How many movements to include. Zero for the position alone.
+    #[serde(default)]
+    pub movement_limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }
 
 // ------------------------------------------------------------ cash management

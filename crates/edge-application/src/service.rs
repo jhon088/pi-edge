@@ -99,6 +99,7 @@ where
                 tenant_id: cmd.tenant_id,
                 store_id: cmd.store_id,
                 currency: cmd.currency,
+                allow_negative_inventory: cmd.allow_negative_inventory,
             };
             uow.put_device_profile(&profile, now)?;
             Ok(profile)
@@ -639,8 +640,11 @@ where
         let now = self.clock.now();
         let journal_event_id = self.new_event_id();
         let outbox_event_id = self.new_event_id();
+        // One movement per line, and a sale can have any number of lines, so
+        // ids are minted on demand inside the transaction.
+        let ids = &self.ids;
 
-        let transaction = self.store.transact(move |uow| {
+        let transaction = self.store.transact(|uow| {
             idempotent(uow, cmd.request_id, "FinalizeTransaction", now, |uow| {
                 let device = require_device(uow)?;
                 let day = require_open_business_day(uow, &device.store_id)?;
@@ -648,6 +652,18 @@ where
                 let mut transaction = require_active_transaction(uow, session.id())?;
                 transaction.finalize(now)?;
                 uow.update_transaction(&transaction, now)?;
+                // Stock moves here and nowhere else, in the same transaction as
+                // the finalization: there is no state in which a sale is
+                // FINALIZED and its stock has not moved (ADR 027).
+                let stock_movements = crate::inventory_service::record_sale_movements(
+                    uow,
+                    ids,
+                    &device,
+                    &transaction,
+                    day.id(),
+                    session.id(),
+                    now,
+                )?;
                 let ctx = EventContext {
                     device: &device,
                     register_id: Some(&transaction.state().register_id),
@@ -668,6 +684,10 @@ where
                         "change_due_minor": transaction.change_due()?.minor(),
                         "register_sequence": transaction.state().register_sequence,
                         "finalized_at": now.to_rfc3339(),
+                        // A count, not a list: the ledger carries the detail,
+                        // and a 100-line sale must not produce 100 journal
+                        // events (ADR 028).
+                        "inventory_movements": stock_movements,
                     }),
                 ))?;
                 let payload = serde_json::to_value(transaction.state())

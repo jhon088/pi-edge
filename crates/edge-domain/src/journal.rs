@@ -41,6 +41,8 @@ pub enum JournalEventType {
     BusinessDayCloseRequested,
     BusinessDayClosed,
     BusinessDayForceClosed,
+    InventoryBootstrapped,
+    InventoryMovementRecorded,
     CatalogSnapshotImported,
     CatalogSnapshotActivated,
 }
@@ -73,6 +75,8 @@ impl JournalEventType {
             JournalEventType::BusinessDayCloseRequested => "BUSINESS_DAY_CLOSE_REQUESTED",
             JournalEventType::BusinessDayClosed => "BUSINESS_DAY_CLOSED",
             JournalEventType::BusinessDayForceClosed => "BUSINESS_DAY_FORCE_CLOSED",
+            JournalEventType::InventoryBootstrapped => "INVENTORY_BOOTSTRAPPED",
+            JournalEventType::InventoryMovementRecorded => "INVENTORY_MOVEMENT_RECORDED",
             JournalEventType::CatalogSnapshotImported => "CATALOG_SNAPSHOT_IMPORTED",
             JournalEventType::CatalogSnapshotActivated => "CATALOG_SNAPSHOT_ACTIVATED",
         }
@@ -105,6 +109,8 @@ impl JournalEventType {
             "BUSINESS_DAY_CLOSE_REQUESTED" => Ok(JournalEventType::BusinessDayCloseRequested),
             "BUSINESS_DAY_CLOSED" => Ok(JournalEventType::BusinessDayClosed),
             "BUSINESS_DAY_FORCE_CLOSED" => Ok(JournalEventType::BusinessDayForceClosed),
+            "INVENTORY_BOOTSTRAPPED" => Ok(JournalEventType::InventoryBootstrapped),
+            "INVENTORY_MOVEMENT_RECORDED" => Ok(JournalEventType::InventoryMovementRecorded),
             "CATALOG_SNAPSHOT_IMPORTED" => Ok(JournalEventType::CatalogSnapshotImported),
             "CATALOG_SNAPSHOT_ACTIVATED" => Ok(JournalEventType::CatalogSnapshotActivated),
             other => Err(DomainError::UnknownEnumValue {

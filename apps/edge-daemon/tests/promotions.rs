@@ -32,6 +32,7 @@ fn open_register_with(client: &edge_client::IpcEdgeClient, spec: &CatalogSpec) {
             tenant_id: "TENANT-DEMO".to_owned(),
             store_id: "STORE-DEMO".to_owned(),
             currency: "MXN".to_owned(),
+            allow_negative_inventory: true,
         })
         .unwrap();
     spec.import(client, true);
@@ -239,6 +240,7 @@ fn a_declared_promotion_count_that_does_not_match_blocks_the_commit() {
             tenant_id: "TENANT-DEMO".to_owned(),
             store_id: "STORE-DEMO".to_owned(),
             currency: "MXN".to_owned(),
+            allow_negative_inventory: true,
         })
         .unwrap();
 
@@ -280,6 +282,7 @@ fn a_promotion_naming_a_product_from_another_chunk_is_refused() {
             tenant_id: "TENANT-DEMO".to_owned(),
             store_id: "STORE-DEMO".to_owned(),
             currency: "MXN".to_owned(),
+            allow_negative_inventory: true,
         })
         .unwrap();
 

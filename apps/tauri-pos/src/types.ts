@@ -238,6 +238,44 @@ export interface CashPosition {
   pending_safe_drops: SafeDrop[];
 }
 
+/** One movement of the inventory ledger. Append-only: nothing edits these. */
+export interface InventoryMovement {
+  movement_id: string;
+  product_ref: string;
+  /** `OPENING_BALANCE`, `SALE`, `MANUAL_IN` or `MANUAL_OUT`. */
+  movement_type: string;
+  /** `IN` or `OUT`. Explicit, never the sign of the quantity. */
+  direction: string;
+  /** A magnitude, already rendered by the core: `0.750`. */
+  quantity: string;
+  quantity_thousandths: number;
+  source_ref: string;
+  transaction_id: string | null;
+  line_number: number | null;
+  reason_code: string | null;
+  occurred_at: string;
+}
+
+/**
+ * What this installation's ledger says of one product.
+ *
+ * A projection — last known baseline plus this installation's own movements —
+ * not a store-wide count: PI.Edge runs per POS.
+ *
+ * `on_hand`, not `available`: there are no reservations, so the only honest
+ * figure is what this ledger says is here. It can be negative.
+ */
+export interface InventoryPosition {
+  store_id: string;
+  product_ref: string;
+  /** Rendered by the core, signed when the ledger went below zero. */
+  on_hand: string;
+  on_hand_thousandths: number;
+  movement_count: number;
+  last_movement_at: string | null;
+  movements: InventoryMovement[];
+}
+
 export interface EdgeState {
   protocol_version: number;
   core_version: string;

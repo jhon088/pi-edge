@@ -127,13 +127,15 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
         let row = self
             .tx
             .query_row(
-                "SELECT tenant_id, store_id, currency FROM device_profile WHERE id = 1",
+                "SELECT tenant_id, store_id, currency, allow_negative_inventory
+                 FROM device_profile WHERE id = 1",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
@@ -141,10 +143,11 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
             .map_err(sqlite_err)?;
         match row {
             None => Ok(None),
-            Some((tenant_id, store_id, currency)) => Ok(Some(DeviceProfile {
+            Some((tenant_id, store_id, currency, allow_negative)) => Ok(Some(DeviceProfile {
                 tenant_id: parse_id(&tenant_id)?,
                 store_id: parse_id(&store_id)?,
                 currency: parse_currency(&currency)?,
+                allow_negative_inventory: allow_negative != 0,
             })),
         }
     }
@@ -156,17 +159,21 @@ impl UnitOfWork for SqliteUnitOfWork<'_, '_> {
     ) -> Result<(), AppError> {
         self.tx
             .execute(
-                "INSERT INTO device_profile (id, tenant_id, store_id, currency, created_at, updated_at)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?4)
+                "INSERT INTO device_profile
+                     (id, tenant_id, store_id, currency, allow_negative_inventory,
+                      created_at, updated_at)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?5)
                  ON CONFLICT(id) DO UPDATE SET
                      tenant_id = excluded.tenant_id,
                      store_id = excluded.store_id,
                      currency = excluded.currency,
+                     allow_negative_inventory = excluded.allow_negative_inventory,
                      updated_at = excluded.updated_at",
                 params![
                     profile.tenant_id.as_str(),
                     profile.store_id.as_str(),
                     profile.currency.code(),
+                    i64::from(profile.allow_negative_inventory),
                     now.to_rfc3339(),
                 ],
             )

@@ -30,6 +30,7 @@ fn totalized_scripted(core: &ScriptedCore) -> RetailTransaction {
         tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
         store_id: StoreId::new("STORE-DEMO").unwrap(),
         currency: Currency::Mxn,
+        allow_negative_inventory: true,
     })
     .unwrap();
     edge_application::testing::CatalogFixture::demo(1)

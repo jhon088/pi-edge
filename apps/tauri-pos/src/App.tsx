@@ -11,6 +11,7 @@ import {
   describeError,
   fetchCashPosition,
   fetchCatalogStatus,
+  fetchInventoryPosition,
   fetchConnection,
   fetchCoreInfo,
   fetchEdgeState,
@@ -25,6 +26,7 @@ import type {
   ConnectionStatus,
   CoreInfo,
   EdgeState,
+  InventoryPosition,
   ProductLookup,
   TransactionPayments,
 } from "./types";
@@ -290,6 +292,10 @@ export default function App() {
         )}
       </Card>
 
+      <Card title="Inventory">
+        <InventoryLedger enabled={connection.connected} />
+      </Card>
+
       <Card title="Payments">
         {!connection.connected ? (
           <p className="muted">
@@ -397,6 +403,124 @@ function BarcodeLookup({ enabled }: { enabled: boolean }) {
       <p className="muted">
         The core resolves the price book, the price and the tax. React computes
         nothing.
+      </p>
+    </>
+  );
+}
+
+/** How many movements the panel asks for. A view policy, not a core rule. */
+const INVENTORY_MOVEMENT_LIMIT = 10;
+
+/**
+ * Read-only inventory view.
+ *
+ * It is driven by a product reference because that is the grain of the ledger:
+ * a position is `Σ(IN) − Σ(OUT)` for one product, folded by the core over the
+ * movements of *this* installation. It is what this till knows, not a
+ * store-wide count. This component adds nothing up, and offers no way to move
+ * stock — bootstrap, manual in and manual out are exercised through the CLI in
+ * this milestone.
+ */
+function InventoryLedger({ enabled }: { enabled: boolean }) {
+  const [productRef, setProductRef] = useState("");
+  const [position, setPosition] = useState<InventoryPosition | null>(null);
+  const [error, setError] = useState<BridgeError | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!productRef.trim()) {
+      return;
+    }
+    setBusy(true);
+    try {
+      setPosition(
+        await fetchInventoryPosition(
+          productRef.trim(),
+          INVENTORY_MOVEMENT_LIMIT,
+        ),
+      );
+      setError(null);
+    } catch (failure) {
+      setPosition(null);
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <form className="lookup" onSubmit={submit}>
+        <input
+          type="text"
+          value={productRef}
+          placeholder="Product reference"
+          onChange={(event) => setProductRef(event.target.value)}
+          disabled={!enabled}
+        />
+        <button type="submit" disabled={!enabled || busy}>
+          {busy ? "Reading…" : "Read ledger"}
+        </button>
+      </form>
+
+      {position ? (
+        <>
+          <div className="row">
+            <Field label="Product" value={position.product_ref} mono />
+            <Field label="Store" value={position.store_id} />
+            <Field label="On hand" value={position.on_hand} />
+            <Field label="Movements" value={String(position.movement_count)} />
+            <Field
+              label="Last movement"
+              value={position.last_movement_at ?? "—"}
+            />
+          </div>
+          {position.on_hand_thousandths < 0 ? (
+            <p className="banner" role="status">
+              On hand is negative: this till has sold more than its ledger
+              knows it received. The figure is shown as it is, not clamped.
+            </p>
+          ) : null}
+          {position.movements.length === 0 ? (
+            <p className="muted">No movements for this product.</p>
+          ) : (
+            <table className="lines">
+              <thead>
+                <tr>
+                  <th>Movement</th>
+                  <th>Dir</th>
+                  <th className="num">Quantity</th>
+                  <th>Source</th>
+                  <th>Reason</th>
+                  <th>At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {position.movements.map((movement) => (
+                  <tr key={movement.movement_id}>
+                    <td className="mono">{movement.movement_type}</td>
+                    <td>{movement.direction}</td>
+                    <td className="num">{movement.quantity}</td>
+                    <td className="mono">{movement.source_ref}</td>
+                    <td className="mono">{movement.reason_code ?? "—"}</td>
+                    <td className="muted">{movement.occurred_at}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      ) : null}
+      {error ? (
+        <p className="muted">
+          <code>{error.code}</code> {error.message}
+        </p>
+      ) : null}
+      <p className="muted">
+        The ledger is append-only: a correction is a new movement, never an
+        edit. On hand is derived from these movements and is stored nowhere —
+        it is this installation&apos;s projection, not a store-wide count.
       </p>
     </>
   );

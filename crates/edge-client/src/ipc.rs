@@ -10,12 +10,13 @@ use edge_protocol::{
     CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotRequestV1,
     CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
     CoreInfoV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
-    InitDeviceRequestV1, JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1,
-    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1,
-    PutCatalogChunkRequestV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
-    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1,
-    SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1, TransactionPaymentsV1,
-    TransactionRequestV1,
+    ImportInventoryBootstrapRequestV1, InitDeviceRequestV1, InventoryBootstrapV1,
+    InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1, InventoryQueryV1,
+    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PaymentRequestV1,
+    PaymentResultV1, PendingOutboxV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
+    RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RequestEnvelopeV1,
+    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
+    SessionCloseResultV1, StartPaymentRequestV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -384,6 +385,64 @@ impl EdgeClient for IpcEdgeClient {
             self.call(OperationV1::FinalizeTransaction, request_id)?,
             ResultV1::Transaction,
             "TRANSACTION"
+        )
+    }
+
+    fn import_inventory_bootstrap(
+        &self,
+        request: ImportInventoryBootstrapRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryBootstrapV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::ImportInventoryBootstrap(request), request_id)?,
+            ResultV1::InventoryBootstrap,
+            "INVENTORY_BOOTSTRAP"
+        )
+    }
+
+    fn inventory_position(
+        &self,
+        request: InventoryQueryV1,
+    ) -> Result<InventoryPositionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetInventoryPosition(request), None)?,
+            ResultV1::InventoryPosition,
+            "INVENTORY_POSITION"
+        )
+    }
+
+    fn inventory_movements(
+        &self,
+        request: InventoryQueryV1,
+    ) -> Result<Vec<InventoryMovementV1>, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetInventoryMovements(request), None)?,
+            ResultV1::InventoryMovements,
+            "INVENTORY_MOVEMENTS"
+        )
+    }
+
+    fn inventory_in(
+        &self,
+        request: InventoryMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryPositionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::InventoryIn(request), request_id)?,
+            ResultV1::InventoryPosition,
+            "INVENTORY_POSITION"
+        )
+    }
+
+    fn inventory_out(
+        &self,
+        request: InventoryMovementRequestV1,
+        request_id: Option<Uuid>,
+    ) -> Result<InventoryPositionV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::InventoryOut(request), request_id)?,
+            ResultV1::InventoryPosition,
+            "INVENTORY_POSITION"
         )
     }
 

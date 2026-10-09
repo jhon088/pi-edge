@@ -35,6 +35,7 @@ the active sale, the journal and the outbox live in the daemon.
 | `crates/edge-catalog` | local projection of the product master: versioned snapshots, lookup, price books, price/tax resolution and the promotion engine. Pure Rust |
 | `crates/edge-payments` | tenders, the payment and attempt state machines, settlement arithmetic, the provider port and a deterministic simulator. Pure Rust: no SQLite, no HTTP, no provider SDK |
 | `crates/edge-cash` | the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Pure Rust |
+| `crates/edge-inventory` | the append-only stock ledger, its movement types and directions, and the derived on-hand fold. Pure Rust |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
 | `crates/edge-ipc` | the only crate that knows what a socket or a pipe is: `EdgeTransport`, JSON Lines framing, local credentials |
@@ -43,7 +44,85 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 7 (cash management + sessions + EOD V1)
+## Status — milestone 8 (inventory ledger V1)
+
+Done: PI.Edge knows what *it* has recorded, locally and offline. The model is a
+ledger, not a number:
+
+```text
+InventoryMovement ──append──> InventoryLedger ──fold──> on_hand
+```
+
+**There is no stock column anywhere.** `on_hand = Σ(IN) − Σ(OUT)`, derived on
+every read, because a mutable quantity cannot answer *when* it changed, *why*,
+or *because of what* (ADR 026).
+
+| Movement | Direction | Cause |
+| --- | --- | --- |
+| `OPENING_BALANCE` | `IN` | the upstream opening baseline, once per installation |
+| `SALE` | `OUT` | a sale that reached `FINALIZED` |
+| `MANUAL_IN` | `IN` | an operator movement, with a stated reason |
+| `MANUAL_OUT` | `OUT` | an operator movement, with a stated reason |
+
+* **Three levels of authority, stated rather than assumed.** An external
+  ERP/WMS is the enterprise-wide record, PI.COMMERCE Server is the central
+  operational consolidation, and PI.Edge has durable authority over the
+  movements **originated or observed by that installation** — keeping a local
+  projection of `on_hand` from the last known baseline plus those movements
+  (ADR 026).
+* **The unit is the installation, not the store.** PI.Edge runs per POS and a
+  store may have several, each with its own database and no knowledge of the
+  others while offline, so `on_hand` is *this till's* projection and not a
+  store-wide census. The two coincide in a single-Edge store; they do not in a
+  multi-register one, and strong store-wide consistency is explicitly out of
+  scope (ADR 026).
+* **Stock moves when the sale finalizes, and at no other moment.** Not when an
+  item is scanned, not when it is totalized, not when money is taken. A
+  basket is not a commitment, and `RECEIPT_COMPLETED` is optional (ADR 027).
+* **One movement per sale line**, written in the *same* database transaction
+  as the finalization, keyed by `{transaction_id}:{line_number}` — so a replay
+  or a crash-and-retry cannot move stock twice.
+* **The physical quantity moves, not the billed one.** A buy-2-get-1 line at
+  quantity 3 is three units leaving the shelf; the promotion only touched the
+  money (ADR 027).
+* **Direction is explicit** (`IN`/`OUT`), never the sign of a quantity, and
+  each type moves exactly one way — checked by the domain *and* by SQL.
+* **Quantities are thousandths**, so `0.750 kg` is exact. No float ever touches
+  a stock figure, for the same reason none touches a price.
+* **The ledger is append-only**, enforced by database triggers. A wrong
+  write-off is corrected by a compensating movement, and the mistake stays on
+  the record.
+* **The opening baseline is imported once per installation, ever.** The same snapshot
+  replayed is a no-op; a *different* one is refused with
+  `INVENTORY_ALREADY_BOOTSTRAPPED` rather than guessed at, and the import is
+  atomic (ADR 028).
+* **Selling into negative stock is a policy of the installation.**
+  `allow_negative_inventory = false` blocks the *start of payment* when this
+  installation's local projection says existence is insufficient — before money
+  moves, because discovering a shortfall *after* charging the customer is the
+  one outcome nobody can undo cleanly. It does **not** promise the store
+  physically holds enough: other registers may be selling offline, which is a
+  known distributed limitation rather than a bug. After money moves, the ledger
+  records what happened: a movement is never suppressed to keep a balance tidy
+  (ADR 029).
+* **A movement only for a product the active catalog knows.** PI.Edge still
+  creates no product master data.
+* **No reservations.** There is no soft-allocation between the check and the
+  finalization; the window is documented, not hidden (ADR 029).
+
+```bash
+edge-cli inventory-import examples/inventory/opening-v1.json
+edge-cli inventory-position   --product P-LECHE-1L
+edge-cli inventory-movements  --product P-LECHE-1L --limit 20
+edge-cli inventory-in  --product P-JAMON-GRANEL --qty 2500 --reason RECEIPT
+edge-cli inventory-out --product P-JAMON-GRANEL --qty 500  --reason DAMAGE
+```
+
+No cloud sync yet: the ledger is local to one installation, and consolidation
+with PI.COMMERCE Server — which is also what would make a position store-wide
+rather than per-POS — is a later milestone that this schema is shaped for.
+
+## Previously — milestone 7 (cash management + sessions + EOD V1)
 
 Done: the operational responsibility of a till. Four things that were starting
 to be confused are now separate (ADR 025):
@@ -186,6 +265,10 @@ cargo run -p edge-cli -- import-catalog examples/catalog/demo-v1.json --activate
 cargo run -p edge-cli -- catalog-status
 cargo run -p edge-cli -- lookup --barcode 7501000000011
 
+# the opening stock baseline, once per installation (idempotent on its snapshot id)
+cargo run -p edge-cli -- inventory-import examples/inventory/opening-v1.json
+cargo run -p edge-cli -- inventory-position --product P-LECHE-1L
+
 cargo run -p edge-cli -- open-business-day
 cargo run -p edge-cli -- open-session --register REG-001 --operator CASHIER-001 --opening-cash 100000
 cargo run -p edge-cli -- start-sale
@@ -201,6 +284,7 @@ cargo run -p edge-cli -- payments
 cargo run -p edge-cli -- finalize-sale
 cargo run -p edge-cli -- get-state
 cargo run -p edge-cli -- cash-position
+cargo run -p edge-cli -- inventory-position --product P-LECHE-1L   # fewer units
 cargo run -p edge-cli -- request-close-session
 cargo run -p edge-cli -- declare-close --amount 111600
 cargo run -p edge-cli -- close-business-day
@@ -214,6 +298,9 @@ Extras: `remove-item --line N`, `change-qty --line N --qty N`,
 `core-info`, `active-sale`, `journal --limit N`, `outbox --limit N`,
 `watch` (live core events), `catalog-status`, `import-status --snapshot <id>`,
 `activate-catalog`, `abort-catalog`, `lookup --barcode|--sku|--product`,
+`inventory-movements --product <ref> --limit N --offset N`,
+`inventory-in|inventory-out --product <ref> --qty <thousandths> --reason <code>`,
+`init-demo --block-negative-inventory` for a till that refuses to oversell,
 `--format json`, `--db <path>` (or `PI_EDGE_DB`), `--request-id <uuid>` for
 idempotent retries, `PI_EDGE_LOG=info` for structured logs on stderr.
 
@@ -401,6 +488,72 @@ A business day is an operational period, not a date: it can span midnight and
 survive an offline stretch, and `business_day_id` is never derived from
 `DATE(now())`.
 
+## Inventory
+
+```text
+                   ┌─ OPENING_BALANCE  (IN)  ← upstream position, once
+InventoryLedger ───┼─ SALE             (OUT) ← at FINALIZED, one per line
+ (append-only)     ├─ MANUAL_IN        (IN)  ← reason required
+                   └─ MANUAL_OUT       (OUT) ← reason required
+                            │
+                            └─ fold ─→ on_hand = Σ(IN) − Σ(OUT)
+```
+
+**Three levels of authority, and the unit of the third one is the POS.**
+
+```text
+External ERP / WMS    enterprise-wide inventory of record
+PI.COMMERCE Server    central operational consolidation
+PI.Edge               durable authority over the movements originated or
+                      observed by THIS installation, plus a local projection
+                      of on_hand = last known baseline + those movements
+
+STORE
+├── POS-01 / Edge DB A   ─┐  offline, these three know nothing of
+├── POS-02 / Edge DB B    │  each other's movements
+└── POS-03 / Edge DB C   ─┘
+```
+
+A movement recorded here is a **fact**, true whether or not anything upstream
+is reachable, and nothing upstream may invalidate it. `on_hand`, by contrast,
+is a **projection**: it answers "what does this installation know?", not "what
+does the store physically hold?". **PI.Edge may not claim its `on_hand` is the
+complete, current inventory of the whole store** when several POS run without
+coordination. In a single-Edge store the two coincide.
+
+Store-wide strong consistency will need connectivity with PI.COMMERCE Server,
+a Store Hub (one PI.Edge shared at store level), or another explicit
+coordination/reservation strategy. None of those is implemented, and none is
+chosen here (ADR 026).
+
+**One moment moves stock: `FINALIZED`.** Scanning, totalizing and taking money
+all leave the shelf alone; a basket is not a commitment and a payment can still
+be reversed. The movements are written in the same database transaction as the
+finalization, so there is no state in which a sale closed without its stock
+moving, or stock moved for a sale that never closed (ADR 027).
+
+**What moved is what left this counter.** A buy-2-get-1 line at quantity 3
+bills two units and moves three. The promotion changed the money, not the
+goods.
+
+**A position can be negative, and says so.** There is no clamping: a till that
+sold more than its ledger knew it received is a reportable condition, and
+`−0.750` is the honest answer. Whether such a sale is *allowed* is
+`allow_negative_inventory`, a property of the installation, checked against
+this installation's projection before any money moves (ADR 029).
+
+**`OPENING_BALANCE` is a baseline, not a correction.** It is `IN`-only, fires
+once per installation, and every quantity is strictly positive — a zero-stock
+product is an omitted line, not a line of zero — so a bootstrap can never lower
+a position or produce a negative one.
+
+**Reconciliation is a later milestone.** A second, different baseline is
+refused today rather than guessed at, and a negative position arriving from a
+future upstream reconciliation will *not* be expressed as an
+`OPENING_BALANCE`: it belongs to a reconciliation workflow with its own
+movement type, command, authority and audit — not a silent overwrite
+(ADR 028).
+
 ## Runtime layout
 
 Derived from the database path, so one database means one runtime:
@@ -445,7 +598,7 @@ arithmetic are denied outside tests.
 | `apps/edge-daemon/tests/promotions.rs` | the promotion surface over real IPC: adjustments on the transaction DTO, `remove-item`/`change-qty`, `AMBIGUOUS_PROMOTION`, promotions in the chunked import, count mismatch, a promotion naming a product from another chunk |
 | `tests/integration/tests/pricing.rs` | base price, store override, other store's book ignored, inactive book ignored, priority within a scope, future and expired prices, no price, ambiguous price, overlapping schedules, both price modes, price book in the journal, import-time validation |
 | `tests/integration/tests/snapshot_switching.rs` | an open sale keeps its prices across activations; the next sale uses the new catalog; exactly one `ACTIVE` |
-| `tests/golden` | deterministic protocol output for known sales, both price modes, rounding boundaries, one case per promotion kind, and one per payment shape — cash exact, cash with change, mixed tender, card unknown, card reconciled, card reversed, partial settlement (frozen clock, sequential ids, scripted provider). Regenerate with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests` |
+| `tests/golden` | deterministic protocol output for known sales, both price modes, rounding boundaries, one case per promotion kind, one per payment shape — cash exact, cash with change, mixed tender, card unknown, card reconciled, card reversed, partial settlement — and one per inventory shape: the opening position, a ledger with all four movement types, a fractional balance, a negative balance and a promotional sale that moved three units while billing two (frozen clock, sequential ids, scripted provider). Regenerate with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests` |
 | `apps/edge-daemon/tests/catalog_import.rs` | chunked import over real IPC: many chunks, idempotent replay, chunk conflict, missing chunk, bad hash, malformed record, daemon killed mid-import and resumed, atomic activation, CLI importer end to end |
 | `apps/edge-daemon/tests/milestone_lifecycle.rs` | two clients over one real daemon; UI killed → core survives; core killed → clients degrade safely and reconnect; second runtime refused |
 | `apps/edge-daemon/tests/auth.rs` | handshake surface: good, wrong, missing and malformed credentials; per-connection authentication; the credential never reaches a log or an error |
@@ -457,7 +610,12 @@ arithmetic are denied outside tests.
 | `crates/edge-cash` unit tests | movement rules and directions, the `amount = tendered − change` invariant, expected-cash arithmetic, safe-drop approval and self-approval, declaration and variance, the pre-close payload carrying no amount |
 | `tests/crash-recovery/tests/cash_recovery.rs` | exact position after a restart, a pending drop still pending, an approved drop not applied twice, a session still awaiting its declaration, a declaration not duplicated, a forced close keeping its unknown variance |
 | `apps/edge-daemon/tests/cash.rs` | the cash surface over real IPC, including the contract-level proof that the pre-close payload cannot carry the expected cash |
-| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, and that the pre-close DTO has no amount-bearing field |
+| `tests/integration/tests/inventory.rs` | the stock ledger on real SQLite: an empty store, the opening position per product, replay and competing snapshots, atomic import, duplicate and unknown items, manual in/out and the reason requirement, replay idempotency, fractional and negative positions, stock moving only at `FINALIZED`, one movement per line, buy-2-get-1 physical quantity, two products and two stores independent, both negative-inventory policies, the post-payment window, corrections as new movements, the fold, paging, the journal |
+| `crates/edge-inventory` unit tests | movement rules and directions, the sale↔transaction pairing, reason requirements, the `Quantity` positive-magnitude invariant, the on-hand fold, negative rendering, `covers` |
+| `tests/crash-recovery/tests/inventory_recovery.rs` | an exact position after a restart; a crash before `COMMIT` leaving no opening position, no manual movement and no half-finalized sale; a replayed finalization across a restart moving stock once; the policy surviving a restart |
+| `apps/edge-daemon/tests/inventory.rs` | the inventory surface over real IPC: rendered quantities, explicit direction, movements as their own operation, a position without movements, a refused competing snapshot, a strict till refusing the payment, and the CLI importer reaching the same ledger |
+| `crates/edge-storage` migration tests | the inventory triggers against raw SQL: `UPDATE`/`DELETE` refused, a bootstrap recorded once, a movement contradicting its own type refused, one movement per cause per product |
+| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, and that a stock movement crosses the wire as a positive magnitude plus an explicit direction |
 
 ## Non-negotiable boundaries
 
@@ -467,12 +625,15 @@ arithmetic are denied outside tests.
   the Cargo workspace so this cannot regress by accident.
 * A UI never opens SQLite, never computes official totals, never decides
   payment state, and never issues a command while disconnected. The diagnostic
-  window shows payments and the cash drawer read-only and issues no payment or
-  cash command.
+  window shows payments, the cash drawer and the stock ledger read-only and
+  issues no payment, cash or inventory command.
 * A cashier never sees expected cash before declaring the count, and that is
   enforced by the protocol rather than by the interface.
-* The cash ledger and close declarations are append-only in the database, not
-  merely by convention.
+* The cash ledger, the inventory ledger and close declarations are append-only
+  in the database, not merely by convention.
+* There is no mutable stock field. On hand is always a fold over movements.
+* An inventory position is a **projection of one installation**, never a claim
+  about a whole store's shelves. PI.Edge runs per POS.
 * PI.Edge never receives cardholder data. No PAN, CVV, track data or terminal
   payload is stored, logged or journalled.
 * PI.Edge never creates product master data or promotions, and no client may
