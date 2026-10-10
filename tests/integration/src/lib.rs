@@ -4,7 +4,9 @@
 use chrono::{DateTime, Utc};
 use edge_application::commands::*;
 use edge_application::ports::InventoryBootstrapState;
+use edge_application::ports::{EdgeStore, OutboxCounts};
 use edge_application::queries::{InventoryPositionView, RefundView};
+use edge_application::sync_service::SyncRuntime;
 use edge_application::testing::{
     CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory, DEMO_BARCODE,
 };
@@ -21,6 +23,7 @@ use edge_refunds::{
     RefundAuthority, RefundAuthorizationContext, RefundFiscalStatus, RefundLineRequest,
 };
 use edge_storage::SqliteEdgeStore;
+use edge_sync::simulator::SimulatorSyncTransport;
 use std::sync::Arc;
 
 use edge_application::hardware_service::Hardware;
@@ -508,4 +511,184 @@ pub fn core_two_days_later(path: &std::path::Path) -> TestCore {
         SimulatorPaymentProvider::approving(),
         Hardware::simulated(),
     )
+}
+
+// ------------------------------------------------------------------- sync
+
+/// A till that syncs through a scripted simulator, plus the handle to script
+/// it and to read what it received.
+///
+/// The simulator is asked for **explicitly**, here as everywhere: a core built
+/// without one has no transport at all and answers `SYNC_NOT_CONFIGURED`
+/// (ADR 040).
+#[derive(Debug)]
+pub struct SyncFixture {
+    pub core: TestCore,
+    pub transport: Arc<SimulatorSyncTransport>,
+}
+
+impl SyncFixture {
+    pub fn in_memory() -> Self {
+        Self::build(SqliteEdgeStore::open_in_memory().unwrap(), 0, 0)
+    }
+
+    /// A till on a real file, so it can be closed and reopened.
+    pub fn at(path: &std::path::Path) -> Self {
+        Self::build(SqliteEdgeStore::open(path).unwrap(), 0, 0)
+    }
+
+    /// The same installation, reopened as a fresh runtime `days` later.
+    ///
+    /// A new id range, because two runtimes minting the same ids would be a
+    /// fiction no real pair of processes produces.
+    pub fn reopen(path: &std::path::Path, days: i64, ids_from: u64) -> Self {
+        Self::build(SqliteEdgeStore::open(path).unwrap(), days, ids_from)
+    }
+
+    /// A till whose card provider follows a script, for the refund that comes
+    /// back unresolved and sits in `FINANCIAL_PENDING`.
+    pub fn scripted(script: SimulatorScript) -> ScriptedSyncFixture {
+        let transport = Arc::new(SimulatorSyncTransport::new());
+        let core = EdgeApplication::with_hardware(
+            SqliteEdgeStore::open_in_memory().unwrap(),
+            FixedClock::new(start_instant(), 1_000),
+            SequentialIdFactory::new(),
+            SimulatorPaymentProvider::new(script),
+            Hardware::simulated(),
+        )
+        .with_sync(SyncRuntime::with_transport(Arc::clone(&transport) as _));
+        ScriptedSyncFixture { core, transport }
+    }
+
+    fn build(store: SqliteEdgeStore, days: i64, ids_from: u64) -> Self {
+        let transport = Arc::new(SimulatorSyncTransport::new());
+        let instant = start_instant() + chrono::Duration::days(days);
+        let ids = if ids_from == 0 {
+            SequentialIdFactory::new()
+        } else {
+            SequentialIdFactory::starting_at(ids_from)
+        };
+        let core = EdgeApplication::with_hardware(
+            store,
+            FixedClock::new(instant, 1_000),
+            ids,
+            SimulatorPaymentProvider::approving(),
+            Hardware::simulated(),
+        )
+        .with_sync(SyncRuntime::with_transport(Arc::clone(&transport) as _));
+        Self { core, transport }
+    }
+
+    /// The same till, dispatching in smaller batches.
+    pub fn with_batch_limit(self, limit: usize) -> Self {
+        let transport = self.transport;
+        Self {
+            core: self.core.with_sync(
+                SyncRuntime::with_transport(Arc::clone(&transport) as _).with_batch_limit(limit),
+            ),
+            transport,
+        }
+    }
+
+    pub fn counts(&self) -> OutboxCounts {
+        self.core.get_sync_status().unwrap().outbox
+    }
+
+    /// Every fact type the outbox holds, oldest `seq` first.
+    pub fn fact_types(&self) -> Vec<String> {
+        let mut types = Vec::new();
+        for status in [
+            OutboxStatus::Pending,
+            OutboxStatus::Sending,
+            OutboxStatus::Sent,
+            OutboxStatus::Failed,
+        ] {
+            types.extend(
+                outbox_entries(&self.core, status)
+                    .into_iter()
+                    .map(|entry| (entry.seq, entry.event.event_type.as_str().to_owned())),
+            );
+        }
+        types.sort();
+        types.into_iter().map(|(_, kind)| kind).collect()
+    }
+}
+
+/// A till with **no sync transport**, which is the production default.
+pub fn offline_core_at(path: &std::path::Path) -> TestCore {
+    core_with_store(SqliteEdgeStore::open(path).unwrap())
+}
+
+/// The outbox rows in one state, oldest first.
+pub fn outbox_entries(core: &TestCore, status: OutboxStatus) -> Vec<OutboxEntry> {
+    core.store()
+        .transact(|uow| uow.list_outbox_by_status(status, 500))
+        .unwrap()
+}
+
+/// The event ids of the facts in one state, oldest first.
+pub fn outbox_ids(core: &TestCore, status: OutboxStatus) -> Vec<EventId> {
+    outbox_entries(core, status)
+        .into_iter()
+        .map(|entry| entry.event.event_id)
+        .collect()
+}
+
+/// Claim facts and stop, which is what a runtime that died mid-dispatch left
+/// behind: the claim committed, the answer never came.
+pub fn claim_and_abandon(core: &TestCore, event_ids: &[EventId]) -> Vec<EventId> {
+    let now = core.clock_now();
+    core.store()
+        .transact(|uow| uow.claim_outbox(event_ids, now))
+        .unwrap()
+}
+
+/// The same thing with a scripted card provider.
+#[derive(Debug)]
+pub struct ScriptedSyncFixture {
+    pub core: ScriptedCore,
+    pub transport: Arc<SimulatorSyncTransport>,
+}
+
+impl ScriptedSyncFixture {
+    /// Every fact the outbox holds, oldest `seq` first, as `(type, version)`.
+    pub fn facts(&self) -> Vec<(String, i64)> {
+        scripted_outbox_facts(&self.core)
+    }
+
+    /// Only the refund facts, so an assertion is not coupled to the sale
+    /// aggregate's own row version.
+    pub fn refund_facts(&self) -> Vec<(String, i64)> {
+        self.facts()
+            .into_iter()
+            .filter(|(kind, _)| kind.starts_with("REFUND_"))
+            .collect()
+    }
+}
+
+/// Every outbox fact of a scripted core, oldest `seq` first.
+pub fn scripted_outbox_facts(core: &ScriptedCore) -> Vec<(String, i64)> {
+    let mut rows = Vec::new();
+    for status in [
+        OutboxStatus::Pending,
+        OutboxStatus::Sending,
+        OutboxStatus::Sent,
+        OutboxStatus::Failed,
+    ] {
+        let entries = core
+            .store()
+            .transact(|uow| uow.list_outbox_by_status(status, 500))
+            .unwrap();
+        rows.extend(entries.into_iter().map(|entry| {
+            (
+                entry.seq,
+                entry.event.event_type.as_str().to_owned(),
+                entry.event.aggregate_version,
+            )
+        }));
+    }
+    rows.sort();
+    rows.into_iter()
+        .map(|(_, kind, version)| (kind, version))
+        .collect()
 }

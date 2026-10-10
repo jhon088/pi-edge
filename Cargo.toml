@@ -27,6 +27,7 @@ edge-refunds = { path = "crates/edge-refunds" }
 edge-ipc = { path = "crates/edge-ipc" }
 edge-client = { path = "crates/edge-client" }
 edge-payments = { path = "crates/edge-payments" }
+edge-sync = { path = "crates/edge-sync" }
 
 # External
 getrandom = "0.4.3"

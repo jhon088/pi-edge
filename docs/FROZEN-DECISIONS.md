@@ -393,6 +393,83 @@ for payment states that do not exist yet.
   transaction aggregate and is still driven by nothing, deliberately: the
   receipt lifecycle is its own milestone. (ADR 039)
 
+## Sync (milestone 11)
+
+* **PI.Edge works indefinitely offline. Sync is an eventual capability, never a
+  requirement to continue a locally permitted sale.** A register with no
+  transport configured is not degraded: it sells, writes durable facts, keeps
+  them, and closes its day without asking anyone. (ADR 040)
+* **The commercial domain knows nothing about sync, and the sync engine knows
+  nothing about HTTP.** `edge-sync` is pure policy — batch formation, ordering,
+  backoff, outcome classification, message shapes — with no SQLite and no
+  sockets. Orchestration and transactions live in
+  `edge-application/sync_service.rs`. (ADR 040)
+* **A batch is a unit of transport, never a unit of truth.** Every fact is
+  answered on its own: acknowledged → `SENT`, transient → `PENDING` with a
+  counted attempt and a scheduled retry, permanent → `FAILED`. (ADR 041)
+* **`FAILED` is terminal, visible and never retried automatically.** It is not
+  deleted, it carries its reason, and it waits for a person. An aggregate with a
+  `FAILED` fact is skipped; every other aggregate keeps flowing. (ADR 041)
+* **`SENDING` is not a resting state.** At startup every `SENDING` row goes back
+  to `PENDING` and is resent with **the same `event_id`**; the consumer
+  deduplicates. At-least-once, deliberately. **No leases, no distributed locks,
+  no heartbeats, no worker-ownership framework** — there is one writer.
+  (ADR 041)
+* **`seq` is the durable local order** and governs deterministic batch
+  formation. At most one fact per aggregate travels per batch, so version `n+1`
+  is never in flight before `n` is acknowledged. No dependency graph.
+  (ADR 041)
+* **Nothing is purged.** `PENDING`, `SENDING`, `SENT` and `FAILED` are all kept.
+  Retention and purge policy are deferred until there is a real operational
+  need. (ADR 041)
+* **Inbound: the effect commits before the cursor moves, never the reverse.** A
+  crash in between re-delivers the message, which is safe because every inbound
+  message is idempotent on something the core already had. The first message
+  that cannot be applied stops the cycle; nothing after it is applied. An
+  incomplete import stays `IMPORTING` and never becomes partially `ACTIVE`.
+  (ADR 041)
+* **There is exactly one catalog importer.** Inbound catalog drives the existing
+  milestone-3 lifecycle — begin, chunk, commit, activate — and catalog, price
+  books and promotions are one snapshot, not three channels. (ADR 041)
+* **PI.Edge consumes fiscal metadata. PI.Edge does not declare a sale
+  invoiced.** The inbound projection is the only production write to
+  `transaction_fiscal_metadata`, it only ever moves
+  `NOT_INVOICED -> INVOICED`, and there is no local operation, protocol
+  message, EdgeClient method, CLI command or UI control that writes it.
+  (ADR 032, amended by ADR 041)
+* **A refund is published twice: `REFUND_ACCEPTED` (version 1) at `ACCEPTED`,
+  `REFUND_COMPLETED` (version 2) at `COMPLETED`.** Acceptance is already a fact
+  about the business — the goods are back and the return is irrevocable — and a
+  refund can sit in `FINANCIAL_PENDING` indefinitely, so the consumer must not
+  learn of the return only when the money resolves. Each event is enqueued in
+  the same transaction as the transition it describes.
+  `REFUND_FINANCIAL_PENDING` is not published: nothing consumes it. (ADR 041)
+* **Three refusals of refund authority, three codes**, because the operator's
+  next move differs: `REFUND_AUTHORITY_REQUIRED` (none configured),
+  `REFUND_AUTHORITY_UNAVAILABLE` (configured, unreachable),
+  `REFUND_NOT_AUTHORIZED` (reached, and it said no). (ADR 042)
+* **Production refunds are online.** A refund needs central authorisation *at
+  that moment*, for *that* operation. The answer is materialised on the refund
+  as evidence and is **never** stored as a standing permission: no
+  `sale_refund_authorized`, no reusable "centrally accepted" projection. An
+  unreachable authority is the same answer as a refusal. PI.Edge sells offline;
+  it does not refund offline. (ADR 042)
+* **Hardware is not in the inbound contract.** No printer host, drawer driver,
+  iMin bridge or device topology may arrive from the server; nor may identity —
+  tenant, store, register and currency are provisioned, not synced. Inbound
+  configuration is limited to commercial settings that already exist and already
+  have a consumer. (ADR 040, extending ADR 039)
+* **Sync simulators are explicit development and test adapters. Missing sync
+  configuration never selects a simulator implicitly.** `PI_EDGE_SYNC` absent,
+  empty or `none` selects no transport and every sync operation answers
+  `SYNC_NOT_CONFIGURED`; an unrecognised value refuses to start. The same rule
+  as hardware, for the same reason. (ADR 040, ADR 038)
+* **There is no fake PI.COMMERCE Server.** `SimulatorSyncTransport` accepts
+  batches, answers them as scripted, remembers the `event_id`s it has seen and
+  delivers inbound messages a test put there. It implements none of the future
+  server's business rules. And there is no HTTP: no client, no URL, no route, no
+  authentication, no tenant routing. (ADR 040)
+
 ## Engineering rules (frozen in milestone 7)
 
 The organisation and quality rules in **`CLAUDE.md`** at the repository root are

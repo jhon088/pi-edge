@@ -13,8 +13,33 @@ pub enum RefundError {
 
     /// A refund needs explicit evidence that the original sale is accepted
     /// centrally. PI.Edge never assumes it (ADR 030).
+    ///
+    /// This one means **there is no authority to ask**: none is configured for
+    /// this installation.
     #[error("refunding sale `{transaction_id}` needs central authority over the original sale")]
     AuthorityRequired { transaction_id: String },
+
+    /// There *is* an authority and it could not be reached.
+    ///
+    /// Distinct from `AuthorityRequired` because the answer to an operator is
+    /// different: this one is worth retrying in a minute, and it says the
+    /// installation is configured correctly. It is still a refusal — PI.Edge
+    /// sells offline and does not refund offline (ADR 042).
+    #[error("the refund authority for sale `{transaction_id}` could not be reached: {detail}")]
+    AuthorityUnavailable {
+        transaction_id: String,
+        detail: String,
+    },
+
+    /// The authority was reached and said no.
+    ///
+    /// Retrying changes nothing: the decision was made, and the reason belongs
+    /// to the authority (ADR 042).
+    #[error("the authority refused to authorize a refund of sale `{transaction_id}`: {reason}")]
+    NotAuthorized {
+        transaction_id: String,
+        reason: String,
+    },
 
     #[error("the original sale has no line {line_number}")]
     LineNotFound { line_number: i64 },
@@ -87,6 +112,8 @@ impl RefundError {
         match self {
             RefundError::OriginalNotRefundable { .. } => "REFUND_ORIGINAL_NOT_REFUNDABLE",
             RefundError::AuthorityRequired { .. } => "REFUND_AUTHORITY_REQUIRED",
+            RefundError::AuthorityUnavailable { .. } => "REFUND_AUTHORITY_UNAVAILABLE",
+            RefundError::NotAuthorized { .. } => "REFUND_NOT_AUTHORIZED",
             RefundError::LineNotFound { .. } => "REFUND_LINE_NOT_FOUND",
             RefundError::DuplicateLine { .. } | RefundError::EmptyRefund => "REFUND_INVALID_LINES",
             RefundError::QuantityExceeded { .. } => "REFUND_QUANTITY_EXCEEDED",

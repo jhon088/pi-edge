@@ -350,3 +350,27 @@ pub fn cash_sale(core: &TestCore, tendered_minor: i64) {
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
 }
+
+// -------------------------------------------------------------------- sync
+
+/// A core on `path` that syncs through a scripted simulator.
+///
+/// The simulator is asked for explicitly; a core built by `core_at` has no
+/// transport at all (ADR 040).
+pub fn syncing_core_at(
+    path: &Path,
+    id_offset: u64,
+    transport: &Arc<edge_sync::simulator::SimulatorSyncTransport>,
+) -> TestCore {
+    core_at(path, id_offset).with_sync(edge_application::sync_service::SyncRuntime::with_transport(
+        Arc::clone(transport) as _,
+    ))
+}
+
+/// The outbox rows in one state, oldest first.
+pub fn outbox_entries(core: &TestCore, status: OutboxStatus) -> Vec<OutboxEntry> {
+    use edge_application::ports::EdgeStore;
+    core.store()
+        .transact(|uow| uow.list_outbox_by_status(status, 500))
+        .unwrap()
+}

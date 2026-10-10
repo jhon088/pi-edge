@@ -415,6 +415,73 @@ impl CatalogFixture {
         })
     }
 
+    /// The same snapshot, as the four inbound sync messages a server would
+    /// send.
+    ///
+    /// The hashes come from the same functions the real importer verifies
+    /// against, so these messages are indistinguishable from a genuine
+    /// delivery — which is the point: inbound catalog drives the existing
+    /// import lifecycle and there is no second importer (ADR 041).
+    pub fn inbound_messages(&self) -> Vec<edge_sync::InboundMessage> {
+        use crate::sync_service::{
+            InboundCatalogActivate, InboundCatalogBegin, InboundCatalogChunk, InboundCatalogCommit,
+        };
+        use edge_sync::{InboundKind, InboundMessage};
+
+        let (products, price_entries, barcodes) = self.records();
+        let begin = InboundCatalogBegin {
+            version: self.version,
+            currency: self.currency,
+            declared_content_hash: hash_snapshot(SnapshotContent {
+                tax_profiles: &self.profiles,
+                price_books: &self.books,
+                products: &products,
+                price_entries: &price_entries,
+                barcodes: &barcodes,
+                promotions: &self.promotions,
+            }),
+            generated_at: self.generated_at,
+            effective_at: None,
+            expected: self.counts(products.len(), price_entries.len(), barcodes.len()),
+            tax_profiles: self.profiles.clone(),
+            price_books: self.books.clone(),
+        };
+        let chunk = InboundCatalogChunk {
+            version: self.version,
+            chunk_index: 0,
+            chunk_hash: hash_chunk(&products, &price_entries, &barcodes, &self.promotions),
+            products,
+            price_entries,
+            barcodes,
+            promotions: self.promotions.clone(),
+        };
+        let commit = InboundCatalogCommit {
+            version: self.version,
+            chunk_count: 1,
+        };
+        let activate = InboundCatalogActivate {
+            version: self.version,
+        };
+
+        let version = u128::from(self.version.unsigned_abs());
+        [
+            (InboundKind::CatalogBegin, to_payload(&begin)),
+            (InboundKind::CatalogChunk, to_payload(&chunk)),
+            (InboundKind::CatalogCommit, to_payload(&commit)),
+            (InboundKind::CatalogActivate, to_payload(&activate)),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(step, (kind, payload))| InboundMessage {
+            // Deterministic, so a test can redeliver the identical message.
+            message_id: Uuid::from_u128(900_000 + version * 10 + step as u128),
+            cursor: format!("catalog-{}-{step}", self.version),
+            kind,
+            payload,
+        })
+        .collect()
+    }
+
     /// Import and put in force, which is what a sale needs.
     pub fn activate<S, C, I>(
         &self,
@@ -433,4 +500,12 @@ impl CatalogFixture {
         })?;
         Ok(snapshot_id)
     }
+}
+
+/// A fixture payload. A fixture that cannot serialize its own message is a
+/// broken fixture, so this says so loudly rather than returning a `Result`
+/// every caller would unwrap.
+#[allow(clippy::expect_used)]
+fn to_payload<T: serde::Serialize>(body: &T) -> serde_json::Value {
+    serde_json::to_value(body).expect("a fixture body serializes")
 }

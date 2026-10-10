@@ -61,6 +61,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0009_hardware_actions",
         sql: include_str!("../migrations/0009_hardware_actions.sql"),
     },
+    Migration {
+        version: 10,
+        name: "0010_sync",
+        sql: include_str!("../migrations/0010_sync.sql"),
+    },
 ];
 
 /// Schema version this binary expects.
@@ -69,6 +74,16 @@ pub fn target_version() -> i64 {
 }
 
 pub fn apply(conn: &Connection) -> Result<(), StorageError> {
+    apply_through(conn, target_version())
+}
+
+/// Apply every migration up to and including `through`.
+///
+/// Production always asks for the target version. A test asks for an earlier
+/// one to build the schema as it was, populate it, and then upgrade — which is
+/// the only honest way to check that a table rebuild kept what was already
+/// there.
+pub(crate) fn apply_through(conn: &Connection, through: i64) -> Result<(), StorageError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
              version    INTEGER PRIMARY KEY,
@@ -79,6 +94,9 @@ pub fn apply(conn: &Connection) -> Result<(), StorageError> {
     )?;
 
     for migration in MIGRATIONS {
+        if migration.version > through {
+            break;
+        }
         let recorded: Option<String> = conn
             .query_row(
                 "SELECT checksum FROM schema_migrations WHERE version = ?1",
@@ -495,6 +513,188 @@ mod tests {
         assert!(insert(11_600, 20_000, 8_400).is_ok());
         // Anything else is refused.
         assert!(insert(11_600, 20_000, 1_000).is_err());
+    }
+
+    /// Migration 0010 rebuilds `outbox_events` to widen its status set.
+    ///
+    /// A rebuild is where rows, indexes, triggers and — most importantly —
+    /// `seq` go missing, and `seq` is the installation's durable order that
+    /// batch formation depends on. So all four are checked.
+    #[test]
+    fn the_rebuilt_outbox_keeps_its_order_its_guard_and_gains_a_terminal_state() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn).unwrap();
+
+        let insert = |event_id: &str, status: &str| {
+            conn.execute(
+                "INSERT INTO outbox_events
+                     (event_id, event_type, aggregate_id, aggregate_version, tenant_id, store_id,
+                      occurred_at, payload_json, status, created_at, updated_at)
+                 VALUES (?1, 'SALE_FINALIZED', 'a', 1, 't', 's', 'now', '{}', ?2, 'now', 'now')",
+                rusqlite::params![event_id, status],
+            )
+        };
+        insert("e1", "PENDING").unwrap();
+        insert("e2", "SENT").unwrap();
+
+        // `seq` is assigned by SQLite and climbs.
+        let seqs: Vec<i64> = conn
+            .prepare("SELECT seq FROM outbox_events ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(seqs, vec![1, 2]);
+
+        // `FAILED` is now a legal state, and it must carry its reason.
+        assert!(insert("e3", "FAILED").is_err(), "a reason is mandatory");
+        conn.execute(
+            "UPDATE outbox_events SET status = 'FAILED', last_error_code = 'CONTRACT_REJECTED'
+             WHERE event_id = 'e1'",
+            [],
+        )
+        .unwrap();
+        assert!(
+            insert("e4", "ABANDONED").is_err(),
+            "the status set is still closed"
+        );
+
+        // The delete guard survived the rebuild, and it covers the new state:
+        // milestone 11 purges nothing, and a rejected fact is exactly the one
+        // somebody will need to look at.
+        assert!(conn
+            .execute("DELETE FROM outbox_events WHERE event_id = 'e1'", [])
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be deleted"));
+
+        // Both indexes came back.
+        let indexes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND tbl_name = 'outbox_events'
+                   AND name IN ('ix_outbox_events_status', 'ix_outbox_events_next_attempt')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexes, 2);
+    }
+
+    /// The rebuild carries the existing rows across, `seq` included.
+    ///
+    /// This is the case an empty database cannot show: an installation that
+    /// has been trading for months upgrades with facts already in its outbox,
+    /// and their durable order is what batch formation depends on.
+    #[test]
+    fn upgrading_a_populated_outbox_preserves_its_rows_and_their_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The schema as it was before milestone 11.
+        apply_through(&conn, 9).unwrap();
+        for event_id in ["e1", "e2", "e3"] {
+            conn.execute(
+                "INSERT INTO outbox_events
+                     (event_id, event_type, aggregate_id, aggregate_version, tenant_id, store_id,
+                      occurred_at, payload_json, status, attempt_count, created_at, updated_at)
+                 VALUES (?1, 'SALE_FINALIZED', ?1, 2, 't', 's', 'then', '{\"a\":1}', 'PENDING',
+                         3, 'then', 'then')",
+                rusqlite::params![event_id],
+            )
+            .unwrap();
+        }
+        // One of them was in flight when the upgrade happened.
+        conn.execute(
+            "UPDATE outbox_events SET status = 'SENDING' WHERE event_id = 'e2'",
+            [],
+        )
+        .unwrap();
+
+        apply(&conn).unwrap();
+
+        let rows: Vec<(i64, String, String, i64, String)> = conn
+            .prepare(
+                "SELECT seq, event_id, status, attempt_count, payload_json
+                 FROM outbox_events ORDER BY seq",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    1,
+                    "e1".to_owned(),
+                    "PENDING".to_owned(),
+                    3,
+                    "{\"a\":1}".to_owned()
+                ),
+                (
+                    2,
+                    "e2".to_owned(),
+                    "SENDING".to_owned(),
+                    3,
+                    "{\"a\":1}".to_owned()
+                ),
+                (
+                    3,
+                    "e3".to_owned(),
+                    "PENDING".to_owned(),
+                    3,
+                    "{\"a\":1}".to_owned()
+                ),
+            ],
+            "every row, its state, its attempt count, its payload and its seq"
+        );
+
+        // And the sequence continues from where it was, so a new fact can
+        // never claim an order ahead of an older one.
+        conn.execute(
+            "INSERT INTO outbox_events
+                 (event_id, event_type, aggregate_id, aggregate_version, tenant_id, store_id,
+                  occurred_at, payload_json, status, created_at, updated_at)
+             VALUES ('e4', 'SALE_FINALIZED', 'e4', 1, 't', 's', 'now', '{}', 'PENDING',
+                     'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let next: i64 = conn
+            .query_row(
+                "SELECT seq FROM outbox_events WHERE event_id = 'e4'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(next, 4);
+    }
+
+    /// The inbound cursor is one row, by construction.
+    #[test]
+    fn the_inbound_cursor_cannot_become_two_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO sync_inbound_cursor (id, cursor, updated_at) VALUES (1, 'c-1', 'now')",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO sync_inbound_cursor (id, cursor, updated_at) VALUES (2, 'c-2', 'now')",
+                [],
+            )
+            .is_err());
     }
 
     #[test]

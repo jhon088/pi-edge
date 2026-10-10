@@ -88,6 +88,7 @@ pub enum OperationV1 {
     GetEdgeState,
     GetActiveTransaction,
     GetPendingOutbox(LimitRequestV1),
+    GetSyncStatus,
     GetJournal(LimitRequestV1),
     /// Turns this connection into an event stream. No further requests are
     /// accepted on it.
@@ -140,6 +141,11 @@ pub enum OperationV1 {
     ForceCloseBusinessDay(ForceCloseBusinessDayRequestV1),
     CloseBusinessDay,
 
+    /// Run one dispatch cycle now instead of waiting for the daemon's own
+    /// tick. Safe to call with no transport configured: it answers
+    /// `NOT_CONFIGURED` and changes nothing.
+    RunSyncCycle,
+
     // catalog import: open, stream, close, put in force
     BeginCatalogImport(BeginCatalogImportRequestV1),
     PutCatalogChunk(PutCatalogChunkRequestV1),
@@ -156,6 +162,8 @@ impl OperationV1 {
             OperationV1::GetEdgeState => "GET_EDGE_STATE",
             OperationV1::GetActiveTransaction => "GET_ACTIVE_TRANSACTION",
             OperationV1::GetPendingOutbox(_) => "GET_PENDING_OUTBOX",
+            OperationV1::GetSyncStatus => "GET_SYNC_STATUS",
+            OperationV1::RunSyncCycle => "RUN_SYNC_CYCLE",
             OperationV1::GetJournal(_) => "GET_JOURNAL",
             OperationV1::GetCatalogStatus => "GET_CATALOG_STATUS",
             OperationV1::GetCatalogImportStatus(_) => "GET_CATALOG_IMPORT_STATUS",
@@ -242,6 +250,7 @@ impl OperationV1 {
                 | OperationV1::CashOut(_)
                 | OperationV1::RequestSafeDrop(_)
                 | OperationV1::ApproveSafeDrop(_)
+                | OperationV1::RunSyncCycle
                 | OperationV1::RequestSessionClose
                 | OperationV1::DeclareClosingCash(_)
                 | OperationV1::ReopenSession(_)
@@ -330,6 +339,8 @@ pub enum ResultV1 {
     Transaction(RetailTransactionV1),
     MaybeTransaction(Option<RetailTransactionV1>),
     PendingOutbox(PendingOutboxV1),
+    SyncStatus(SyncStatusV1),
+    SyncCycle(SyncCycleV1),
     Journal(Vec<JournalEventV1>),
     CatalogStatus(CatalogStatusV1),
     CatalogImport(CatalogImportStatusV1),
@@ -362,6 +373,8 @@ impl ResultV1 {
             ResultV1::Transaction(_) => "TRANSACTION",
             ResultV1::MaybeTransaction(_) => "MAYBE_TRANSACTION",
             ResultV1::PendingOutbox(_) => "PENDING_OUTBOX",
+            ResultV1::SyncStatus(_) => "SYNC_STATUS",
+            ResultV1::SyncCycle(_) => "SYNC_CYCLE",
             ResultV1::Journal(_) => "JOURNAL",
             ResultV1::CatalogStatus(_) => "CATALOG_STATUS",
             ResultV1::CatalogImport(_) => "CATALOG_IMPORT",

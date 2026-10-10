@@ -236,6 +236,7 @@ where
         // second guarantee (ADR 027).
         let source_ref = movement_id;
         let event_id = EventId::from_uuid(self.ids.new_uuid());
+        let outbox_event_id = EventId::from_uuid(self.ids.new_uuid());
 
         self.store().transact(move |uow| {
             idempotent(uow, request_id, command_type, now, |uow| {
@@ -300,6 +301,28 @@ where
                         "quantity_thousandths": movement.quantity.thousandths(),
                         "reason_code": movement.reason_code,
                     }),
+                ))?;
+
+                // Manual movements are published; sale and refund movements
+                // are not. Those two are derivable from `SALE_FINALIZED` and
+                // `REFUND_COMPLETED`, and publishing them as well would hand
+                // the consumer the same depletion twice. A count somebody
+                // typed in has no other source (ADR 028).
+                let payload = serde_json::to_value(&movement)
+                    .map_err(|e| AppError::Serialization(e.to_string()))?;
+                uow.enqueue_outbox(&OutboxEvent::pending(
+                    outbox_event_id,
+                    OutboxEventType::InventoryMovementRecorded,
+                    movement.movement_id.to_string(),
+                    // A movement is written once and never changes: there is
+                    // no later version of this aggregate to order against.
+                    1,
+                    device.tenant_id.clone(),
+                    device.store_id.clone(),
+                    None,
+                    business_day_id,
+                    now,
+                    payload,
                 ))?;
 
                 let position = uow.inventory_position(&device.store_id, &product_ref)?;

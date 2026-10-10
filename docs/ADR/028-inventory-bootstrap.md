@@ -97,3 +97,10 @@ needing an outbox mirror of itself.
 * A store that needs a corrected opening position gets it through manual
   movements with stated reasons, which is auditable, rather than through a
   silent re-import.
+
+> **Amended by ADR 041 (milestone 11).** The publication this ADR anticipated is
+> built: a **manual** movement now writes an
+> `INVENTORY_MOVEMENT_RECORDED` outbox fact. Sale and refund movements are
+> still not published — they are derivable from `SALE_FINALIZED` and
+> `REFUND_COMPLETED`, and publishing both would hand the consumer the same
+> depletion twice. A bootstrap is not published either: it came from upstream.

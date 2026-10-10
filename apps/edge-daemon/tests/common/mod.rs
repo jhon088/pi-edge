@@ -49,6 +49,29 @@ impl DaemonProcess {
         Self::start_with_env(database, script, refund_authority, &[])
     }
 
+    /// Start a daemon that is **expected to refuse**, answering with what it
+    /// said on stderr.
+    ///
+    /// A misconfigured runtime must not come up quietly: it names the setting
+    /// it could not understand and exits.
+    pub fn start_failing(database: &Path, env: &[(&str, &str)]) -> String {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_edge-daemon"));
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let output = command
+            .arg("--db")
+            .arg(database)
+            .env("PI_EDGE_LOG", "error")
+            .output()
+            .expect("edge-daemon binary should be built before this test runs");
+        assert!(
+            !output.status.success(),
+            "the daemon started when it should have refused"
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
+
     /// Start a daemon with extra configuration, for the hardware drivers.
     pub fn start_with_env(
         database: &Path,

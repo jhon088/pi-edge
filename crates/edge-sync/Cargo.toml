@@ -1,0 +1,19 @@
+[package]
+name = "edge-sync"
+description = "Sync policy and the transport contract for PI.Edge: batch formation, deterministic ordering, outcome classification, backoff, the inbound message shapes, and a simulator. Knows nothing about SQLite, HTTP or the POS domain."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Pure Rust. No SQLite, no HTTP, no transport implementation beyond a
+# simulator, no application layer, no catalog knowledge.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

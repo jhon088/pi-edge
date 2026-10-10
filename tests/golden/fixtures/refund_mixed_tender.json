@@ -65,7 +65,7 @@
   "restock": true,
   "payments": [
     {
-      "refund_payment_id": "00000000-0000-0000-0000-000000000023",
+      "refund_payment_id": "00000000-0000-0000-0000-000000000024",
       "original_payment_id": "00000000-0000-0000-0000-00000000000e",
       "tender_type": "CASH",
       "requested": {
@@ -82,7 +82,7 @@
       "attempts": []
     },
     {
-      "refund_payment_id": "00000000-0000-0000-0000-000000000024",
+      "refund_payment_id": "00000000-0000-0000-0000-000000000025",
       "original_payment_id": "00000000-0000-0000-0000-000000000014",
       "tender_type": "CARD",
       "requested": {
@@ -98,7 +98,7 @@
       "status": "REFUNDED",
       "attempts": [
         {
-          "attempt_id": "00000000-0000-0000-0000-000000000026",
+          "attempt_id": "00000000-0000-0000-0000-000000000027",
           "attempt_number": 1,
           "status": "REFUNDED",
           "requested": {
@@ -111,7 +111,7 @@
             "currency": "MXN",
             "formatted": "430.00"
           },
-          "correlation_id": "00000000-0000-0000-0000-000000000027",
+          "correlation_id": "00000000-0000-0000-0000-000000000028",
           "provider_reference": "SIM-000000000000",
           "failure_code": null,
           "created_at": "2026-10-08T15:00:00.000000Z"

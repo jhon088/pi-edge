@@ -21,7 +21,7 @@ use edge_application::ports::{DeviceProfile, InventoryBootstrapState};
 use edge_application::queries::{
     CashPositionView, CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState,
     HardwareStatusView, InventoryPositionView, PendingOutbox, ProductLookup, RefundEligibilityView,
-    RefundView, SessionCloseResult,
+    RefundView, SessionCloseResult, SyncCycleOutcome, SyncCycleReport, SyncStatusView,
 };
 use edge_application::{AppError, PaymentOutcome};
 use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
@@ -260,6 +260,60 @@ impl From<&PendingOutbox> for PendingOutboxV1 {
             protocol_version: PROTOCOL_VERSION,
             pending_count: value.pending_count,
             events: value.events.iter().map(OutboxEventV1::from).collect(),
+        }
+    }
+}
+
+impl From<&SyncStatusView> for SyncStatusV1 {
+    fn from(view: &SyncStatusView) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            driver: view.driver.clone(),
+            pending: view.outbox.pending,
+            sending: view.outbox.sending,
+            sent: view.outbox.sent,
+            failed: view.outbox.failed,
+            oldest_pending_at: view.oldest_pending_at.map(|ts| ts.to_rfc3339()),
+            next_attempt_at: view.next_attempt_at.map(|ts| ts.to_rfc3339()),
+            inbound_cursor: view.inbound_cursor.clone(),
+            failed_facts: view
+                .failed
+                .iter()
+                .map(|fact| FailedFactV1 {
+                    seq: fact.seq,
+                    event_id: fact.event_id.to_string(),
+                    event_type: fact.event_type.as_str().to_owned(),
+                    aggregate_id: fact.aggregate_id.clone(),
+                    attempt_count: fact.attempt_count,
+                    error_code: fact.error_code.clone(),
+                    error_detail: fact.error_detail.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&SyncCycleReport> for SyncCycleV1 {
+    fn from(report: &SyncCycleReport) -> Self {
+        let (outcome, error_code, error_detail) = match &report.outcome {
+            SyncCycleOutcome::Idle => ("IDLE", None, None),
+            SyncCycleOutcome::Progressed => ("PROGRESSED", None, None),
+            SyncCycleOutcome::NotConfigured => ("NOT_CONFIGURED", None, None),
+            SyncCycleOutcome::TransportFailed { code, detail } => {
+                ("TRANSPORT_FAILED", Some(code.clone()), Some(detail.clone()))
+            }
+        };
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            driver: report.driver.clone(),
+            outcome: outcome.to_owned(),
+            attempted: report.attempted,
+            acknowledged: report.acknowledged,
+            rescheduled: report.rescheduled,
+            failed: report.failed,
+            inbound_applied: report.inbound_applied,
+            error_code,
+            error_detail,
         }
     }
 }

@@ -14,7 +14,7 @@ use edge_protocol::{
     ProductSelectorV1, PutCatalogChunkRequestV1, RefundEligibilityV1, RefundRequestV1, RefundV1,
     RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RetailTransactionV1,
     SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
-    SubmitScanRequestV1, TransactionPaymentsV1, TransactionRequestV1,
+    SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -47,6 +47,9 @@ pub trait EdgeClient: Debug + Send + Sync {
     fn get_edge_state(&self) -> Result<EdgeStateV1, ClientError>;
     fn get_active_transaction(&self) -> Result<Option<RetailTransactionV1>, ClientError>;
     fn get_pending_outbox(&self, limit: i64) -> Result<PendingOutboxV1, ClientError>;
+    /// What sync knows: how much is waiting, how much is stuck, how far the
+    /// inbound stream got.
+    fn get_sync_status(&self) -> Result<SyncStatusV1, ClientError>;
     fn get_journal(&self, limit: i64) -> Result<Vec<JournalEventV1>, ClientError>;
     fn catalog_status(&self) -> Result<CatalogStatusV1, ClientError>;
     fn catalog_import_status(
@@ -274,6 +277,10 @@ pub trait EdgeClient: Debug + Send + Sync {
         snapshot_id: &str,
         request_id: Option<Uuid>,
     ) -> Result<CatalogSnapshotViewV1, ClientError>;
+
+    /// Run one dispatch cycle now. Answers `NOT_CONFIGURED` and changes
+    /// nothing when this installation has no sync transport.
+    fn run_sync_cycle(&self, request_id: Option<Uuid>) -> Result<SyncCycleV1, ClientError>;
 
     /// Link diagnostics for the UI's connection indicator.
     fn connection(&self) -> ConnectionStatus;

@@ -33,27 +33,27 @@
       "occurred_at": "2026-10-08T15:00:00.000000Z"
     },
     {
-      "movement_id": "00000000-0000-0000-0000-00000000000d",
+      "movement_id": "00000000-0000-0000-0000-00000000000e",
       "product_ref": "SKU-16",
       "movement_type": "MANUAL_OUT",
       "direction": "OUT",
       "quantity": "0.500",
       "quantity_thousandths": 500,
-      "source_ref": "00000000-0000-0000-0000-00000000000d",
+      "source_ref": "00000000-0000-0000-0000-00000000000e",
       "transaction_id": null,
       "line_number": null,
       "reason_code": "DAMAGE",
       "occurred_at": "2026-10-08T15:00:00.000000Z"
     },
     {
-      "movement_id": "00000000-0000-0000-0000-00000000001c",
+      "movement_id": "00000000-0000-0000-0000-00000000001e",
       "product_ref": "SKU-16",
       "movement_type": "SALE",
       "direction": "OUT",
       "quantity": "1.000",
       "quantity_thousandths": 1000,
-      "source_ref": "00000000-0000-0000-0000-00000000000f:1",
-      "transaction_id": "00000000-0000-0000-0000-00000000000f",
+      "source_ref": "00000000-0000-0000-0000-000000000011:1",
+      "transaction_id": "00000000-0000-0000-0000-000000000011",
       "line_number": 1,
       "reason_code": null,
       "occurred_at": "2026-10-08T15:00:00.000000Z"

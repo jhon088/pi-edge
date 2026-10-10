@@ -533,6 +533,35 @@ export interface HardwareDevice {
   last_error_message: string | null;
 }
 
+/** One fact the server rejected for good. Each one needs a person. */
+export interface FailedFact {
+  seq: number;
+  event_id: string;
+  event_type: string;
+  aggregate_id: string;
+  attempt_count: number;
+  error_code: string | null;
+  error_detail: string | null;
+}
+
+/**
+ * What sync knows.
+ *
+ * `driver` is an adapter name — never a host, a URL or a credential.
+ */
+export interface SyncStatus {
+  protocol_version: number;
+  driver: string;
+  pending: number;
+  sending: number;
+  sent: number;
+  failed: number;
+  oldest_pending_at: string | null;
+  next_attempt_at: string | null;
+  inbound_cursor: string | null;
+  failed_facts: FailedFact[];
+}
+
 export interface HardwareStatus {
   scanner: HardwareDevice;
   printer: HardwareDevice;

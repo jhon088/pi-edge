@@ -23,6 +23,7 @@ import type {
   Refund,
   RefundEligibility,
   StateChangedEvent,
+  SyncStatus,
   TransactionPayments,
 } from "./types";
 
@@ -126,6 +127,11 @@ export function fetchTransactionRefunds(
  */
 export function fetchHardwareStatus(): Promise<HardwareStatus> {
   return invoke<HardwareStatus>("hardware_status");
+}
+
+/** What sync knows. Read-only: the window never triggers a dispatch cycle. */
+export function fetchSyncStatus(): Promise<SyncStatus> {
+  return invoke<SyncStatus>("sync_status");
 }
 
 /** Print a diagnostic page. Carries no bytes and no address. */

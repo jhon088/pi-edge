@@ -13,7 +13,7 @@ use edge_inventory::{InventoryMovement, InventoryPosition};
 use edge_refunds::{FiscalState, LineRefundable, Refund, RefundPaymentView, TenderRefundable};
 use serde::{Deserialize, Serialize};
 
-use crate::ports::DeviceProfile;
+use crate::ports::{DeviceProfile, OutboxCounts};
 
 /// Everything a client needs to render the POS after a cold start.
 /// Rebuilt entirely from SQLite: nothing lives only in memory.
@@ -174,4 +174,63 @@ pub struct HardwareStatusView {
     pub scanner: HardwareDeviceStatus,
     pub printer: HardwareDeviceStatus,
     pub drawer: HardwareDeviceStatus,
+}
+
+// --------------------------------------------------------------------- sync
+
+/// What sync knows: how much is waiting, how much is stuck, how far the
+/// inbound stream got.
+///
+/// `driver` names the adapter, never a host, a port or a credential — the same
+/// rule the hardware view follows (ADR 035, ADR 040).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncStatusView {
+    pub driver: String,
+    pub outbox: OutboxCounts,
+    /// When the oldest undelivered fact happened. How far behind this till is.
+    pub oldest_pending_at: Option<Timestamp>,
+    /// When the next attempt is due, if one is waiting out a backoff.
+    pub next_attempt_at: Option<Timestamp>,
+    pub inbound_cursor: Option<String>,
+    /// The facts the consumer rejected for good. Shown, not hidden: each one
+    /// needs a person (ADR 041).
+    pub failed: Vec<FailedFactView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailedFactView {
+    pub seq: i64,
+    pub event_id: EventId,
+    pub event_type: OutboxEventType,
+    pub aggregate_id: String,
+    pub attempt_count: i64,
+    pub error_code: Option<String>,
+    pub error_detail: Option<String>,
+}
+
+/// What one dispatch cycle did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncCycleReport {
+    pub driver: String,
+    pub outcome: SyncCycleOutcome,
+    /// Facts claimed and handed to the transport.
+    pub attempted: i64,
+    pub acknowledged: i64,
+    pub rescheduled: i64,
+    pub failed: i64,
+    pub inbound_applied: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE", tag = "status")]
+pub enum SyncCycleOutcome {
+    /// Nothing was waiting in either direction.
+    Idle,
+    /// Facts moved, messages were applied, or both.
+    Progressed,
+    /// No transport is configured. Not a failure: the till keeps selling and
+    /// the facts keep accumulating (ADR 040).
+    NotConfigured,
+    /// The transport failed. Whatever was in flight is pending again.
+    TransportFailed { code: String, detail: String },
 }

@@ -113,6 +113,18 @@ for the upstream system.
 When sync exists, the metadata arrives from PI.COMMERCE Server and this fixture
 is replaced by the real thing — not promoted to a POS capability.
 
+> **Amended by ADR 041 (milestone 11).** That real thing now exists: the inbound
+> sync projection is the **only production write** to
+> `transaction_fiscal_metadata`. There is still no local operation, protocol
+> message, EdgeClient method, CLI command or UI control that declares a sale
+> invoiced, and the `testing`-gated fixture now delegates to the same projection
+> so the two cannot drift apart. The projection only ever moves
+> `NOT_INVOICED -> INVOICED`: a re-sent `NOT_INVOICED` is a no-op and can never
+> un-invoice a sale, and an `INVOICED` message with no invoice reference is
+> refused. `SimulatorSyncTransport` can deliver this message in a test; that
+> makes it a simulation of a message a future external authority will send, not
+> a fiscal authority of its own.
+
 ## Consequences
 
 * A refund can be commercially complete with its credit note still pending, and

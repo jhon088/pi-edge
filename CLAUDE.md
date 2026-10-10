@@ -89,12 +89,15 @@ No legacy kept "just in case": when a path is replaced, the old one is deleted
 in the same milestone. Minimal own development — do not build what is not
 asked for, and do not stub what has no use case yet.
 
-Currently out of scope: HTTP catalog sync, ERP, coupons, loyalty, customer
-pricing, inventory sync and reconciliation, store-wide inventory coordination
-(Store Hub, shared ledger, reservations), the receipt lifecycle, CFDI printing,
-real Mercado Pago, payment terminal hardware, customer display, KDS, scales,
-Bluetooth/NFC, generic serial frameworks, network printer auto-discovery, remote
-hardware management, RBAC, EOD scheduler, production checkout UI.
+Currently out of scope: an **HTTP sync transport** — the sync engine and its
+transport contract exist (milestone 11), the HTTP client, URLs, routes,
+authentication and tenant routing do not, and there is no fake server; retention
+and purge of synced facts; ERP, coupons, loyalty, customer pricing; store-wide
+inventory coordination (Store Hub, shared ledger, reservations); the receipt
+lifecycle, CFDI printing; real Mercado Pago, payment terminal hardware, customer
+display, KDS, scales, Bluetooth/NFC, generic serial frameworks, network printer
+auto-discovery, remote hardware management; RBAC, EOD scheduler, production
+checkout UI.
 
 Never: Flutter, Dart, Odoo, ERP logic in the core, local microservices,
 overengineering.

@@ -22,6 +22,7 @@ pub mod migrations;
 mod payments;
 mod refunds;
 pub mod sqlite;
+mod sync;
 
 pub use error::StorageError;
 pub use lock::SingleWriterLock;

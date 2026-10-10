@@ -26,6 +26,7 @@ use crate::error::AppError;
 use crate::hardware_service::Hardware;
 use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
 use crate::queries::{EdgeState, PendingOutbox};
+use crate::sync_service::SyncRuntime;
 use crate::CORE_VERSION;
 
 /// Headless POS core.
@@ -47,6 +48,11 @@ pub struct EdgeApplication<S, C, I, P = SimulatorPaymentProvider> {
     /// through every harness of every earlier milestone for no benefit
     /// (ADR 035).
     pub(crate) hardware: Hardware,
+    /// How this installation talks to PI.COMMERCE Server, if it does.
+    ///
+    /// Default: nothing configured. A till with no server is a valid till
+    /// (ADR 040).
+    pub(crate) sync: SyncRuntime,
 }
 
 impl<S, C, I> EdgeApplication<S, C, I, SimulatorPaymentProvider>
@@ -86,7 +92,18 @@ where
             ids,
             payments,
             hardware,
+            sync: SyncRuntime::unconfigured(),
         }
+    }
+
+    /// Core that syncs through the transport the composition root configured.
+    ///
+    /// Builder-style rather than a sixth constructor argument: every earlier
+    /// composition root and test harness keeps working unchanged, and the
+    /// default stays "no sync configured" (ADR 040).
+    pub fn with_sync(mut self, sync: SyncRuntime) -> Self {
+        self.sync = sync;
+        self
     }
 
     /// The devices this core drives, for diagnostics and for tests that assert

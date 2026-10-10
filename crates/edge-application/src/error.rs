@@ -36,6 +36,12 @@ pub enum AppError {
     #[error(transparent)]
     Hardware(#[from] HardwareError),
 
+    /// Sync could not happen. **Never a commercial failure**: an absent,
+    /// unreachable or unreadable server changes nothing about what this
+    /// installation may sell (ADR 040).
+    #[error(transparent)]
+    Sync(#[from] edge_sync::SyncError),
+
     /// A scan arrived with no sale to add it to. PI.Edge does not open one on
     /// its own (ADR 036).
     #[error("a scan needs an active sale; none is open")]
@@ -132,6 +138,7 @@ impl AppError {
             AppError::Refund(error) => error.code(),
             // The hardware context publishes its own codes.
             AppError::Hardware(error) => error.code(),
+            AppError::Sync(error) => error.code(),
             AppError::ScanWithoutTransaction => "SCAN_NO_ACTIVE_TRANSACTION",
             AppError::SessionCloseBlocked { .. } => "SESSION_CLOSE_BLOCKED",
             AppError::BusinessDayCloseBlocked { .. } => "BUSINESS_DAY_CLOSE_BLOCKED",

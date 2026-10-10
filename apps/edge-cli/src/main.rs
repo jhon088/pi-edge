@@ -405,6 +405,14 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: i64,
     },
+    /// What sync knows: what is waiting, what is stuck, where the inbound
+    /// stream got to.
+    SyncStatus,
+    /// Run one dispatch cycle now instead of waiting for the daemon's tick.
+    ///
+    /// Answers `NOT_CONFIGURED` and changes nothing when this installation has
+    /// no sync transport, which is a normal state and not a failure.
+    SyncRun,
     /// Print core events as they happen (same stream the UI consumes).
     Watch {
         /// Stop after this many events. 0 means run until interrupted.
@@ -766,6 +774,8 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             "events": client.get_journal(*limit)?,
         })),
         Command::Outbox { limit } => to_value(&client.get_pending_outbox(*limit)?),
+        Command::SyncStatus => to_value(&client.get_sync_status()?),
+        Command::SyncRun => to_value(&client.run_sync_cycle(request_id)?),
         Command::Watch { count } => watch(&client, *count),
     }
 }

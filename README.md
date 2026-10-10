@@ -7,10 +7,12 @@ Local runtime of the PI.COMMERCE POS. **The POS is a headless Rust runtime**
 ERP / master systems
        |  product master data
        v
-PI.COMMERCE Server
-       ^   |  versioned catalog snapshot
-    Sync   |  (imported today from a file; HTTP sync not built yet)
-       ^   v
+PI.COMMERCE Server .......... does not exist yet
+       ^   |  versioned catalog snapshot, prices, promotions,
+    Sync   |  store settings, fiscal metadata  (inbound)
+       |   |  sales, refunds, manual stock movements, session
+       |   v  and day closures                 (outbound)
+  SyncTransport ............. simulator today; HTTP when there is a server
 edge-daemon ................. the production runtime: owns the single-writer
   edge-application              lock, SQLite and the application core
   edge-domain
@@ -37,6 +39,7 @@ the active sale, the journal and the outbox live in the daemon.
 | `crates/edge-cash` | the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Pure Rust |
 | `crates/edge-inventory` | the append-only stock ledger, its movement types and directions, and the derived on-hand fold. Pure Rust |
 | `crates/edge-refunds` | the refund document, its lines, the refundable arithmetic over a closed sale, the financial refund lifecycle and the fiscal consequence. Pure Rust |
+| `crates/edge-sync` | sync policy and the transport contract: batch formation, deterministic ordering, backoff, outcome classification, the inbound message shapes and a scripted simulator. No SQLite, no HTTP |
 | `crates/edge-hardware` | the device model, the deterministic scan parser, `PrinterPort`, `CashDrawerPort`, the ESC/POS renderer and transport, and simulators. The only crate that may contain an escape sequence |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
@@ -46,7 +49,91 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 10 (hardware runtime V1)
+## Status — milestone 11 (sync engine + contract V1)
+
+Done: PI.Edge is ready to sync, and does not need to. **The register works
+indefinitely offline; sync is an eventual capability, never a requirement to
+continue a locally permitted sale.**
+
+```text
+commercial domain ──facts──> outbox (SQLite) ──> edge-sync policy ──> SyncTransport
+   knows no sync            durable, ordered      pure, no I/O          ├─ Unconfigured (default)
+                                                                        ├─ Simulator (opt-in)
+                                                                        └─ HTTP (not built)
+```
+
+* **No sync configured is a healthy register**, not a degraded one. Every sync
+  operation answers `SYNC_NOT_CONFIGURED`; the till sells, keeps its facts,
+  closes its day and reopens tomorrow. **Nothing selects a simulator
+  implicitly** — `PI_EDGE_SYNC` absent or `none` means no transport, and an
+  unrecognised value refuses to start (ADR 040).
+* **A batch is a unit of transport, never of truth.** Each fact is answered on
+  its own: acknowledged → `SENT`, transient → `PENDING` with a counted attempt
+  and a deterministic backoff, permanent → `FAILED` (ADR 041).
+* **`FAILED` is terminal, visible and never retried automatically.** It keeps
+  its reason, it is never deleted, and it waits for a person. Its aggregate is
+  held back; every other aggregate keeps flowing.
+* **`SENDING` is not a resting state.** A fact in flight when the process died
+  goes back to `PENDING` at startup and is resent with **the same `event_id`**;
+  the server deduplicates. At-least-once, deliberately — and with no leases, no
+  locks and no heartbeats, because there is one writer (ADR 041).
+* **Ordering is `seq`, plus one rule**: at most one fact per aggregate per
+  batch, so version `n+1` is never in flight before `n` is acknowledged. No
+  dependency graph.
+* **Nothing is purged.** `PENDING`, `SENDING`, `SENT` and `FAILED` are all kept;
+  retention is deferred until there is a real operational need.
+* **Inbound: the effect commits before the cursor moves, never the reverse.** A
+  crash in between re-delivers the message, and every inbound message is
+  idempotent on something the core already had. The first unreadable message
+  stops the cycle rather than being skipped, so an import can be left
+  `IMPORTING` but never partially `ACTIVE`.
+* **There is one catalog importer.** Inbound catalog drives the existing
+  milestone-3 lifecycle — begin, chunk, commit, activate — and catalog, prices
+  and promotions are one snapshot, not three channels.
+* **PI.Edge consumes fiscal metadata; it does not declare a sale invoiced.** The
+  inbound projection is now the only production write to
+  `transaction_fiscal_metadata`, and it only ever moves
+  `NOT_INVOICED -> INVOICED` (ADR 032, amended).
+* **Production refunds are online.** Authorisation is obtained for *that*
+  operation, materialised on the refund as evidence, and never stored as a
+  standing permission. PI.Edge sells offline, it does not refund offline — and
+  the three refusals are three codes, because the operator's next move differs:
+  `REFUND_AUTHORITY_REQUIRED` (none configured),
+  `REFUND_AUTHORITY_UNAVAILABLE` (configured, unreachable),
+  `REFUND_NOT_AUTHORIZED` (reached, and it said no) (ADR 042).
+* **Hardware is not in the inbound contract**, and neither is identity. A
+  printer host or a drawer driver stays in the composition root (ADR 039,
+  ADR 040).
+
+What travels out:
+
+| Fact | When | Aggregate version |
+| --- | --- | --- |
+| `SALE_FINALIZED` | a sale finalizes | the sale's |
+| `REFUND_ACCEPTED` | the goods are back and the return is irrevocable | 1 |
+| `REFUND_COMPLETED` | the money is settled | 2 |
+| `INVENTORY_MOVEMENT_RECORDED` | a **manual** movement — sale and refund movements are derivable | 1 |
+| `REGISTER_SESSION_CLOSED` | the blind close completes | the session's |
+| `BUSINESS_DAY_CLOSED` | the day closes | the day's |
+
+A refund travels **twice**, as two versions of one aggregate: a refund can sit
+in `FINANCIAL_PENDING` for days, and the consumer must not hear about the
+returned merchandise only once the money resolves. Each event is enqueued in the
+same transaction as the transition it describes.
+
+```bash
+edge-cli sync-status                    # waiting, stuck, inbound cursor
+edge-cli sync-run                       # one cycle now, instead of the daemon's tick
+PI_EDGE_SYNC=simulator edge-daemon --db ./data/pi-edge.db   # opt-in, development only
+```
+
+**There is no PI.COMMERCE Server and no fake one.** No HTTP client, no URL, no
+route, no authentication, no tenant routing. `SimulatorSyncTransport` accepts
+batches, answers them as a test scripted, remembers the ids it has seen and
+delivers inbound messages — and implements none of the future server's business
+rules.
+
+## Previously — milestone 10 (hardware runtime V1)
 
 Done: real devices, with the core still knowing nothing about any of them.
 
@@ -190,9 +277,9 @@ edge-cli refund-reconcile --refund <id>  # resolves an unknown; never refunds ag
 edge-cli refund-show --refund <id>
 ```
 
-Refunds are durable locally and in their own tables; **M11 Sync must publish
-them.** No outbox event was added, because there is no consumer yet and the
-frozen rule is no events without one.
+Refunds are durable locally and in their own tables. Milestone 11 publishes
+them: a completed refund writes a `REFUND_COMPLETED` outbox fact, once, when
+the goods and the money have both settled.
 
 ## Previously — milestone 8 (inventory ledger V1)
 
@@ -268,9 +355,10 @@ edge-cli inventory-in  --product P-JAMON-GRANEL --qty 2500 --reason RECEIPT
 edge-cli inventory-out --product P-JAMON-GRANEL --qty 500  --reason DAMAGE
 ```
 
-No cloud sync yet: the ledger is local to one installation, and consolidation
-with PI.COMMERCE Server — which is also what would make a position store-wide
-rather than per-POS — is a later milestone that this schema is shaped for.
+The ledger is local to one installation. Milestone 11 publishes **manual**
+movements outbound; consolidation across the tills of a store — which is what
+would make a position store-wide rather than per-POS — still needs a server, and
+there is not one yet.
 
 ## Previously — milestone 7 (cash management + sessions + EOD V1)
 
@@ -389,7 +477,8 @@ Tauri screen.
 
 **A client sends identity and quantity. It cannot state a price or a discount.**
 
-Not built yet, deliberately: HTTP catalog sync, ERP integration, coupons,
+Not built yet, deliberately: an HTTP sync transport (the engine and its
+contract exist; the client does not), ERP integration, coupons,
 loyalty, customer-specific pricing, product groups and categories, quantity
 breaks, inventory, commercial refunds, real Mercado Pago, physical terminals,
 CFDI, iMin adapters, Android service, updater, telemetry, production checkout
@@ -749,6 +838,28 @@ PI.COMMERCE Server validates the original sale. Until it exists,
 `PI_EDGE_REFUND_AUTHORITY=dev-accept-local` turns on a development stand-in that
 marks what it produces; with no switch, refunds are refused.
 
+## Sync
+
+```text
+PI_EDGE_SYNC=simulator | none
+```
+
+Read **once, in the composition root**, like the hardware below it. Absent,
+empty or `none` means *no transport*: every sync operation answers
+`SYNC_NOT_CONFIGURED`, the register keeps selling and the facts keep
+accumulating durably. An unrecognised value refuses to start — a till that syncs
+somewhere nobody asked for is worse than one that will not boot.
+
+**A simulator is opt-in**, the same rule as hardware and for the same reason
+(ADR 040). There is no HTTP driver to configure because there is no server to
+talk to; when there is, it becomes one more arm of the same function and nothing
+above it changes.
+
+With a transport configured, the daemon runs **one** dispatcher thread: claim,
+call, record — the attempt durable before the remote is contacted. A fact in
+flight when the process stops goes back to the queue at the next startup with
+the same `event_id`.
+
 ## Hardware
 
 ```text
@@ -853,7 +964,12 @@ arithmetic are denied outside tests.
 | `tests/integration/tests/hardware.rs` | hardware on real SQLite: one scan one product, two scans two units, one event one unit, no-sale and unknown-barcode refusals, the basket freeze applying to a scan, drawer on cash sale / mixed tender / cash refund, **not** on card sale, card refund or reprint, diagnostic opening every time, replay opening once, a down drawer and a down printer changing no money or stock, a timeout leaving the device `DEGRADED`, reprint changing nothing, the second automatic receipt refused, and the status view disclosing no address |
 | `tests/crash-recovery/tests/hardware_recovery.rs` | a replayed payment and a replayed cash refund opening the drawer once **across a restart** (the simulator's counter resets, so only durable state can prevent it); a failed action still retryable; devices back to `UNKNOWN` after a restart while `last_success_at` survives; a crash before the claim commits leaving no opening; a reprint after a restart still moving nothing |
 | `apps/edge-daemon/tests/hardware.rs` | the hardware surface over real IPC: the status view never disclosing the configured host or port, the `imin` driver reported as `imin` and refusing without substituting another, a scan becoming one item, a malformed scan as `INVALID_ARGUMENT`, a down printer changing nothing commercial, the two diagnostic operations carrying no payload at all, and the CLI driving it from another process |
-| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, that the create-refund payload cannot assert authority or a fiscal state, and that **no hardware payload can name a host, a port, a driver or carry bytes** |
+| `crates/edge-sync` unit tests | the policy itself: a batch in `seq` order whatever order it was given, a later aggregate version waiting its turn, a `FAILED` aggregate skipped while the rest flow, the batch limit, the backoff curve and its ceiling, each outcome mapping to exactly one next state; and the simulator's own guarantees — a timeout that still delivered, an unavailable transport that delivered nothing, a replay counted twice, a receipt that fails validation |
+| `tests/integration/tests/sync.rs` | sync on real SQLite: a register with no transport selling and reporting `unconfigured`, a whole day offline keeping all five facts, several days across restarts in `seq` order, a restart handing over the same event ids, a configured simulator acknowledging a batch, facts oldest-first across capped batches, transient → pending with a counted attempt and a scheduled retry, permanent → `FAILED` visible and never retried, a terminal fact not blocking unrelated ones, an unreachable server and an unreadable answer concluding nothing, a batch received before a crash delivered twice and counted once, a second acknowledgement moving nothing, a sale published exactly once, a refund published twice — `REFUND_ACCEPTED` at acceptance and `REFUND_COMPLETED` at settlement — with the acceptance already durable while a lost provider answer leaves the money `FINANCIAL_PENDING`, version 2 waiting until version 1 is acknowledged, and a permanently rejected version 1 blocking its own version 2 and nothing else, a manual movement published and a sale movement not, session and day published at close, a catalog arriving through the existing import lifecycle with its prices and promotions pricing a sale, a redelivered catalog changing nothing, an unreadable message stopping the cursor where it was, a chunk for an import that was never opened refused, fiscal metadata arriving only inbound and never un-invoicing, and a commercial setting arriving while identity cannot |
+| `tests/crash-recovery/tests/sync_recovery.rs` | with a **real injected commit failure** in the window that matters: a fact the server acknowledged and PI.Edge never recorded, resent with the same `event_id` and counted once; recovery running even with sync switched off; an inbound effect durable while its cursor is not, re-delivered and resumed into one snapshot; and a batch answered by silence twice, landing once |
+| `apps/edge-daemon/tests/sync.rs` | the sync surface over real IPC: a daemon with no `PI_EDGE_SYNC` reporting `unconfigured` and selling anyway, an unknown driver refusing to start, the daemon's **own dispatcher** draining the outbox with no client asking, a week of offline facts delivered after the first connection and nothing purged, and no operation able to name a server |
+| `crates/edge-storage` migration tests | migration 0010's rebuild: `FAILED` accepted only with a reason, the status set still closed, the delete guard and both indexes back, and a **populated** outbox upgraded with every row, state, attempt count, payload and `seq` preserved and the sequence continuing |
+| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, that the create-refund payload cannot assert authority or a fiscal state, that **no hardware payload can name a host, a port, a driver or carry bytes**, and that the sync surface is two operations with no payload and a status view with no address or credential |
 
 ## Non-negotiable boundaries
 
@@ -871,7 +987,8 @@ arithmetic are denied outside tests.
   are append-only in the database, not merely by convention.
 * A refund is never a payment reversal, and never re-prices the sale it refunds.
 * A refund requires authority over the original sale, resolved by the runtime
-  and refused by default. No client can assert it.
+  and refused by default. No client can assert it, and an unconfigured, an
+  unreachable and a refusing authority are three distinct answers.
 * PI.Edge issues no fiscal document, and never declares a sale invoiced. It
   consumes fiscal metadata an upstream system owns, and records which document
   is owed.
@@ -894,6 +1011,19 @@ arithmetic are denied outside tests.
   automatic one happens once per commercial cause.
 * Public ids are UUIDs; server-owned ids (tenant, store, register, operator,
   product, price book, promotion) are opaque strings PI.Edge never mints.
+* PI.Edge works indefinitely offline. Sync is an eventual capability, never a
+  requirement to continue a locally permitted sale — and no sync configured is a
+  healthy register, not a degraded one.
+* A production refund is authorised online, for that one operation. No
+  authorisation is ever stored as a standing permission, so PI.Edge sells
+  offline and does not refund offline.
+* The commercial domain knows nothing about sync, and the sync engine knows
+  nothing about HTTP. There is no HTTP transport and no fake server.
+* A fact is delivered at least once with a stable `event_id`, and no fact is
+  ever deleted before it is delivered. Nothing is purged at all today.
+* Inbound, the local effect commits before the cursor moves. There is exactly
+  one catalog importer, and hardware and identity are not in the inbound
+  contract.
 * No Flutter, no Dart, no Odoo, no ERP logic, no local microservices.
 
 Decisions and their trade-offs live in [`docs/ADR`](docs/ADR).

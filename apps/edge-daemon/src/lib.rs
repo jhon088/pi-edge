@@ -23,6 +23,7 @@ pub mod error;
 pub mod hardware_config;
 pub mod refund_authority;
 pub mod state;
+pub mod sync_config;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use edge_application::ports::Clock;
+use edge_application::sync_service::SyncRuntime;
 use edge_application::EdgeApplication;
 use edge_application::{SystemClock, UuidFactory};
 use edge_ipc::credentials::{FileCredentialProvider, LocalCredentialProvider};
@@ -54,12 +56,19 @@ pub const DEFAULT_ACCEPT_POLL: Duration = Duration::from_millis(20);
 /// How long shutdown waits for in-flight requests to finish.
 pub const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
+/// How often the runtime tries to drain the outbox.
+///
+/// Only runs at all when a transport is configured. Facts that miss a tick
+/// lose nothing: they are durable, and the next tick takes them.
+pub const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     /// Database path; the runtime layout and endpoint derive from it.
     pub database: PathBuf,
     pub accept_poll: Duration,
     pub shutdown_grace: Duration,
+    pub sync_interval: Duration,
     /// Print one machine-readable readiness line on stdout, for supervisors
     /// and tests. Never contains the credential.
     pub announce_ready: bool,
@@ -71,6 +80,7 @@ impl DaemonConfig {
             database: database.into(),
             accept_poll: DEFAULT_ACCEPT_POLL,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            sync_interval: DEFAULT_SYNC_INTERVAL,
             announce_ready: true,
         }
     }
@@ -105,17 +115,39 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
     // or a port must never be reachable from a use case or a protocol payload
     // (ADR 039).
     let hardware = hardware_config::from_env().map_err(DaemonError::Configuration)?;
-    let core = Arc::new(EdgeApplication::with_hardware(
-        store,
-        SystemClock,
-        UuidFactory,
-        provider,
-        hardware,
-    ));
-    // How refunds get authority over an original sale. Off unless explicitly
-    // switched on, so the production rule is the default (ADR 030).
-    let refund_authority =
-        refund_authority::RefundAuthoritySource::from_env().map_err(DaemonError::Configuration)?;
+    // Whether there is a server to talk to. Absent means no: facts accumulate
+    // durably and the till keeps selling (ADR 040).
+    let transport = sync_config::from_env().map_err(DaemonError::Configuration)?;
+    let sync = match &transport {
+        Some(transport) => SyncRuntime::with_transport(Arc::clone(transport)),
+        None => SyncRuntime::unconfigured(),
+    };
+    let core = Arc::new(
+        EdgeApplication::with_hardware(store, SystemClock, UuidFactory, provider, hardware)
+            .with_sync(sync),
+    );
+    // How refunds get authority over an original sale. The explicit
+    // development switch wins when it is set; otherwise a configured
+    // transport *is* the authority, and with neither every refund is refused.
+    // The production rule — a refund is authorised online, for that one
+    // operation — is the default in all three cases (ADR 030, ADR 042).
+    let refund_authority = match refund_authority::RefundAuthoritySource::from_env()
+        .map_err(DaemonError::Configuration)?
+    {
+        refund_authority::RefundAuthoritySource::Unavailable => match &transport {
+            Some(transport) => {
+                refund_authority::RefundAuthoritySource::Transport(Arc::clone(transport))
+            }
+            None => refund_authority::RefundAuthoritySource::Unavailable,
+        },
+        explicit => explicit,
+    };
+
+    // Anything left in flight when the previous process stopped goes back in
+    // the queue, with the same event ids. Done whether or not a transport is
+    // configured: it is local state, and a `SENDING` row is never a resting
+    // state (ADR 041).
+    core.recover_interrupted_sync()?;
     let state = Arc::new(state::DaemonState::new(migrations::target_version()));
 
     let endpoint = paths.endpoint()?;
@@ -157,6 +189,18 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
             .spawn(move || accept_loop(&listener, &incoming))?;
     }
 
+    // The dispatcher, when there is somewhere to dispatch to. One thread,
+    // one owner of the outbox — which is exactly why recovery needs no lease
+    // and no heartbeat (ADR 041).
+    if transport.is_some() {
+        let core = Arc::clone(&core);
+        let shutdown = Arc::clone(&shutdown);
+        let interval = config.sync_interval;
+        std::thread::Builder::new()
+            .name("edge-sync".to_owned())
+            .spawn(move || sync_loop(&core, &shutdown, interval))?;
+    }
+
     while !shutdown.load(Ordering::SeqCst) {
         match accepted.recv_timeout(config.accept_poll) {
             Ok(connection) => {
@@ -177,6 +221,36 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
     drop(lock);
     tracing::info!("edge daemon stopped");
     Ok(())
+}
+
+/// Drain the outbox, over and over, until shutdown.
+///
+/// A cycle that finds the server unreachable is not an error worth escalating:
+/// the facts are durable, the backoff is recorded, and the next tick tries
+/// again. Only a storage fault is logged as a failure, because that is a bug.
+fn sync_loop(core: &Arc<dispatch::Core>, shutdown: &Arc<AtomicBool>, interval: Duration) {
+    while !shutdown.load(Ordering::SeqCst) {
+        match core.run_sync_cycle() {
+            Ok(report) => {
+                if report.attempted > 0 || report.inbound_applied > 0 {
+                    tracing::info!(
+                        attempted = report.attempted,
+                        acknowledged = report.acknowledged,
+                        rescheduled = report.rescheduled,
+                        failed = report.failed,
+                        inbound_applied = report.inbound_applied,
+                        "sync cycle"
+                    );
+                }
+            }
+            Err(error) => tracing::error!(%error, "a sync cycle could not complete"),
+        }
+        // Slept in slices so a signal does not wait out the whole interval.
+        let deadline = Instant::now() + interval;
+        while Instant::now() < deadline && !shutdown.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 /// Hand every accepted connection to the main loop until the endpoint closes.

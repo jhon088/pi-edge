@@ -267,6 +267,55 @@ pub struct PendingOutboxV1 {
     pub events: Vec<OutboxEventV1>,
 }
 
+/// What sync knows, for an operator and for a diagnostics panel.
+///
+/// `driver` is an adapter name — `unconfigured`, `simulator` — and never a
+/// host, a port, a URL or a credential. A diagnostic view must not become a
+/// way to read the installation's configuration (ADR 040).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncStatusV1 {
+    pub protocol_version: u32,
+    pub driver: String,
+    pub pending: i64,
+    pub sending: i64,
+    pub sent: i64,
+    /// Facts the server rejected for good. Each one needs a person.
+    pub failed: i64,
+    /// When the oldest undelivered fact happened: how far behind this till is.
+    pub oldest_pending_at: Option<String>,
+    pub next_attempt_at: Option<String>,
+    pub inbound_cursor: Option<String>,
+    pub failed_facts: Vec<FailedFactV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailedFactV1 {
+    pub seq: i64,
+    pub event_id: String,
+    pub event_type: String,
+    pub aggregate_id: String,
+    pub attempt_count: i64,
+    pub error_code: Option<String>,
+    pub error_detail: Option<String>,
+}
+
+/// What one dispatch cycle did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncCycleV1 {
+    pub protocol_version: u32,
+    pub driver: String,
+    /// `IDLE`, `PROGRESSED`, `NOT_CONFIGURED` or `TRANSPORT_FAILED`.
+    pub outcome: String,
+    pub attempted: i64,
+    pub acknowledged: i64,
+    pub rescheduled: i64,
+    pub failed: i64,
+    pub inbound_applied: i64,
+    /// Present only when the transport failed.
+    pub error_code: Option<String>,
+    pub error_detail: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEventV1 {
     pub event_id: String,

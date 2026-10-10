@@ -230,6 +230,7 @@ dependencies = [
  "edge-inventory",
  "edge-payments",
  "edge-refunds",
+ "edge-sync",
  "serde",
  "serde_json",
  "thiserror",
@@ -300,6 +301,7 @@ dependencies = [
  "edge-payments",
  "edge-refunds",
  "edge-storage",
+ "edge-sync",
  "serde_json",
  "tempfile",
  "uuid",
@@ -322,6 +324,7 @@ dependencies = [
  "edge-protocol",
  "edge-refunds",
  "edge-storage",
+ "edge-sync",
  "serde_json",
  "signal-hook",
  "tempfile",
@@ -386,6 +389,7 @@ dependencies = [
  "edge-protocol",
  "edge-refunds",
  "edge-storage",
+ "edge-sync",
  "serde_json",
  "tempfile",
  "uuid",
@@ -471,6 +475,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "edge-sync"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
  "uuid",
 ]
 

@@ -168,10 +168,16 @@ where
         let now = self.clock.now();
         self.store().transact(move |uow| {
             let snapshot = load_snapshot(uow, cmd.snapshot_id)?;
-            snapshot.require_importing()?;
 
-            // Replay handling before any write: identical content is a no-op,
-            // different content for the same index is a hard conflict.
+            // Replay handling before anything else: identical content is a
+            // no-op, different content for the same index is a hard conflict.
+            //
+            // Checked *before* the import is required to be open, because a
+            // replay is a replay whatever the snapshot has become since. A
+            // delivery channel that retries — which milestone 11's at-least-
+            // once sync is — re-sends chunks of an import that may already be
+            // committed or in force, and the honest answer to "I already have
+            // exactly this" is yes, not `IMPORT_NOT_OPEN`.
             if let Some(stored) = uow.find_catalog_chunk(cmd.snapshot_id, cmd.chunk_index)? {
                 if stored.chunk_hash == cmd.chunk_hash {
                     tracing::debug!(
@@ -187,6 +193,9 @@ where
                 }
                 .into());
             }
+
+            // New content, so the import has to still be open for it.
+            snapshot.require_importing()?;
 
             // Validate the whole chunk before writing any of it: a malformed
             // record must not leave half a chunk behind.

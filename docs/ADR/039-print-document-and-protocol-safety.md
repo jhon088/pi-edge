@@ -76,3 +76,9 @@ driven by nothing.
   neither can be made to do anything else.
 * The receipt's content will change when its own milestone defines it. Nothing
   persisted here depends on its current shape.
+
+> **Extended by ADR 040 (milestone 11).** The same boundary holds against the
+> *server*, not only against clients: hardware is not in the inbound sync
+> contract. A printer host, a drawer driver, an iMin bridge or a device topology
+> is local to the composition root, and no message from PI.COMMERCE Server can
+> set one.

@@ -12,6 +12,7 @@ import {
   fetchCashPosition,
   fetchCatalogStatus,
   fetchHardwareStatus,
+  fetchSyncStatus,
   fetchInventoryPosition,
   openDrawer,
   printTestPage,
@@ -33,6 +34,7 @@ import type {
   CoreInfo,
   EdgeState,
   HardwareStatus,
+  SyncStatus,
   InventoryPosition,
   ProductLookup,
   Refund,
@@ -309,6 +311,10 @@ export default function App() {
         <HardwarePanel enabled={connection.connected} onChanged={refresh} />
       </Card>
 
+      <Card title="Sync">
+        <SyncPanel enabled={connection.connected} />
+      </Card>
+
       <Card title="Refunds">
         <Refunds enabled={connection.connected} />
       </Card>
@@ -577,6 +583,102 @@ function HardwarePanel({
         A device that fails changes nothing commercial: a sale stays paid, the
         drawer ledger stays right, and the failure is recorded.
       </p>
+    </>
+  );
+}
+
+/**
+ * Read-only sync view.
+ *
+ * Shows how much is waiting, how much the server rejected for good, and how
+ * far the inbound stream got. It offers no way to force a cycle: dispatching
+ * is the runtime's job, and a screen that could push facts would be a screen
+ * that decides when the business is reported.
+ *
+ * `No sync transport configured` is a normal, healthy state — the till sells
+ * and the facts keep accumulating.
+ */
+function SyncPanel({ enabled }: { enabled: boolean }) {
+  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [error, setError] = useState<BridgeError | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const read = useCallback(async () => {
+    setBusy(true);
+    try {
+      setStatus(await fetchSyncStatus());
+      setError(null);
+    } catch (failure) {
+      setStatus(null);
+      setError(describeError(failure));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (enabled) {
+      void read();
+    }
+  }, [enabled, read]);
+
+  return (
+    <>
+      <div className="lookup">
+        <button type="button" onClick={() => void read()} disabled={!enabled || busy}>
+          {busy ? "Working…" : "Refresh"}
+        </button>
+      </div>
+      {status ? (
+        <>
+          <dl className="totals">
+            <dt>Transport</dt>
+            <dd className="mono">{status.driver}</dd>
+            <dt>Waiting</dt>
+            <dd>{status.pending + status.sending}</dd>
+            <dt>Delivered</dt>
+            <dd>{status.sent}</dd>
+            <dt>Rejected</dt>
+            <dd>{status.failed}</dd>
+            <dt>Oldest waiting</dt>
+            <dd className="muted">{status.oldest_pending_at ?? "—"}</dd>
+            <dt>Inbound cursor</dt>
+            <dd className="mono">{status.inbound_cursor ?? "—"}</dd>
+          </dl>
+          {status.failed_facts.length > 0 ? (
+            <table className="lines">
+              <thead>
+                <tr>
+                  <th>Fact</th>
+                  <th>Aggregate</th>
+                  <th>Attempts</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.failed_facts.map((fact) => (
+                  <tr key={fact.event_id}>
+                    <td>{fact.event_type}</td>
+                    <td className="mono">{fact.aggregate_id}</td>
+                    <td>{fact.attempt_count}</td>
+                    <td className="mono">{fact.error_code ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+          <p className="muted">
+            {status.driver === "unconfigured"
+              ? "No sync transport configured. The register works offline indefinitely and keeps every fact."
+              : "Facts are delivered at least once; the server deduplicates them."}
+          </p>
+        </>
+      ) : null}
+      {error ? (
+        <p className="muted">
+          <code>{error.code}</code> {error.message}
+        </p>
+      ) : null}
     </>
   );
 }

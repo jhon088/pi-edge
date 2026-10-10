@@ -34,6 +34,18 @@ impl Timestamp {
         self.0.to_rfc3339_opts(SecondsFormat::Micros, true)
     }
 
+    /// This instant, `seconds` later.
+    ///
+    /// Used to schedule a retry. Saturates instead of wrapping: a clock near
+    /// the end of representable time is not a reason to schedule an attempt in
+    /// the past.
+    pub fn plus_seconds(self, seconds: i64) -> Self {
+        match chrono::TimeDelta::try_seconds(seconds) {
+            Some(delta) => Self(self.0.checked_add_signed(delta).unwrap_or(self.0)),
+            None => self,
+        }
+    }
+
     pub fn parse_rfc3339(value: &str) -> Result<Self, TimeError> {
         DateTime::parse_from_rfc3339(value)
             .map(|dt| Self(dt.with_timezone(&Utc)))

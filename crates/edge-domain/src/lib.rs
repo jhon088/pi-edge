@@ -36,7 +36,7 @@ pub mod prelude {
         allocate_proportionally, Currency, Money, MoneyError, Percentage, PriceMode, Quantity,
         TaxRate, TaxedAmount,
     };
-    pub use crate::outbox::{OutboxEvent, OutboxEventType, OutboxStatus};
+    pub use crate::outbox::{OutboxEntry, OutboxEvent, OutboxEventType, OutboxStatus};
     pub use crate::session::{
         ClosureKind, NewRegisterSession, RegisterSession, RegisterSessionState,
         RegisterSessionStatus,

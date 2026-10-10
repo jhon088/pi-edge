@@ -20,7 +20,7 @@ use edge_domain::prelude::Timestamp;
 use edge_protocol::{
     CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, HardwareStatusV1,
     InventoryPositionV1, InventoryQueryV1, ProductLookupV1, ProductSelectorV1, RefundEligibilityV1,
-    RefundV1, RetailTransactionV1, SubmitScanRequestV1, TransactionPaymentsV1,
+    RefundV1, RetailTransactionV1, SubmitScanRequestV1, SyncStatusV1, TransactionPaymentsV1,
     TransactionRequestV1,
 };
 use serde::Serialize;
@@ -223,6 +223,17 @@ fn hardware_status(bridge: tauri::State<'_, EdgeBridge>) -> Result<HardwareStatu
     bridge.client.hardware_status().map_err(BridgeError::from)
 }
 
+/// What sync knows: how much is waiting, how much is stuck, how far behind
+/// this till is.
+///
+/// A diagnostic read, and read-only: the window never triggers a dispatch
+/// cycle and never learns a host, a URL or a credential — only an adapter
+/// name (ADR 040).
+#[tauri::command]
+fn sync_status(bridge: tauri::State<'_, EdgeBridge>) -> Result<SyncStatusV1, BridgeError> {
+    bridge.client.get_sync_status().map_err(BridgeError::from)
+}
+
 /// Print a diagnostic page. Safe by construction: it touches no commercial
 /// data and the payload carries no bytes and no address (ADR 039).
 #[tauri::command]
@@ -323,6 +334,7 @@ pub fn run() {
             refund_eligibility,
             transaction_refunds,
             hardware_status,
+            sync_status,
             print_test_page,
             open_drawer,
             scanner_key,

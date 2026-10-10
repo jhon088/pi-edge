@@ -65,7 +65,7 @@
   "restock": true,
   "payments": [
     {
-      "refund_payment_id": "00000000-0000-0000-0000-00000000001d",
+      "refund_payment_id": "00000000-0000-0000-0000-00000000001e",
       "original_payment_id": "00000000-0000-0000-0000-00000000000e",
       "tender_type": "CARD",
       "requested": {
@@ -81,7 +81,7 @@
       "status": "PENDING",
       "attempts": [
         {
-          "attempt_id": "00000000-0000-0000-0000-00000000001e",
+          "attempt_id": "00000000-0000-0000-0000-00000000001f",
           "attempt_number": 1,
           "status": "UNKNOWN",
           "requested": {
@@ -90,7 +90,7 @@
             "formatted": "116.00"
           },
           "refunded": null,
-          "correlation_id": "00000000-0000-0000-0000-00000000001f",
+          "correlation_id": "00000000-0000-0000-0000-000000000020",
           "provider_reference": null,
           "failure_code": null,
           "created_at": "2026-10-08T15:00:00.000000Z"

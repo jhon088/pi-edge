@@ -17,6 +17,7 @@ edge-inventory = { workspace = true }
 edge-refunds = { workspace = true }
 edge-payments = { workspace = true }
 edge-storage = { workspace = true, features = ["fault-injection"] }
+edge-sync = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

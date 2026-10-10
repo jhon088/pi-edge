@@ -21,6 +21,7 @@ use edge_protocol::{
     StartPaymentRequestV1, SubmitScanRequestV1, TransactionRequestV1,
 };
 use edge_refunds::RefundError;
+use edge_sync::SyncError;
 
 #[test]
 fn core_error_kinds_match_the_published_codes() {
@@ -591,11 +592,27 @@ fn refund_codes_are_stable() {
             },
             error_codes::REFUND_ORIGINAL_NOT_REFUNDABLE,
         ),
+        // Three refusals of authority, three codes: an operator does
+        // something different about each (ADR 042).
         (
             RefundError::AuthorityRequired {
                 transaction_id: "t".to_owned(),
             },
             error_codes::REFUND_AUTHORITY_REQUIRED,
+        ),
+        (
+            RefundError::AuthorityUnavailable {
+                transaction_id: "t".to_owned(),
+                detail: "SYNC_TIMEOUT".to_owned(),
+            },
+            error_codes::REFUND_AUTHORITY_UNAVAILABLE,
+        ),
+        (
+            RefundError::NotAuthorized {
+                transaction_id: "t".to_owned(),
+                reason: "outside the refund window".to_owned(),
+            },
+            error_codes::REFUND_NOT_AUTHORIZED,
         ),
         (
             RefundError::LineNotFound { line_number: 7 },
@@ -909,5 +926,66 @@ fn no_hardware_payload_can_name_a_device_or_carry_bytes() {
                 "`{forbidden}` must not be something a client can state"
             );
         }
+    }
+}
+
+/// The sync surface: two operations, no payload, and four stable codes.
+#[test]
+fn sync_operations_and_codes_are_stable() {
+    assert_eq!(OperationV1::GetSyncStatus.name(), "GET_SYNC_STATUS");
+    assert_eq!(OperationV1::RunSyncCycle.name(), "RUN_SYNC_CYCLE");
+    // Reading is safe to retry; running a cycle changes durable state.
+    assert!(!OperationV1::GetSyncStatus.is_command());
+    assert!(OperationV1::RunSyncCycle.is_command());
+
+    for (error, expected) in [
+        (SyncError::NotConfigured, error_codes::SYNC_NOT_CONFIGURED),
+        (
+            SyncError::Unavailable {
+                detail: "no route".to_owned(),
+            },
+            error_codes::SYNC_UNAVAILABLE,
+        ),
+        (
+            SyncError::Timeout { elapsed_ms: 30_000 },
+            error_codes::SYNC_TIMEOUT,
+        ),
+        (
+            SyncError::Malformed {
+                detail: "unknown kind".to_owned(),
+            },
+            error_codes::SYNC_MALFORMED_RESPONSE,
+        ),
+    ] {
+        assert_eq!(error.code(), expected);
+        assert_eq!(AppError::Sync(error).kind(), expected);
+    }
+}
+
+/// A sync failure is never a commercial failure.
+///
+/// Nothing in the sync error set can be mistaken for a reason not to sell: the
+/// codes are all about reaching a server, and the register's answer to every
+/// one of them is to keep the fact and carry on (ADR 040).
+#[test]
+fn the_sync_status_view_carries_no_address_and_no_credential() {
+    let wire = serde_json::to_string(&edge_protocol::SyncStatusV1 {
+        protocol_version: edge_protocol::PROTOCOL_VERSION,
+        driver: "simulator".to_owned(),
+        pending: 2,
+        sending: 0,
+        sent: 7,
+        failed: 1,
+        oldest_pending_at: Some("2026-10-08T15:00:00Z".to_owned()),
+        next_attempt_at: None,
+        inbound_cursor: Some("catalog-3-2".to_owned()),
+        failed_facts: Vec::new(),
+    })
+    .unwrap();
+    for forbidden in ["http", "token", "secret", "password", "9100"] {
+        assert!(
+            !wire.to_lowercase().contains(forbidden),
+            "`{forbidden}` must not appear in {wire}"
+        );
     }
 }

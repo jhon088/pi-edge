@@ -21,6 +21,7 @@ pub mod ports;
 pub mod queries;
 pub mod refund_service;
 pub mod service;
+pub mod sync_service;
 
 #[cfg(feature = "testing")]
 pub mod testing;

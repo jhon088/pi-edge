@@ -15,6 +15,7 @@ testing = []
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-hardware = { workspace = true }
+edge-sync = { workspace = true }
 edge-inventory = { workspace = true }
 edge-refunds = { workspace = true }
 edge-domain = { workspace = true }

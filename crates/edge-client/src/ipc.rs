@@ -18,7 +18,7 @@ use edge_protocol::{
     RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1,
     ReopenSessionRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
     SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
-    SubmitScanRequestV1, TransactionPaymentsV1, TransactionRequestV1,
+    SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -230,6 +230,22 @@ impl EdgeClient for IpcEdgeClient {
             )?,
             ResultV1::PendingOutbox,
             "PENDING_OUTBOX"
+        )
+    }
+
+    fn get_sync_status(&self) -> Result<SyncStatusV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::GetSyncStatus, None)?,
+            ResultV1::SyncStatus,
+            "SYNC_STATUS"
+        )
+    }
+
+    fn run_sync_cycle(&self, request_id: Option<Uuid>) -> Result<SyncCycleV1, ClientError> {
+        expect_result!(
+            self.call(OperationV1::RunSyncCycle, request_id)?,
+            ResultV1::SyncCycle,
+            "SYNC_CYCLE"
         )
     }
 

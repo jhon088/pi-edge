@@ -27,8 +27,8 @@ use edge_protocol::{
     InventoryBootstrapV1, InventoryMovementV1, InventoryPositionV1, JournalEventV1, OperationV1,
     PaymentResultV1, PendingOutboxV1, ProductLookupV1, RefundEligibilityV1, RefundV1,
     RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
-    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, TransactionPaymentsV1,
-    PROTOCOL_VERSION,
+    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, SyncCycleV1, SyncStatusV1,
+    TransactionPaymentsV1, PROTOCOL_VERSION,
 };
 use edge_refunds::RefundError;
 use edge_storage::SqliteEdgeStore;
@@ -139,6 +139,14 @@ impl Dispatcher {
                 Ok(ResultV1::MaybeTransaction(
                     transaction.as_ref().map(dto).transpose()?,
                 ))
+            }
+            OperationV1::GetSyncStatus => {
+                let view = self.core.get_sync_status().map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SyncStatus(SyncStatusV1::from(&view)))
+            }
+            OperationV1::RunSyncCycle => {
+                let report = self.core.run_sync_cycle().map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SyncCycle(SyncCycleV1::from(&report)))
             }
             OperationV1::GetPendingOutbox(payload) => {
                 let pending = self
@@ -379,9 +387,15 @@ impl Dispatcher {
                 // A client never asserts it, and with no authority source
                 // configured every refund is refused (ADR 030).
                 let transaction_id = payload.transaction().map_err(domain_error)?;
+                let device = self.core.get_device().map_err(|e| self.app_error(e))?;
                 let authorization = self
                     .refund_authority
-                    .authorize(transaction_id)
+                    .authorize(
+                        transaction_id,
+                        &device.tenant_id,
+                        &device.store_id,
+                        request_id,
+                    )
                     .map_err(refund_error)?;
                 let command = payload
                     .into_command(authorization, Some(request_id))

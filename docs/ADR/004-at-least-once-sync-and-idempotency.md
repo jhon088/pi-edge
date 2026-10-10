@@ -37,11 +37,20 @@ server a gap-detectable, human-auditable ordering per terminal.
 milestone; the durable contract it will consume (the outbox table and
 `OutboxEvent`) is already fixed.
 
+> **Amended by ADR 040 and ADR 041 (milestone 11).** The dispatcher and the
+> `edge-sync` crate now exist, and the status set gained a terminal `FAILED`.
+> The HTTP client still does not: the only transport is a simulator, chosen
+> explicitly. Two things this ADR left open are now decided — a `SENDING` row
+> found at startup goes back to `PENDING` and is resent with the same
+> `event_id` (so the consumer's idempotency requirement is load-bearing, not
+> theoretical), and retention stays deferred: nothing is purged.
+
 ## Consequences
 
 * The server must be idempotent on `event_id`. This is a hard requirement on
   PI.COMMERCE Server, not a suggestion.
 * The outbox grows. Reconciliation/retention is a future decision; keeping
-  `SENT` rows is currently cheap and useful for audits.
+  `SENT` rows is currently cheap and useful for audits. Still deferred as of
+  milestone 11 (ADR 041).
 * Recovery is simple: on start, pending rows are just still pending. Nothing
   needs to be replayed from memory, because nothing important ever lived there.

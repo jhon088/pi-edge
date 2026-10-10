@@ -26,8 +26,9 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct SqliteEdgeStore {
     conn: Mutex<Connection>,
+    /// Commits still to survive before one is aborted. `0` disarms.
     #[cfg(feature = "fault-injection")]
-    fail_before_commit: std::sync::atomic::AtomicBool,
+    fail_before_commit: std::sync::atomic::AtomicI64,
 }
 
 impl SqliteEdgeStore {
@@ -70,7 +71,7 @@ impl SqliteEdgeStore {
         Ok(Self {
             conn: Mutex::new(conn),
             #[cfg(feature = "fault-injection")]
-            fail_before_commit: std::sync::atomic::AtomicBool::new(false),
+            fail_before_commit: std::sync::atomic::AtomicI64::new(0),
         })
     }
 
@@ -78,8 +79,18 @@ impl SqliteEdgeStore {
     /// `COMMIT`, simulating a power loss at the worst possible moment.
     #[cfg(feature = "fault-injection")]
     pub fn arm_commit_failure(&self) {
+        self.arm_commit_failure_after(0);
+    }
+
+    /// Test hook: let `survive` commits through, then abort the next one.
+    ///
+    /// Needed by use cases that deliberately span several transactions — a
+    /// sync cycle claims in one and records the answer in another — so a test
+    /// can say *which* commit dies rather than only ever killing the first.
+    #[cfg(feature = "fault-injection")]
+    pub fn arm_commit_failure_after(&self, survive: u32) {
         self.fail_before_commit
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+            .store(i64::from(survive) + 1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -105,7 +116,12 @@ impl EdgeStore for SqliteEdgeStore {
         #[cfg(feature = "fault-injection")]
         if self
             .fail_before_commit
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+            && self
+                .fail_before_commit
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
+                == 1
         {
             drop(tx);
             return Err(AppError::Storage(
@@ -1332,7 +1348,7 @@ impl RawJournalEvent {
     }
 }
 
-struct RawOutboxEvent {
+pub(crate) struct RawOutboxEvent {
     event_id: String,
     event_type: String,
     aggregate_id: String,
@@ -1350,24 +1366,32 @@ struct RawOutboxEvent {
 
 impl RawOutboxEvent {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Self::from_offset_row(row, 0)
+    }
+
+    /// The same thirteen columns, read starting at `offset`.
+    ///
+    /// The sync adapter selects `seq` ahead of them, and one reader for both
+    /// callers beats two column lists that have to agree.
+    pub(crate) fn from_offset_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Self> {
         Ok(Self {
-            event_id: row.get(0)?,
-            event_type: row.get(1)?,
-            aggregate_id: row.get(2)?,
-            aggregate_version: row.get(3)?,
-            tenant_id: row.get(4)?,
-            store_id: row.get(5)?,
-            register_id: row.get(6)?,
-            business_day_id: row.get(7)?,
-            occurred_at: row.get(8)?,
-            payload_json: row.get(9)?,
-            status: row.get(10)?,
-            attempt_count: row.get(11)?,
-            next_attempt_at: row.get(12)?,
+            event_id: row.get(offset)?,
+            event_type: row.get(offset + 1)?,
+            aggregate_id: row.get(offset + 2)?,
+            aggregate_version: row.get(offset + 3)?,
+            tenant_id: row.get(offset + 4)?,
+            store_id: row.get(offset + 5)?,
+            register_id: row.get(offset + 6)?,
+            business_day_id: row.get(offset + 7)?,
+            occurred_at: row.get(offset + 8)?,
+            payload_json: row.get(offset + 9)?,
+            status: row.get(offset + 10)?,
+            attempt_count: row.get(offset + 11)?,
+            next_attempt_at: row.get(offset + 12)?,
         })
     }
 
-    fn into_domain(self) -> Result<OutboxEvent, AppError> {
+    pub(crate) fn into_domain(self) -> Result<OutboxEvent, AppError> {
         Ok(OutboxEvent {
             event_id: parse_id(&self.event_id)?,
             event_type: OutboxEventType::parse(&self.event_type).map_err(AppError::from)?,

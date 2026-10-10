@@ -41,7 +41,7 @@ use crate::context::{
     require_single_open_session, EventContext,
 };
 use crate::error::AppError;
-use crate::ports::{Clock, EdgeStore, IdFactory, UnitOfWork};
+use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
 use crate::queries::{RefundEligibilityView, RefundView};
 use crate::service::EdgeApplication;
 
@@ -250,6 +250,18 @@ where
                         "restock": refund.restock,
                     }),
                 )?;
+                // Same transaction as the acceptance and the returned goods:
+                // there is no state in which the commercial return is durable
+                // and the fact about it is missing (ADR 004, ADR 041).
+                enqueue_refund_fact(
+                    uow,
+                    EventId::from_uuid(ids.new_uuid()),
+                    OutboxEventType::RefundAccepted,
+                    ACCEPTED_VERSION,
+                    &device,
+                    &refund,
+                    now,
+                )?;
                 refund_view(uow, refund)
             })
         })
@@ -381,7 +393,17 @@ where
                         }
                     }
                 }
-                settle_if_done(uow, &mut refund, now)?;
+                if settle_if_done(uow, &mut refund, now)? {
+                    enqueue_refund_fact(
+                        uow,
+                        EventId::from_uuid(ids.new_uuid()),
+                        OutboxEventType::RefundCompleted,
+                        COMPLETED_VERSION,
+                        &device,
+                        &refund,
+                        now,
+                    )?;
+                }
                 uow.update_refund(&refund)?;
 
                 journal(
@@ -469,23 +491,17 @@ where
         let now = self.clock.now();
         self.store().transact(|uow| {
             idempotent(uow, cmd.request_id, "MarkTransactionInvoiced", now, |uow| {
-                let invoice_ref = cmd.invoice_ref.trim();
-                if invoice_ref.is_empty() {
-                    return Err(AppError::Refund(RefundError::InvalidRecord {
-                        field: "invoice_ref",
-                        reason: "must not be blank".to_owned(),
-                    }));
-                }
-                require_finalized(uow, cmd.transaction_id)?;
-                uow.put_transaction_fiscal_metadata(
-                    cmd.transaction_id,
-                    &TransactionFiscalMetadata {
-                        fiscal_state: FiscalState::Invoiced,
-                        invoice_ref: Some(invoice_ref.to_owned()),
-                        updated_at: now,
+                // The same projection the inbound sync applies, so the test
+                // fixture and the production path cannot drift apart.
+                crate::sync_service::apply_fiscal_metadata(
+                    uow,
+                    &crate::sync_service::InboundFiscalMetadata {
+                        transaction_id: cmd.transaction_id,
+                        fiscal_state: FiscalState::Invoiced.as_str().to_owned(),
+                        invoice_ref: Some(cmd.invoice_ref.clone()),
                     },
-                )?;
-                Ok(())
+                    now,
+                )
             })
         })
     }
@@ -569,7 +585,17 @@ where
                 RefundAttemptStatus::Unknown => JournalEventType::RefundFinancialUnknown,
                 _ => JournalEventType::RefundFinancialFailed,
             };
-            settle_if_done(uow, &mut refund, now)?;
+            if settle_if_done(uow, &mut refund, now)? {
+                enqueue_refund_fact(
+                    uow,
+                    EventId::from_uuid(ids.new_uuid()),
+                    OutboxEventType::RefundCompleted,
+                    COMPLETED_VERSION,
+                    &device,
+                    &refund,
+                    now,
+                )?;
+            }
             uow.update_refund(&refund)?;
             journal(
                 uow,
@@ -586,7 +612,6 @@ where
                     "refund_status": refund.status.as_str(),
                 }),
             )?;
-            let _ = ids;
             refund_view(uow, refund)
         })
     }
@@ -621,7 +646,7 @@ fn require_refund(uow: &mut dyn UnitOfWork, refund_id: RefundId) -> Result<Refun
         })
 }
 
-fn require_finalized(
+pub(crate) fn require_finalized(
     uow: &mut dyn UnitOfWork,
     transaction_id: TransactionId,
 ) -> Result<RetailTransaction, AppError> {
@@ -798,17 +823,21 @@ fn record_cash_refund(
 }
 
 /// Complete the refund when nothing financial is outstanding.
+///
+/// Answers whether *this* call is the one that completed it, which is what
+/// makes the outbox event publishable exactly once: a refund is a fact about
+/// the business only when the goods and the money have both settled (ADR 041).
 fn settle_if_done(
     uow: &mut dyn UnitOfWork,
     refund: &mut Refund,
     now: Timestamp,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     if refund.status == RefundStatus::Completed || !refund.status.is_commercially_accepted() {
-        return Ok(());
+        return Ok(false);
     }
     let views = uow.list_refund_payments(refund.refund_id)?;
     if views.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let settled: i64 = views
         .iter()
@@ -821,12 +850,69 @@ fn settle_if_done(
         refund
             .mark_financial_pending(now)
             .map_err(AppError::Refund)?;
-        return Ok(());
+        return Ok(false);
     }
     if settled >= refund.amount_due().minor() {
         refund.complete(now).map_err(AppError::Refund)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
+}
+
+/// The two outbound facts a refund produces, and their order.
+///
+/// A refund is published **twice**, as two versions of one aggregate:
+///
+/// | Fact | Version | Means |
+/// | --- | --- | --- |
+/// | `REFUND_ACCEPTED` | 1 | the commercial return happened and is irrevocable |
+/// | `REFUND_COMPLETED` | 2 | the financial obligation is settled |
+///
+/// Acceptance is published on its own because it is already a fact about the
+/// business: the goods are back, the refundable quantities are consumed and
+/// `REFUND_RETURN` is written, none of which is undone because a provider
+/// answered `UNKNOWN`. A refund can sit in `FINANCIAL_PENDING` indefinitely,
+/// and the consumer must not hear about the return only when the money
+/// resolves (ADR 041).
+///
+/// These are the versions of the published refund stream, not the aggregate's
+/// internal row version — the consumer sees two facts about one refund, in
+/// order, and `seq` plus the one-fact-per-aggregate-per-batch rule guarantees
+/// it never gets the second before the first (ADR 041).
+const ACCEPTED_VERSION: i64 = 1;
+const COMPLETED_VERSION: i64 = 2;
+
+/// Publish one of a refund's two facts.
+///
+/// The whole refund travels, not a delta: the consumer gets the lines, the
+/// amounts, the authority and the authorization reference, and needs none of
+/// PI.Edge's intermediate states to make sense of it. The stock that came back
+/// is *not* published separately — it is derivable from the refund, and
+/// publishing both would hand the consumer the same physical return twice
+/// (ADR 028).
+fn enqueue_refund_fact(
+    uow: &mut dyn UnitOfWork,
+    event_id: EventId,
+    event_type: OutboxEventType,
+    aggregate_version: i64,
+    device: &DeviceProfile,
+    refund: &Refund,
+    now: Timestamp,
+) -> Result<(), AppError> {
+    let payload =
+        serde_json::to_value(refund).map_err(|e| AppError::Serialization(e.to_string()))?;
+    uow.enqueue_outbox(&OutboxEvent::pending(
+        event_id,
+        event_type,
+        refund.refund_id.to_string(),
+        aggregate_version,
+        device.tenant_id.clone(),
+        device.store_id.clone(),
+        Some(refund.register_id.clone()),
+        Some(refund.business_day_id),
+        now,
+        payload,
+    ))
 }
 
 fn refund_view(uow: &mut dyn UnitOfWork, refund: Refund) -> Result<RefundView, AppError> {
@@ -893,7 +979,7 @@ fn journal(
     uow: &mut dyn UnitOfWork,
     event_id: EventId,
     event_type: JournalEventType,
-    device: &crate::ports::DeviceProfile,
+    device: &DeviceProfile,
     refund: &Refund,
     now: Timestamp,
     payload: serde_json::Value,

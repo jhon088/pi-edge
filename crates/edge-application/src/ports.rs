@@ -489,6 +489,110 @@ impl HardwareActionStatus {
     }
 }
 
+/// How many facts sit in each outbox state.
+///
+/// `failed` is the number that needs a human. It is reported next to the
+/// others rather than hidden, because a silently stuck fact is the failure
+/// mode this milestone exists to prevent (ADR 041).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct OutboxCounts {
+    pub pending: i64,
+    pub sending: i64,
+    pub sent: i64,
+    pub failed: i64,
+}
+
+impl OutboxCounts {
+    /// Everything not yet delivered.
+    pub fn undelivered(self) -> i64 {
+        self.pending + self.sending + self.failed
+    }
+}
+
+/// Durable state the sync engine needs.
+///
+/// Separate from [`UnitOfWork`]'s three outbox methods on purpose: those are
+/// what *producers* and diagnostics use (enqueue, count, list), while these
+/// move facts through the dispatch states and keep the inbound cursor. The
+/// split is the same one the catalog and cash contexts already have.
+pub trait SyncUnitOfWork {
+    /// Facts that may be dispatched at `now`, oldest `seq` first.
+    ///
+    /// `PENDING` only, and only those whose backoff has elapsed. A row with no
+    /// `next_attempt_at` has never been attempted and is due immediately.
+    fn list_dispatchable_outbox(
+        &mut self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<OutboxEntry>, AppError>;
+
+    /// Aggregates that carry a terminal fact.
+    ///
+    /// Their later versions must wait: handing the consumer version `n+1` of
+    /// an aggregate whose version `n` was permanently rejected would give it a
+    /// history with a hole in it.
+    fn list_failed_outbox_aggregates(&mut self) -> Result<Vec<String>, AppError>;
+
+    /// `PENDING -> SENDING`, counting the attempt.
+    ///
+    /// Returns the events actually claimed: a row somebody else already moved
+    /// is simply not in the answer.
+    fn claim_outbox(
+        &mut self,
+        event_ids: &[EventId],
+        now: Timestamp,
+    ) -> Result<Vec<EventId>, AppError>;
+
+    /// `SENDING -> SENT`.
+    fn mark_outbox_sent(&mut self, event_id: EventId, now: Timestamp) -> Result<(), AppError>;
+
+    /// `SENDING -> PENDING`, due at `next_attempt_at`, with the reason kept.
+    fn reschedule_outbox(
+        &mut self,
+        event_id: EventId,
+        next_attempt_at: Timestamp,
+        error_code: &str,
+        error_detail: &str,
+        now: Timestamp,
+    ) -> Result<(), AppError>;
+
+    /// `SENDING -> FAILED`. Terminal.
+    fn fail_outbox(
+        &mut self,
+        event_id: EventId,
+        error_code: &str,
+        error_detail: &str,
+        now: Timestamp,
+    ) -> Result<(), AppError>;
+
+    /// Put every `SENDING` row back to `PENDING`, due immediately.
+    ///
+    /// Run once at startup. A process that died mid-flight left those rows
+    /// claimed, and nobody is coming back for them: one daemon owns this
+    /// database, so "in flight" after a restart means "never answered". They
+    /// are resent with the same `event_id` and the consumer deduplicates —
+    /// at-least-once, deliberately (ADR 041).
+    fn recover_sending_outbox(&mut self, now: Timestamp) -> Result<i64, AppError>;
+
+    fn outbox_counts(&mut self) -> Result<OutboxCounts, AppError>;
+
+    /// Rows in one state, oldest `seq` first. Used to show what is stuck.
+    fn list_outbox_by_status(
+        &mut self,
+        status: OutboxStatus,
+        limit: i64,
+    ) -> Result<Vec<OutboxEntry>, AppError>;
+
+    /// How far the inbound stream has been consumed, if at all.
+    fn inbound_cursor(&mut self) -> Result<Option<String>, AppError>;
+
+    /// Advance the inbound cursor.
+    ///
+    /// Only ever called in the same transaction as the effect it accounts for,
+    /// so the cursor cannot run ahead of local state (ADR 041).
+    fn put_inbound_cursor(&mut self, cursor: &str, now: Timestamp) -> Result<(), AppError>;
+}
+
 pub trait UnitOfWork:
     CatalogUnitOfWork
     + PaymentUnitOfWork
@@ -496,6 +600,7 @@ pub trait UnitOfWork:
     + InventoryUnitOfWork
     + RefundUnitOfWork
     + HardwareUnitOfWork
+    + SyncUnitOfWork
 {
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;
     fn put_device_profile(

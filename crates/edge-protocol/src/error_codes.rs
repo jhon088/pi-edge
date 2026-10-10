@@ -183,6 +183,12 @@ pub const REFUND_ORIGINAL_NOT_REFUNDABLE: &str = "REFUND_ORIGINAL_NOT_REFUNDABLE
 /// No authority over the original sale. A locally finalized sale is not a
 /// centrally accepted one, and PI.Edge never assumes it is (ADR 030).
 pub const REFUND_AUTHORITY_REQUIRED: &str = "REFUND_AUTHORITY_REQUIRED";
+/// An authority **is** configured and could not be reached, or timed out. Worth
+/// retrying; still a refusal, because PI.Edge does not refund offline
+/// (ADR 042).
+pub const REFUND_AUTHORITY_UNAVAILABLE: &str = "REFUND_AUTHORITY_UNAVAILABLE";
+/// The authority was reached and refused this refund. Retrying changes nothing.
+pub const REFUND_NOT_AUTHORIZED: &str = "REFUND_NOT_AUTHORIZED";
 /// The original sale has no such line.
 pub const REFUND_LINE_NOT_FOUND: &str = "REFUND_LINE_NOT_FOUND";
 /// The refund names no line, or names one twice.
@@ -233,6 +239,23 @@ pub const HARDWARE_ACTION_ALREADY_COMPLETED: &str = "HARDWARE_ACTION_ALREADY_COM
 /// A scan arrived with no sale to add it to. PI.Edge does not open one on its
 /// own (ADR 036).
 pub const SCAN_NO_ACTIVE_TRANSACTION: &str = "SCAN_NO_ACTIVE_TRANSACTION";
+
+// Sync codes, produced by the sync engine. Four, and the distinction that
+// matters is whether the remote may already hold what was sent (ADR 040).
+
+/// This installation has no sync transport. **Not a failure**: the register
+/// keeps selling and the facts keep accumulating durably. A missing
+/// configuration never selects a simulator.
+pub const SYNC_NOT_CONFIGURED: &str = "SYNC_NOT_CONFIGURED";
+/// The server could not be reached. Nothing left the installation.
+pub const SYNC_UNAVAILABLE: &str = "SYNC_UNAVAILABLE";
+/// Sent and not answered in time. **Unresolved**: the server may hold the
+/// facts, so they are sent again with the same ids and deduplicated there
+/// (ADR 004).
+pub const SYNC_TIMEOUT: &str = "SYNC_TIMEOUT";
+/// The server answered, or sent, something this contract cannot read. The
+/// whole exchange is discarded rather than half-applied (ADR 041).
+pub const SYNC_MALFORMED_RESPONSE: &str = "SYNC_MALFORMED_RESPONSE";
 
 /// The `Hello` frame was rejected. Never discloses *why*.
 pub const AUTHENTICATION_FAILED: &str = "AUTHENTICATION_FAILED";
