@@ -215,10 +215,10 @@ fn a_declaration_survives_a_restart_without_being_duplicated() {
         .unwrap();
     assert_eq!(session.status(), RegisterSessionStatus::Closed);
     assert_eq!(session.state().closure_kind, Some(ClosureKind::Declared));
-    let day = core
+    let closed = core
         .close_business_day(CloseBusinessDayCommand::default())
         .unwrap();
-    assert!(!day.was_forced());
+    assert!(!closed.day.was_forced());
 }
 
 #[test]

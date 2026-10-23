@@ -85,3 +85,9 @@ Three details of the original decision were refined by the first real device:
 What is unchanged, and was the point: hardware failure is never a domain
 failure. A sale is `FINALIZED` on the strength of its payments and its committed
 transaction, and paper and solenoids come afterwards (ADR 037).
+
+> **Amended by ADR 043 (milestone 12).** `RECEIPT_COMPLETED` is gone: the
+> receipt is an obligation of a closed sale recorded in `transaction_receipts`,
+> not a state of the sale. "Delivery is a separate step that can fail and be
+> retried" still holds — it is simply a separate *record*, and whether a retry
+> is allowed depends on whether the printer got the job.

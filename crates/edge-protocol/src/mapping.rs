@@ -9,19 +9,20 @@
 //! typed error instead of reaching a use case.
 
 use edge_application::commands::{
-    AddItemCommand, ApproveSafeDropCommand, BeginCatalogImportCommand, CashInCommand,
-    CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand, CreateRefundCommand,
-    DeclareClosingCashCommand, ForceCloseBusinessDayCommand, ImportInventoryBootstrapCommand,
-    InitDeviceCommand, InventoryInCommand, InventoryOutCommand, OpenRegisterSessionCommand,
-    PrintTransactionCommand, PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand,
-    ReopenSessionCommand, RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand,
-    SubmitScanCommand,
+    AddItemCommand, ApproveSafeDropCommand, BeginCatalogImportCommand, CancelTransactionCommand,
+    CashInCommand, CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand,
+    CreateRefundCommand, DeclareClosingCashCommand, ForceCloseBusinessDayCommand,
+    ImportInventoryBootstrapCommand, InitDeviceCommand, InventoryInCommand, InventoryOutCommand,
+    OpenRegisterSessionCommand, PrintTransactionCommand, PutCatalogChunkCommand,
+    ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand, RequestSafeDropCommand,
+    ReversePaymentCommand, StartPaymentCommand, SubmitScanCommand,
 };
 use edge_application::ports::{DeviceProfile, InventoryBootstrapState};
 use edge_application::queries::{
-    CashPositionView, CatalogImportStatus, CatalogSnapshotView, CatalogStatus, EdgeState,
-    HardwareStatusView, InventoryPositionView, PendingOutbox, ProductLookup, RefundEligibilityView,
-    RefundView, SessionCloseResult, SyncCycleOutcome, SyncCycleReport, SyncStatusView,
+    BusinessDayCloseResult, CashPositionView, CatalogImportStatus, CatalogSnapshotView,
+    CatalogStatus, EdgeState, HardwareStatusView, InventoryPositionView, PendingOutbox,
+    ProductLookup, RecentSalesView, RefundEligibilityView, RefundView, SessionCloseResult,
+    SyncCycleOutcome, SyncCycleReport, SyncStatusView,
 };
 use edge_application::{AppError, PaymentOutcome};
 use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
@@ -723,6 +724,72 @@ impl From<&SessionCloseResult> for SessionCloseResultV1 {
             expected_at_close: MoneyV1::from(&result.expected_at_close),
             variance: result.variance.as_ref().map(MoneyV1::from),
             variance_label: result.variance_label.clone(),
+            receipt_attention: ReceiptAttentionV1::from(result.receipt_attention),
+        }
+    }
+}
+
+impl From<&BusinessDayCloseResult> for BusinessDayCloseV1 {
+    fn from(result: &BusinessDayCloseResult) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            day: BusinessDayV1::from(&result.day),
+            receipt_attention: ReceiptAttentionV1::from(result.receipt_attention),
+        }
+    }
+}
+
+impl From<ReceiptAttention> for ReceiptAttentionV1 {
+    fn from(value: ReceiptAttention) -> Self {
+        Self {
+            pending: value.pending,
+            failed: value.failed,
+            unknown: value.unknown,
+        }
+    }
+}
+
+impl From<&TransactionReceipt> for ReceiptV1 {
+    fn from(receipt: &TransactionReceipt) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            transaction_id: receipt.transaction_id.to_string(),
+            status: receipt.status.as_str().to_owned(),
+            attempt_count: receipt.attempt_count,
+            first_printed_at: receipt.first_printed_at.map(|ts| ts.to_rfc3339()),
+            last_attempt_at: receipt.last_attempt_at.map(|ts| ts.to_rfc3339()),
+            last_error_code: receipt.last_error_code.clone(),
+            last_error_detail: receipt.last_error_detail.clone(),
+        }
+    }
+}
+
+impl From<&RecentSalesView> for RecentSalesV1 {
+    fn from(view: &RecentSalesView) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            attention: ReceiptAttentionV1::from(view.attention),
+            sales: view
+                .sales
+                .iter()
+                .map(|sale| RecentSaleV1 {
+                    transaction_id: sale.transaction_id.to_string(),
+                    register_id: sale.register_id.as_str().to_owned(),
+                    register_sequence: sale.register_sequence,
+                    finalized_at: sale.finalized_at.to_rfc3339(),
+                    grand_total: MoneyV1::from(&sale.grand_total),
+                    receipt_status: sale.receipt_status.map(|status| status.as_str().to_owned()),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl CancelTransactionRequestV1 {
+    pub fn into_command(self, request_id: Option<Uuid>) -> CancelTransactionCommand {
+        CancelTransactionCommand {
+            request_id,
+            reason_code: self.reason_code,
         }
     }
 }

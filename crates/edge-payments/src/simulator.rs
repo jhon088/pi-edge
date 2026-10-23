@@ -228,9 +228,13 @@ impl SimulatorPaymentProvider {
     }
 
     fn reference(&self, correlation_id: Uuid) -> String {
-        // Derived from the correlation id, so the same interaction always
-        // yields the same reference even across a restart.
-        format!("SIM-{}", &correlation_id.simple().to_string()[..12])
+        // Derived from the whole correlation id, so the same interaction
+        // always yields the same reference even across a restart — and two
+        // different interactions never collide. Truncating it used to, under
+        // the sequential id factory the tests use: every id there shares its
+        // leading digits, so a till could not take two card payments in one
+        // simulated day (`UNIQUE(provider_kind, provider_reference)`).
+        format!("SIM-{}", correlation_id.simple())
     }
 
     fn render(

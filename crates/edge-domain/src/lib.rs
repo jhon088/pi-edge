@@ -8,7 +8,7 @@
 //! - value objects ([`money`], [`ids`], [`time`]),
 //! - aggregates with explicit state machines ([`business_day`], [`session`],
 //!   [`transaction`]),
-//! - durable event shapes ([`journal`], [`outbox`]).
+//! - durable event shapes ([`journal`], [`outbox`], [`receipt`]).
 
 pub mod business_day;
 pub mod error;
@@ -16,6 +16,7 @@ pub mod ids;
 pub mod journal;
 pub mod money;
 pub mod outbox;
+pub mod receipt;
 pub mod session;
 pub mod time;
 pub mod transaction;
@@ -37,6 +38,9 @@ pub mod prelude {
         TaxRate, TaxedAmount,
     };
     pub use crate::outbox::{OutboxEntry, OutboxEvent, OutboxEventType, OutboxStatus};
+    pub use crate::receipt::{
+        ReceiptAttention, ReceiptAttentionScope, ReceiptOutcome, ReceiptStatus, TransactionReceipt,
+    };
     pub use crate::session::{
         ClosureKind, NewRegisterSession, RegisterSession, RegisterSessionState,
         RegisterSessionStatus,

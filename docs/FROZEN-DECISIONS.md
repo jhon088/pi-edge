@@ -77,8 +77,9 @@ deliberate, reviewed break — not a refactor.
 * **As soon as any payment enters a financially active state, the basket is
   locked**, and `AddItem`, `RemoveItem` and `ChangeQuantity` must be refused
   with a stable error code (`BASKET_LOCKED_BY_PAYMENT`).
-* **`PAYMENT_IN_PROGRESS`, `COMMITTED`, `RECEIPT_COMPLETED` and `FINALIZED`
-  imply an immutable basket.**
+* **`PAYMENT_IN_PROGRESS`, `COMMITTED` and `FINALIZED` imply an immutable
+  basket.** (`RECEIPT_COMPLETED` was in this list until milestone 12 removed
+  the state; see ADR 043.)
 
 The payment-side half of this rule is the subject of milestone 6. It is
 recorded here as a decision, not as code: no speculative handling is written
@@ -189,8 +190,9 @@ for payment states that do not exist yet.
   operations; `MANUAL_IN`/`MANUAL_OUT` are named for what they are, not called
   "adjustment".
 * **Stock moves at `FINALIZED` and at no other moment.** Not at scan, not at
-  totalize, not when money is taken. `RECEIPT_COMPLETED` is not a competing
-  moment. (ADR 027)
+  totalize, not when money is taken, and not when a receipt prints — the
+  receipt is an obligation recorded separately and never a moment in the sale
+  (ADR 027, ADR 043).
 * **One movement per sale line, in the same database transaction as the
   finalization**, keyed by `{transaction_id}:{line_number}` — so a replay or a
   crash-and-retry can never move stock twice.
@@ -389,9 +391,9 @@ for payment states that do not exist yet.
   from PI.Edge is a Swan gate that has **not** been run; the only iMin baseline
   is the previous POS. (ADR 038)
 * **A `PrintDocument` is not a receipt.** M10 proves the transport, the
-  rendering and the failure semantics. `RECEIPT_COMPLETED` exists in the
-  transaction aggregate and is still driven by nothing, deliberately: the
-  receipt lifecycle is its own milestone. (ADR 039)
+  rendering and the failure semantics; the receipt's own lifecycle arrived in
+  milestone 12 as an obligation of the closed sale, not a state of it
+  (ADR 039, ADR 043).
 
 ## Sync (milestone 11)
 
@@ -469,6 +471,76 @@ for payment states that do not exist yet.
   delivers inbound messages a test put there. It implements none of the future
   server's business rules. And there is no HTTP: no client, no URL, no route, no
   authentication, no tenant routing. (ADR 040)
+
+## Standalone POS closure (milestone 12)
+
+* **`FINALIZED` means the sale is commercially closed**: payments resolved,
+  cash already moved by the payment that moved it, stock moved, journal
+  written, `SALE_FINALIZED` written. It does **not** mean paper came out, a
+  receipt was confirmed, or the hardware is healthy — and it never will.
+  (ADR 043)
+* **`RECEIPT_COMPLETED` is removed from `RetailTransaction`.** The lifecycle is
+  `OPEN → TOTALIZED → PAYMENT_IN_PROGRESS → COMMITTED → FINALIZED`, plus
+  `OPEN/TOTALIZED → CANCELLED`. A receipt never changes the sale's state again.
+  Migration 0011 refuses to run if any row is still in the removed state: there
+  is no conversion to `FINALIZED` and the state is not preserved. (ADR 043)
+* **A receipt is an obligation, recorded in `transaction_receipts`**, one row
+  per sale, written **in the same transaction** as `FINALIZED`. There is no
+  state in which a sale is closed and nobody knows a ticket is owed. It is not
+  `hardware_actions`: that records what was attempted on a device, and one sale
+  can produce a failed attempt, a retry and any number of reprints while still
+  owing exactly one receipt. (ADR 043)
+* **The receipt states are about certainty**: `PENDING`, `PRINTED`, `FAILED`
+  (the printer certainly did not get the job — an explicit retry is safe) and
+  `UNKNOWN` (bytes went out, no confirmation). **`UNKNOWN` is terminal and
+  cannot be overwritten, not even by a later success**: the question is closed,
+  unanswered, on purpose. (ADR 043)
+* **The certainty comes from the adapter, not from a caller's guess.**
+  `Unavailable` and `NotConfigured` mean nothing was sent; `Timeout` and `Io`
+  mean something may have been. A **connection** that timed out is
+  `Unavailable`, because a socket that never opened carried no bytes; `Timeout`
+  keeps its M10 meaning of reached-and-silent. (ADR 043, sharpening ADR 035)
+* **The core attempts the first receipt after the commercial commit**, outside
+  every transaction, claim → call → record, with failure swallowed and
+  recorded — exactly like the drawer. A client that dies cannot leave a sale
+  without its ticket, and no client decides when a receipt is issued.
+  (ADR 043)
+* **No automatic retry, ever.** A `FAILED` receipt may be retried only because
+  somebody asked; an `UNKNOWN` one may not be retried at all, only reprinted
+  explicitly. `HARDWARE_ACTION_ALREADY_COMPLETED` is never used to express
+  uncertainty. (ADR 043)
+* **A reprint rewrites no history.** Explicit, repeatable, marked as a copy,
+  and it changes nothing: no cash, no stock, no drawer, no sale — and **not the
+  obligation**. A copy printed today says nothing about yesterday. (ADR 043,
+  ADR 037)
+* **Recovery distinguishes two `PENDING`s.** No device evidence at all means
+  nothing was sent, so it is attempted; a claim with no resolution means the
+  printer may already have the job, so it becomes `UNKNOWN` and nothing is
+  printed; a resolved claim is simply applied. One deterministic pass at
+  startup, no watcher. (ADR 043)
+* **A receipt never blocks a close.** A session and a day close with receipts
+  `PENDING`, `FAILED` or `UNKNOWN`. No money is unaccounted for because a
+  printer jammed. **Both closes report the counts in their own result** —
+  `SessionCloseResult` and `BusinessDayCloseResult { day, receipt_attention }`,
+  the forced close included — so a caller never needs a second query at the
+  moment it closes. `PRINTED` is not counted. **Each count is scoped to what
+  that close is responsible for**: a session close to its own session, a day
+  close (forced included) to its own day, the operational history to the
+  installation — always through the sale's own `session_id` or
+  `business_day_id`, never a window of time. Closing one till never reports
+  another till's unresolved receipt. `BusinessDay` itself knows nothing about
+  receipts or hardware. (ADR 043)
+* **A sale with no money in it can be abandoned**, from `OPEN` or `TOTALIZED`
+  only, moving nothing at all. Once a payment is applied the way out is a
+  reversal or a refund (ADR 019). Without this an abandoned sale blocks the
+  session close forever. (ADR 043)
+* **The operational history is operational, not reporting.** Recent finalized
+  sales, newest first, bounded, each with its own materialised total and its
+  receipt state. No analytics, no search, no filters, no aggregates, and no
+  money recomputed. (ADR 043)
+* **There is no refund receipt lifecycle.** Nothing in the product requires a
+  printed refund voucher today; a dedicated refund document is a future product
+  decision, not symmetry to be built now. (ADR 043)
 
 ## Engineering rules (frozen in milestone 7)
 

@@ -19,6 +19,7 @@ import type {
   HardwareStatus,
   InventoryPosition,
   ProductLookup,
+  RecentSales,
   RetailTransaction,
   Refund,
   RefundEligibility,
@@ -127,6 +128,11 @@ export function fetchTransactionRefunds(
  */
 export function fetchHardwareStatus(): Promise<HardwareStatus> {
   return invoke<HardwareStatus>("hardware_status");
+}
+
+/** Recent sales with their receipt state. Read-only. */
+export function fetchRecentSales(limit: number): Promise<RecentSales> {
+  return invoke<RecentSales>("recent_sales", { limit });
 }
 
 /** What sync knows. Read-only: the window never triggers a dispatch cycle. */

@@ -89,6 +89,11 @@ pub enum OperationV1 {
     GetActiveTransaction,
     GetPendingOutbox(LimitRequestV1),
     GetSyncStatus,
+    /// What one sale owes the customer in paper, and what became of it.
+    GetReceipt(TransactionRequestV1),
+    /// Recent sales, newest first, with their receipt state. Operational
+    /// history: no analytics, no search, no filters.
+    ListRecentSales(PageRequestV1),
     GetJournal(LimitRequestV1),
     /// Turns this connection into an event stream. No further requests are
     /// accepted on it.
@@ -107,6 +112,8 @@ pub enum OperationV1 {
     RemoveItem(RemoveItemRequestV1),
     ChangeQuantity(ChangeQuantityRequestV1),
     Totalize,
+    /// Abandon a sale that has taken no money.
+    CancelTransaction(CancelTransactionRequestV1),
     StartPayment(StartPaymentRequestV1),
     ReconcilePayment(PaymentRequestV1),
     ReversePayment(PaymentRequestV1),
@@ -163,6 +170,9 @@ impl OperationV1 {
             OperationV1::GetActiveTransaction => "GET_ACTIVE_TRANSACTION",
             OperationV1::GetPendingOutbox(_) => "GET_PENDING_OUTBOX",
             OperationV1::GetSyncStatus => "GET_SYNC_STATUS",
+            OperationV1::GetReceipt(_) => "GET_RECEIPT",
+            OperationV1::ListRecentSales(_) => "LIST_RECENT_SALES",
+            OperationV1::CancelTransaction(_) => "CANCEL_TRANSACTION",
             OperationV1::RunSyncCycle => "RUN_SYNC_CYCLE",
             OperationV1::GetJournal(_) => "GET_JOURNAL",
             OperationV1::GetCatalogStatus => "GET_CATALOG_STATUS",
@@ -231,6 +241,7 @@ impl OperationV1 {
                 | OperationV1::RemoveItem(_)
                 | OperationV1::ChangeQuantity(_)
                 | OperationV1::Totalize
+                | OperationV1::CancelTransaction(_)
                 | OperationV1::StartPayment(_)
                 | OperationV1::ReconcilePayment(_)
                 | OperationV1::ReversePayment(_)
@@ -335,11 +346,15 @@ pub enum ResultV1 {
     EdgeState(EdgeStateV1),
     Device(DeviceV1),
     BusinessDay(BusinessDayV1),
+    /// The result of closing the day: the day plus what still needs somebody.
+    BusinessDayClose(BusinessDayCloseV1),
     RegisterSession(RegisterSessionV1),
     Transaction(RetailTransactionV1),
     MaybeTransaction(Option<RetailTransactionV1>),
     PendingOutbox(PendingOutboxV1),
     SyncStatus(SyncStatusV1),
+    Receipt(ReceiptV1),
+    RecentSales(RecentSalesV1),
     SyncCycle(SyncCycleV1),
     Journal(Vec<JournalEventV1>),
     CatalogStatus(CatalogStatusV1),
@@ -369,11 +384,14 @@ impl ResultV1 {
             ResultV1::EdgeState(_) => "EDGE_STATE",
             ResultV1::Device(_) => "DEVICE",
             ResultV1::BusinessDay(_) => "BUSINESS_DAY",
+            ResultV1::BusinessDayClose(_) => "BUSINESS_DAY_CLOSE",
             ResultV1::RegisterSession(_) => "REGISTER_SESSION",
             ResultV1::Transaction(_) => "TRANSACTION",
             ResultV1::MaybeTransaction(_) => "MAYBE_TRANSACTION",
             ResultV1::PendingOutbox(_) => "PENDING_OUTBOX",
             ResultV1::SyncStatus(_) => "SYNC_STATUS",
+            ResultV1::Receipt(_) => "RECEIPT",
+            ResultV1::RecentSales(_) => "RECENT_SALES",
             ResultV1::SyncCycle(_) => "SYNC_CYCLE",
             ResultV1::Journal(_) => "JOURNAL",
             ResultV1::CatalogStatus(_) => "CATALOG_STATUS",

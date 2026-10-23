@@ -25,7 +25,6 @@ or equivalently any attempt in `CREATED`, `PROCESSING`, `AUTHORIZED`,
 | `TOTALIZED` | mutable — a change returns it to `OPEN` and voids totals + promotions |
 | `PAYMENT_IN_PROGRESS` | **locked** |
 | `COMMITTED` | **locked** |
-| `RECEIPT_COMPLETED` | **locked** |
 | `FINALIZED` | **locked** |
 
 `AddItem`, `RemoveItem` and `ChangeQuantity` are refused with
@@ -84,3 +83,7 @@ Reversal still means exactly what it means here: un-applying a charge that
 should not have stayed, inside the lifecycle of the original payment, on a sale
 that is still open. A refund is a new document for a sale that is closed. See
 ADR 034.
+
+> **Amended by ADR 043 (milestone 12).** `RECEIPT_COMPLETED` was removed from
+> the lifecycle, so its row is gone from the table above. Every other state and
+> the `BASKET_LOCKED_BY_PAYMENT` rule are unchanged.

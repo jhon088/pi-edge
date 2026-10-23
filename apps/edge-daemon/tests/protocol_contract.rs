@@ -8,7 +8,7 @@
 use edge_application::AppError;
 use edge_cash::CashError;
 use edge_catalog::CatalogError;
-use edge_domain::prelude::{DomainError, MoneyError};
+use edge_domain::prelude::{DomainError, MoneyError, TransactionStatus};
 use edge_hardware::HardwareError;
 use edge_inventory::InventoryError;
 use edge_payments::PaymentError;
@@ -988,4 +988,128 @@ fn the_sync_status_view_carries_no_address_and_no_credential() {
             "`{forbidden}` must not appear in {wire}"
         );
     }
+}
+
+/// The receipt surface: three codes, and a lifecycle a client can branch on.
+#[test]
+fn receipt_operations_and_codes_are_stable() {
+    assert_eq!(
+        OperationV1::GetReceipt(TransactionRequestV1 {
+            transaction_id: "t".to_owned()
+        })
+        .name(),
+        "GET_RECEIPT"
+    );
+    assert_eq!(
+        OperationV1::ListRecentSales(edge_protocol::PageRequestV1 {
+            limit: 10,
+            offset: 0
+        })
+        .name(),
+        "LIST_RECENT_SALES"
+    );
+    assert_eq!(
+        OperationV1::CancelTransaction(edge_protocol::CancelTransactionRequestV1::default()).name(),
+        "CANCEL_TRANSACTION"
+    );
+    // Reading is safe to retry; abandoning a sale is not.
+    assert!(!OperationV1::GetReceipt(TransactionRequestV1 {
+        transaction_id: "t".to_owned()
+    })
+    .is_command());
+    assert!(
+        OperationV1::CancelTransaction(edge_protocol::CancelTransactionRequestV1::default())
+            .is_command()
+    );
+
+    for (error, expected) in [
+        (
+            AppError::ReceiptNotFound {
+                transaction_id: "t".to_owned(),
+            },
+            error_codes::RECEIPT_NOT_FOUND,
+        ),
+        (
+            AppError::ReceiptAlreadyPrinted {
+                transaction_id: "t".to_owned(),
+            },
+            error_codes::RECEIPT_ALREADY_PRINTED,
+        ),
+        (
+            AppError::ReceiptOutcomeUnknown {
+                transaction_id: "t".to_owned(),
+            },
+            error_codes::RECEIPT_OUTCOME_UNKNOWN,
+        ),
+    ] {
+        assert_eq!(error.kind(), expected);
+    }
+}
+
+/// Closing the day answers the day and its pending receipts in one result.
+#[test]
+fn the_day_close_result_carries_its_receipt_attention() {
+    let wire = serde_json::to_value(edge_protocol::ResultV1::BusinessDayClose(
+        edge_protocol::BusinessDayCloseV1 {
+            protocol_version: edge_protocol::PROTOCOL_VERSION,
+            day: edge_protocol::BusinessDayV1 {
+                business_day_id: "d".to_owned(),
+                tenant_id: "t".to_owned(),
+                store_id: "s".to_owned(),
+                status: "CLOSED".to_owned(),
+                opened_at: "2026-10-08T15:00:00Z".to_owned(),
+                closed_at: Some("2026-10-08T23:00:00Z".to_owned()),
+                version: 2,
+            },
+            receipt_attention: edge_protocol::ReceiptAttentionV1 {
+                pending: 0,
+                failed: 1,
+                unknown: 2,
+            },
+        },
+    ))
+    .unwrap();
+    assert_eq!(wire["result"], "BUSINESS_DAY_CLOSE");
+    assert_eq!(wire["payload"]["day"]["status"], "CLOSED");
+    assert_eq!(wire["payload"]["receipt_attention"]["failed"], 1);
+    assert_eq!(wire["payload"]["receipt_attention"]["unknown"], 2);
+    // `PRINTED` is not an attention item, so there is no field for it.
+    assert!(wire["payload"]["receipt_attention"]["printed"].is_null());
+}
+
+/// `RECEIPT_COMPLETED` is gone from the wire, and a client cannot ask for it.
+#[test]
+fn the_sale_lifecycle_has_no_receipt_state() {
+    for status in [
+        "OPEN",
+        "TOTALIZED",
+        "PAYMENT_IN_PROGRESS",
+        "COMMITTED",
+        "FINALIZED",
+        "CANCELLED",
+    ] {
+        assert!(
+            TransactionStatus::parse(status).is_ok(),
+            "{status} is part of the lifecycle"
+        );
+    }
+    assert!(
+        TransactionStatus::parse("RECEIPT_COMPLETED").is_err(),
+        "a receipt is an obligation, not a state of the sale (ADR 043)"
+    );
+}
+
+/// A cancellation payload cannot carry money, a line or a tender.
+#[test]
+fn the_cancel_payload_can_only_say_why() {
+    let wire = serde_json::to_value(edge_protocol::CancelTransactionRequestV1 {
+        reason_code: Some("CUSTOMER_LEFT".to_owned()),
+    })
+    .unwrap();
+    let keys: Vec<&String> = wire
+        .as_object()
+        .expect("an object")
+        .keys()
+        .collect::<Vec<_>>();
+    assert_eq!(keys, vec!["reason_code"]);
 }

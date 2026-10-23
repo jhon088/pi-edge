@@ -3,18 +3,19 @@
 use std::fmt::Debug;
 
 use edge_protocol::{
-    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayV1,
-    CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
-    CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1,
-    CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
+    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayCloseV1,
+    BusinessDayV1, CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1,
+    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
+    CoreInfoV1, CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
     ForceCloseBusinessDayRequestV1, HardwareStatusV1, ImportInventoryBootstrapRequestV1,
     InitDeviceRequestV1, InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1,
     InventoryPositionV1, InventoryQueryV1, JournalEventV1, OpenRegisterSessionRequestV1,
     PaymentRequestV1, PaymentResultV1, PendingOutboxV1, PrintTransactionRequestV1, ProductLookupV1,
-    ProductSelectorV1, PutCatalogChunkRequestV1, RefundEligibilityV1, RefundRequestV1, RefundV1,
-    RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RetailTransactionV1,
-    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
-    SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
+    RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
+    RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
+    StartPaymentRequestV1, SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1,
+    TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -50,6 +51,10 @@ pub trait EdgeClient: Debug + Send + Sync {
     /// What sync knows: how much is waiting, how much is stuck, how far the
     /// inbound stream got.
     fn get_sync_status(&self) -> Result<SyncStatusV1, ClientError>;
+    /// What one sale owes the customer in paper, and what became of it.
+    fn get_receipt(&self, transaction_id: &str) -> Result<ReceiptV1, ClientError>;
+    /// Recent sales, newest first, with their receipt state.
+    fn list_recent_sales(&self, limit: i64, offset: i64) -> Result<RecentSalesV1, ClientError>;
     fn get_journal(&self, limit: i64) -> Result<Vec<JournalEventV1>, ClientError>;
     fn catalog_status(&self) -> Result<CatalogStatusV1, ClientError>;
     fn catalog_import_status(
@@ -242,12 +247,19 @@ pub trait EdgeClient: Debug + Send + Sync {
         request: ReopenSessionRequestV1,
         request_id: Option<Uuid>,
     ) -> Result<RegisterSessionV1, ClientError>;
+    /// End the day over open sessions. Answers the day plus the receipts of
+    /// that day still needing attention.
     fn force_close_business_day(
         &self,
         request: ForceCloseBusinessDayRequestV1,
         request_id: Option<Uuid>,
-    ) -> Result<BusinessDayV1, ClientError>;
-    fn close_business_day(&self, request_id: Option<Uuid>) -> Result<BusinessDayV1, ClientError>;
+    ) -> Result<BusinessDayCloseV1, ClientError>;
+    /// Close the day. Answers the day plus the receipts of that day still
+    /// needing attention — never a reason the close was refused (ADR 043).
+    fn close_business_day(
+        &self,
+        request_id: Option<Uuid>,
+    ) -> Result<BusinessDayCloseV1, ClientError>;
 
     // catalog import: open, stream, close, put in force
     fn begin_catalog_import(
@@ -277,6 +289,13 @@ pub trait EdgeClient: Debug + Send + Sync {
         snapshot_id: &str,
         request_id: Option<Uuid>,
     ) -> Result<CatalogSnapshotViewV1, ClientError>;
+
+    /// Abandon the active sale. Refused once any money has been applied.
+    fn cancel_transaction(
+        &self,
+        reason_code: Option<String>,
+        request_id: Option<Uuid>,
+    ) -> Result<RetailTransactionV1, ClientError>;
 
     /// Run one dispatch cycle now. Answers `NOT_CONFIGURED` and changes
     /// nothing when this installation has no sync transport.

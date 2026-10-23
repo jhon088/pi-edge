@@ -1121,6 +1121,83 @@ pub struct SessionCloseResultV1 {
     /// `BALANCED`, `SHORTAGE`, `OVERAGE` or `UNDECLARED`, so an unknown
     /// variance never renders as zero.
     pub variance_label: String,
+    /// Sales whose receipt still needs attention. Never blocks the close.
+    pub receipt_attention: ReceiptAttentionV1,
+}
+
+/// How many sales still need somebody to look at their receipt.
+///
+/// `PRINTED` is not counted: it is not an attention item (ADR 043).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ReceiptAttentionV1 {
+    /// Owed and not yet resolved.
+    pub pending: i64,
+    /// Certainly did not print: a first receipt may be retried.
+    pub failed: i64,
+    /// May have printed. Only an explicit reprint, decided by a person.
+    pub unknown: i64,
+}
+
+/// What closing the business day produced.
+///
+/// The day and what still needs somebody, in one answer: a client should not
+/// have to run a second query to learn that a receipt is outstanding at the
+/// moment it closes the day (ADR 043).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BusinessDayCloseV1 {
+    pub protocol_version: u32,
+    pub day: BusinessDayV1,
+    /// Sales **of this day** whose receipt still needs attention. Never
+    /// blocks the close.
+    pub receipt_attention: ReceiptAttentionV1,
+}
+
+/// What a sale owes the customer in paper, and what became of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptV1 {
+    pub protocol_version: u32,
+    pub transaction_id: String,
+    /// `PENDING`, `PRINTED`, `FAILED` or `UNKNOWN`.
+    pub status: String,
+    pub attempt_count: i64,
+    pub first_printed_at: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub last_error_code: Option<String>,
+    /// Human detail. Never a host, a port or raw bytes.
+    pub last_error_detail: Option<String>,
+}
+
+/// One line of the operational history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentSaleV1 {
+    pub transaction_id: String,
+    pub register_id: String,
+    pub register_sequence: i64,
+    pub finalized_at: String,
+    /// The sale's own materialised total. Nothing is recomputed here.
+    pub grand_total: MoneyV1,
+    /// `PENDING`, `PRINTED`, `FAILED`, `UNKNOWN` — or absent for a sale closed
+    /// before this installation tracked receipts.
+    pub receipt_status: Option<String>,
+}
+
+/// Recent sales, newest first, with what still needs attention.
+///
+/// Operational history, not reporting: no analytics, no search, no filters —
+/// enough for an operator to find the sale they just made (ADR 043).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentSalesV1 {
+    pub protocol_version: u32,
+    pub attention: ReceiptAttentionV1,
+    pub sales: Vec<RecentSaleV1>,
+}
+
+/// Abandon a sale that has taken no money.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CancelTransactionRequestV1 {
+    /// Why, for the journal. Optional.
+    #[serde(default)]
+    pub reason_code: Option<String>,
 }
 
 /// Record a manual drawer movement. A blank reason is refused.
@@ -1188,4 +1265,12 @@ pub struct TransactionRequestV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LimitRequestV1 {
     pub limit: i64,
+}
+
+/// A bounded page of a list, following the inventory query's shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageRequestV1 {
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }

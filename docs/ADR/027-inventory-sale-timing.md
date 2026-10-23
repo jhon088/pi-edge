@@ -32,6 +32,12 @@ happened is noise in the only record an operator can trust.
 drives it, so it is not a competing moment: it sits *before* finalization, not
 after.
 
+> **Amended by ADR 043 (milestone 12).** That state was removed. A receipt is
+> now an obligation of the closed sale recorded in `transaction_receipts`, so
+> there is no receipt moment in the sale's lifecycle at all — which only
+> strengthens this decision: stock still moves at `FINALIZED` and nowhere
+> else.
+
 One movement per line, written **inside the same database transaction** as the
 finalization, its journal event and its outbox event. There is no state in
 which a sale is `FINALIZED` and its stock has not moved, and none in which

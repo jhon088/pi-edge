@@ -240,6 +240,19 @@ pub const HARDWARE_ACTION_ALREADY_COMPLETED: &str = "HARDWARE_ACTION_ALREADY_COM
 /// own (ADR 036).
 pub const SCAN_NO_ACTIVE_TRANSACTION: &str = "SCAN_NO_ACTIVE_TRANSACTION";
 
+// Receipt codes. A receipt is an operational obligation of a closed sale, so
+// none of these ever means the sale is in doubt (ADR 043).
+
+/// No receipt obligation on record for that sale.
+pub const RECEIPT_NOT_FOUND: &str = "RECEIPT_NOT_FOUND";
+/// The first receipt already came out. A further copy is a reprint and has to
+/// say so.
+pub const RECEIPT_ALREADY_PRINTED: &str = "RECEIPT_ALREADY_PRINTED";
+/// Whether the first receipt printed is **unknown**: paper may have come out.
+/// PI.Edge will not print a first receipt again on a guess — an operator
+/// decides, with an explicit reprint.
+pub const RECEIPT_OUTCOME_UNKNOWN: &str = "RECEIPT_OUTCOME_UNKNOWN";
+
 // Sync codes, produced by the sync engine. Four, and the distinction that
 // matters is whether the remote may already hold what was sent (ADR 040).
 

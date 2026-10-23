@@ -19,9 +19,9 @@ use edge_client::{ClientError, EdgeClient, EventListener, IpcEdgeClient};
 use edge_domain::prelude::Timestamp;
 use edge_protocol::{
     CashPositionV1, CatalogStatusV1, CoreInfoV1, EdgeStateV1, EventV1, HardwareStatusV1,
-    InventoryPositionV1, InventoryQueryV1, ProductLookupV1, ProductSelectorV1, RefundEligibilityV1,
-    RefundV1, RetailTransactionV1, SubmitScanRequestV1, SyncStatusV1, TransactionPaymentsV1,
-    TransactionRequestV1,
+    InventoryPositionV1, InventoryQueryV1, ProductLookupV1, ProductSelectorV1, RecentSalesV1,
+    RefundEligibilityV1, RefundV1, RetailTransactionV1, SubmitScanRequestV1, SyncStatusV1,
+    TransactionPaymentsV1, TransactionRequestV1,
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -223,6 +223,22 @@ fn hardware_status(bridge: tauri::State<'_, EdgeBridge>) -> Result<HardwareStatu
     bridge.client.hardware_status().map_err(BridgeError::from)
 }
 
+/// Recent sales with their receipt state.
+///
+/// A diagnostic read, and read-only: the window observes what a sale owes in
+/// paper and never asks for a print. Driving a receipt is the runtime's job
+/// (ADR 043).
+#[tauri::command]
+fn recent_sales(
+    bridge: tauri::State<'_, EdgeBridge>,
+    limit: i64,
+) -> Result<RecentSalesV1, BridgeError> {
+    bridge
+        .client
+        .list_recent_sales(limit, 0)
+        .map_err(BridgeError::from)
+}
+
 /// What sync knows: how much is waiting, how much is stuck, how far behind
 /// this till is.
 ///
@@ -335,6 +351,7 @@ pub fn run() {
             transaction_refunds,
             hardware_status,
             sync_status,
+            recent_sales,
             print_test_page,
             open_drawer,
             scanner_key,

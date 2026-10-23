@@ -25,7 +25,7 @@ use crate::context::{
 use crate::error::AppError;
 use crate::hardware_service::Hardware;
 use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
-use crate::queries::{EdgeState, PendingOutbox};
+use crate::queries::{BusinessDayCloseResult, EdgeState, PendingOutbox};
 use crate::sync_service::SyncRuntime;
 use crate::CORE_VERSION;
 
@@ -744,6 +744,11 @@ where
                 ))?;
                 let payload = serde_json::to_value(transaction.state())
                     .map_err(|e| AppError::Serialization(e.to_string()))?;
+                // The sale is closed and owes a receipt. Written here, in the
+                // same transaction, so there is no state in which a sale is
+                // commercially closed and nobody knows a ticket is owed
+                // (ADR 043).
+                uow.insert_receipt_obligation(&TransactionReceipt::owed(transaction.id(), now))?;
                 uow.enqueue_outbox(&OutboxEvent::pending(
                     outbox_event_id,
                     OutboxEventType::SaleFinalized,
@@ -764,6 +769,61 @@ where
             grand_total_minor = transaction.state().totals.grand_total.minor(),
             "transaction finalized"
         );
+        // The paper, after the commit and outside every transaction. A printer
+        // that jams changes nothing about the sale that just closed; what
+        // happened is recorded on the obligation (ADR 037, ADR 043).
+        self.print_first_receipt(transaction.id(), now);
+        Ok(transaction)
+    }
+
+    /// Abandon a sale before any money is involved.
+    ///
+    /// Allowed only from `OPEN` and `TOTALIZED`, which the aggregate enforces:
+    /// once a payment has been applied the way out is a reversal or a refund,
+    /// never a cancellation (ADR 019). Nothing moves — no cash, no stock, no
+    /// outbox fact and no receipt obligation — because nothing happened.
+    ///
+    /// It exists so a till cannot be wedged: an abandoned sale would otherwise
+    /// block the session close forever.
+    pub fn cancel_transaction(
+        &self,
+        cmd: CancelTransactionCommand,
+    ) -> Result<RetailTransaction, AppError> {
+        let now = self.clock.now();
+        let journal_event_id = self.new_event_id();
+
+        let transaction = self.store.transact(move |uow| {
+            idempotent(uow, cmd.request_id, "CancelTransaction", now, |uow| {
+                let device = require_device(uow)?;
+                let day = require_open_business_day(uow, &device.store_id)?;
+                let session = require_single_open_session(uow, day.id())?;
+                let mut transaction = require_active_transaction(uow, session.id())?;
+                transaction.cancel(now)?;
+                uow.update_transaction(&transaction, now)?;
+                let ctx = EventContext {
+                    device: &device,
+                    register_id: Some(&transaction.state().register_id),
+                    business_day_id: Some(day.id()),
+                    session_id: Some(session.id()),
+                    transaction_id: Some(transaction.id()),
+                    operator_id: Some(&transaction.state().operator_id),
+                };
+                uow.append_journal(&journal_event(
+                    journal_event_id,
+                    JournalEventType::TransactionCancelled,
+                    transaction.id().to_string(),
+                    &ctx,
+                    now,
+                    json!({
+                        "reason_code": cmd.reason_code,
+                        "line_count": transaction.state().lines.len(),
+                        "cancelled_at": now.to_rfc3339(),
+                    }),
+                ))?;
+                Ok(transaction)
+            })
+        })?;
+        tracing::info!(transaction_id = %transaction.id(), "transaction cancelled");
         Ok(transaction)
     }
 
@@ -772,15 +832,21 @@ where
     // `declare_closing_cash` (ADR 022). A single-shot close would let a client
     // finish a till without ever counting it.
 
+    /// Close the business day.
+    ///
+    /// Answers the day *and* the receipts of that day still needing somebody.
+    /// A receipt never blocks the close — no money is unaccounted for because
+    /// a printer jammed — but a caller should not have to go looking for it
+    /// either (ADR 043).
     pub fn close_business_day(
         &self,
         cmd: CloseBusinessDayCommand,
-    ) -> Result<BusinessDay, AppError> {
+    ) -> Result<BusinessDayCloseResult, AppError> {
         let now = self.clock.now();
         let journal_event_id = self.new_event_id();
         let outbox_event_id = self.new_event_id();
 
-        let day = self.store.transact(move |uow| {
+        let result = self.store.transact(move |uow| {
             idempotent(uow, cmd.request_id, "CloseBusinessDay", now, |uow| {
                 let device = require_device(uow)?;
                 let mut day = require_open_business_day(uow, &device.store_id)?;
@@ -835,11 +901,20 @@ where
                     now,
                     payload,
                 ))?;
-                Ok(day)
+                let receipt_attention =
+                    uow.receipt_attention(ReceiptAttentionScope::BusinessDay(day.id()))?;
+                Ok(BusinessDayCloseResult {
+                    day,
+                    receipt_attention,
+                })
             })
         })?;
-        tracing::info!(business_day_id = %day.id(), "business day closed");
-        Ok(day)
+        tracing::info!(
+            business_day_id = %result.day.id(),
+            receipts_needing_attention = result.receipt_attention.total(),
+            "business day closed"
+        );
+        Ok(result)
     }
 
     // ----------------------------------------------------------------- queries

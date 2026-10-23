@@ -49,7 +49,79 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 11 (sync engine + contract V1)
+## Status — milestone 12 (standalone POS closure)
+
+Done: PI.Edge is a complete POS on its own. Open the day, sell, price, promote,
+take cash or a card or both, close the sale, print, reprint, refund, count the
+drawer, close the session, close the day, restart, carry on — with no
+PI.COMMERCE Server anywhere.
+
+The rule the milestone is arranged around: **a paid sale does not depend on a
+printer to be valid.**
+
+```text
+retail_transactions   FINALIZED   the sale is commercially closed
+transaction_receipts  PENDING     …and owes a receipt
+hardware_actions      PENDING     …and we touched a printer about it
+```
+
+* **`FINALIZED` has one meaning**: payments resolved, cash already moved by the
+  payment that moved it, stock moved, journal written, `SALE_FINALIZED`
+  written. It says nothing about paper. `RECEIPT_COMPLETED` is **removed** from
+  the sale's lifecycle — it put a physical side effect inside the commercial
+  close, and nothing ever entered it (ADR 043).
+* **A receipt is an obligation**, one row per sale, written in the same
+  transaction as `FINALIZED`. A closed sale always owes a ticket, and a client
+  that dies cannot make that fact disappear.
+* **The core prints the first receipt itself**, after the commit, outside every
+  transaction, failure swallowed and recorded — exactly like the drawer. No
+  client decides when a receipt is issued.
+* **The receipt states are about certainty**, because only certainty is
+  actionable:
+
+  | What the printer got | Receipt | May the first receipt be retried? |
+  | --- | --- | --- |
+  | the whole job | `PRINTED` | no, it came out |
+  | nothing (`HARDWARE_UNAVAILABLE`, `HARDWARE_NOT_CONFIGURED`) | `FAILED` | yes, explicitly |
+  | maybe something (`HARDWARE_TIMEOUT`, `HARDWARE_IO_ERROR`) | `UNKNOWN` | **no** — a person decides |
+
+* **`UNKNOWN` is terminal and never overwritten, not even by a later
+  success.** The question "did the customer get a ticket?" is closed,
+  unanswered, on purpose.
+* **Nothing retries on its own.** A reprint is always available, always marked
+  as a copy, and changes nothing — not cash, not stock, not the drawer, not
+  the sale, and **not the obligation**.
+* **Recovery tells two `PENDING`s apart**: no device evidence means nothing was
+  sent, so it is attempted; a claim with no answer means the printer may
+  already have the job, so it becomes `UNKNOWN` and nothing is printed. One
+  deterministic pass at startup, no watcher.
+* **A receipt never blocks a close.** The session close and the day close each
+  *report* what is pending in their own result — `CLOSE_BUSINESS_DAY` answers
+  the day plus its `receipt_attention`, so no second query is needed — each
+  scoped to what that close is responsible for: a till reports its own
+  session, a day reports its own day, the history reports the installation.
+  `PRINTED` is not reported.
+* **A sale with no money in it can be abandoned** (`CANCEL_TRANSACTION`),
+  moving nothing at all. Without it an abandoned sale blocks the session close
+  forever.
+* **A minimal operational history** (`LIST_RECENT_SALES`): recent finalized
+  sales, newest first, bounded, with each sale's own materialised total and its
+  receipt state. Not reporting — no analytics, no search, no filters, and no
+  money recomputed.
+
+```bash
+edge-cli cancel --reason CUSTOMER_LEFT          # before any money moves
+edge-cli receipt --transaction <id>             # what this sale owes in paper
+edge-cli sales --limit 20                       # recent sales + what needs attention
+edge-cli print-transaction --transaction <id>              # retry a FAILED first receipt
+edge-cli print-transaction --transaction <id> --reprint    # a copy, always allowed
+```
+
+There is **no refund receipt lifecycle**: nothing in the product requires a
+printed refund voucher today, and a dedicated refund document is a future
+product decision rather than symmetry to be built now.
+
+## Previously — milestone 11 (sync engine + contract V1)
 
 Done: PI.Edge is ready to sync, and does not need to. **The register works
 indefinitely offline; sync is an eventual capability, never a requirement to
@@ -969,7 +1041,17 @@ arithmetic are denied outside tests.
 | `tests/crash-recovery/tests/sync_recovery.rs` | with a **real injected commit failure** in the window that matters: a fact the server acknowledged and PI.Edge never recorded, resent with the same `event_id` and counted once; recovery running even with sync switched off; an inbound effect durable while its cursor is not, re-delivered and resumed into one snapshot; and a batch answered by silence twice, landing once |
 | `apps/edge-daemon/tests/sync.rs` | the sync surface over real IPC: a daemon with no `PI_EDGE_SYNC` reporting `unconfigured` and selling anyway, an unknown driver refusing to start, the daemon's **own dispatcher** draining the outbox with no client asking, a week of offline facts delivered after the first connection and nothing purged, and no operation able to name a server |
 | `crates/edge-storage` migration tests | migration 0010's rebuild: `FAILED` accepted only with a reason, the status set still closed, the delete guard and both indexes back, and a **populated** outbox upgraded with every row, state, attempt count, payload and `seq` preserved and the sequence continuing |
-| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, that the create-refund payload cannot assert authority or a fiscal state, that **no hardware payload can name a host, a port, a driver or carry bytes**, and that the sync surface is two operations with no payload and a status view with no address or credential |
+| `crates/edge-domain` receipt tests | the obligation's transition rule: a new one is pending and unattempted, a printed one is settled and refuses further attempts, a failure is retryable and a retry clears it, uncertainty is terminal and cannot be overwritten by anything — including a later success — and attention counts everything but `PRINTED` |
+| `crates/edge-hardware` error tests | the distinction the receipt lifecycle rests on: only a failure *after* the bytes went out is uncertain, and a connection that timed out is not |
+| `tests/integration/tests/standalone.rs` | the whole day with no server configured: cash with change, card, mixed tender, a promotion billing two of three units while three leave the shelf, three receipts printed with nobody asking, the drawer opening twice and not for the card-only sale, a balanced blind close reporting no pending receipts, five facts waiting for a server that does not exist, the history newest-first; a sale closing and a day ending with an `UNKNOWN` receipt; a partial refund returning goods, money and nothing else; a restart that keeps trading; and a sale abandoned before money and refused after it |
+| `tests/integration/tests/hardware.rs` (M12 additions) | the receipt coming out when the sale closes with nobody asking, a first receipt refused once it printed, and the certainty matrix end to end: nothing sent → `FAILED` and retryable, maybe sent → `UNKNOWN` and refused, with a reprint rewriting neither |
+| `tests/integration/tests/standalone.rs` (close attention) | what each close is responsible for: the day reporting nothing when every receipt printed, `failed=1` with one that certainly did not print, `unknown=1` with one that may have, **another day's unresolved receipt not counted**, receipts never appearing among the reasons a day cannot close — and with two tills in one day, **a till close reporting only its own receipts** while the day close reports both and the installation-wide view still sees everything |
+| `tests/crash-recovery/tests/receipt_recovery.rs` | the five receipt windows, each opened with a **real injected commit failure**: the claim's commit killed (no evidence → attempted on restart), the device answer's commit killed (a claim with no answer → `UNKNOWN`, nothing printed, and a second pass changing nothing), a `FAILED` receipt retried explicitly, a `PRINTED` one not reprinted by a restart and not restamped, and a reprint over an `UNKNOWN` one printing a copy while the first receipt's fate stays unknown |
+| `tests/crash-recovery/tests/payment_recovery.rs` (M12 additions) | the window between the last payment and the commercial close: cash already durable and not doubled by finalizing later, and a card authorization finalized after a restart through the same attempt — a second charge would be a second attempt |
+| `tests/crash-recovery/tests/recovery.rs` (M12 addition) | a cancelled sale surviving a restart, reporting nothing, owing no receipt, and letting the till close |
+| `crates/edge-storage` migration tests (0011) | the upgrade refusing to run while any sale sits in the removed `RECEIPT_COMPLETED` state and leaving nothing half-applied; the sales table rebuilt with every row, every later-added column and its children's foreign keys still pointing at it — proven by `foreign_key_check` and by a dangling insert being refused; and a receipt row unable to claim a printing time it does not have |
+| `apps/edge-daemon/tests/standalone.rs` | the standalone closure over real IPC: a till selling, printing, refunding under the development authority and closing with no sync configured; a till with **no printer** closing its sales and reporting `FAILED` with `HARDWARE_NOT_CONFIGURED`; and an abandoned sale leaving nothing behind and not wedging the till |
+| `apps/edge-daemon/tests/protocol_contract.rs` | pins the stable error codes clients branch on, that the sale's lifecycle has no receipt state and a client cannot ask for one, that a cancellation payload can only say why, that the pre-close DTO has no amount-bearing field, that a stock movement crosses the wire as a positive magnitude plus an explicit direction, that the create-refund payload cannot assert authority or a fiscal state, that **no hardware payload can name a host, a port, a driver or carry bytes**, and that the sync surface is two operations with no payload and a status view with no address or credential |
 
 ## Non-negotiable boundaries
 
@@ -1014,6 +1096,9 @@ arithmetic are denied outside tests.
 * PI.Edge works indefinitely offline. Sync is an eventual capability, never a
   requirement to continue a locally permitted sale — and no sync configured is a
   healthy register, not a degraded one.
+* A paid sale never depends on a printer to be valid. `FINALIZED` is a
+  commercial fact; the receipt is an obligation recorded separately, and a
+  receipt that may or may not have printed is never retried on a guess.
 * A production refund is authorised online, for that one operation. No
   authorisation is ever stored as a standing permission, so PI.Edge sells
   offline and does not refund offline.

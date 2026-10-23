@@ -28,7 +28,7 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     let info = cli.core_info().unwrap();
     assert_eq!(info.status, CoreStatusV1::Ready);
     assert_eq!(info.protocol_version, edge_protocol::PROTOCOL_VERSION);
-    assert_eq!(info.database_schema_version, 10);
+    assert_eq!(info.database_schema_version, 11);
     assert_eq!(info.pid, daemon.pid);
 
     open_register(&cli);
@@ -170,7 +170,7 @@ fn register_survives_ui_restarts_while_the_core_keeps_running() {
     assert_eq!(closed.expected_at_close.formatted, "1116.00");
     assert_eq!(closed.variance.as_ref().unwrap().minor, 0);
     assert_eq!(closed.variance_label, "BALANCED");
-    assert_eq!(ui.close_business_day(None).unwrap().status, "CLOSED");
+    assert_eq!(ui.close_business_day(None).unwrap().day.status, "CLOSED");
     let closed = cli.get_edge_state().unwrap();
     assert!(closed.business_day.is_none());
     assert!(closed.session.is_none());

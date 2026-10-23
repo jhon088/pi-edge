@@ -48,7 +48,7 @@ pub mod unconfigured;
 
 pub use device::{HardwareDeviceKind, HardwareDeviceState, HardwareDeviceStatus};
 pub use drawer::{CashDrawerPort, DrawerOpenReason};
-pub use error::HardwareError;
+pub use error::{DeliveryCertainty, HardwareError};
 pub use escpos::{EscPosConfig, EscPosKickDrawer, EscPosTcpPrinter};
 pub use printer::{PrintAlign, PrintDocument, PrintKind, PrintLine, PrinterPort};
 pub use scanner::{KeyInput, ScanBuffer, ScanEvent, ScanPolicy};

@@ -19,6 +19,7 @@ pub mod inventory_service;
 pub mod payment_service;
 pub mod ports;
 pub mod queries;
+pub mod receipt_service;
 pub mod refund_service;
 pub mod service;
 pub mod sync_service;

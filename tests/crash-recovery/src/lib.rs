@@ -374,3 +374,28 @@ pub fn outbox_entries(core: &TestCore, status: OutboxStatus) -> Vec<OutboxEntry>
         .transact(|uow| uow.list_outbox_by_status(status, 500))
         .unwrap()
 }
+
+// ------------------------------------------------------------------ receipts
+
+/// A core on `path` with a printer that answers however the test says.
+///
+/// A simulator, asked for explicitly (ADR 038).
+pub fn printing_core_at(
+    path: &Path,
+    id_offset: u64,
+    printer: SimulatorPrinter,
+) -> (TestCore, Arc<SimulatorPrinter>) {
+    let printer = Arc::new(printer);
+    let core = EdgeApplication::with_hardware(
+        SqliteEdgeStore::open(path).unwrap(),
+        FixedClock::new(start_instant(), 1_000),
+        SequentialIdFactory::starting_at(id_offset),
+        SimulatorPaymentProvider::approving(),
+        Hardware::new(
+            Arc::clone(&printer) as _,
+            Arc::new(SimulatorDrawer::working()) as _,
+            48,
+        ),
+    );
+    (core, printer)
+}

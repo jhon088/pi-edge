@@ -20,6 +20,7 @@ mod inventory;
 pub mod lock;
 pub mod migrations;
 mod payments;
+mod receipts;
 mod refunds;
 pub mod sqlite;
 mod sync;

@@ -2,13 +2,21 @@
 //!
 //! Lifecycle:
 //! ```text
-//! OPEN -> TOTALIZED -> PAYMENT_IN_PROGRESS -> COMMITTED -> RECEIPT_COMPLETED -> FINALIZED
-//!   \                                                                      /
-//!    `-> CANCELLED                                      COMMITTED -> FINALIZED
+//! OPEN -> TOTALIZED -> PAYMENT_IN_PROGRESS -> COMMITTED -> FINALIZED
+//!   \
+//!    `-> CANCELLED
 //! ```
 //! Adding an item to a `TOTALIZED` transaction invalidates the official totals
 //! and returns the aggregate to `OPEN`: the UI must never display totals that
 //! the core has not computed.
+//!
+//! **`FINALIZED` means the sale is commercially closed** — payments resolved,
+//! cash already moved by the payment, stock moved, journal written, outbox
+//! written. It says nothing about paper: whether a receipt came out is a
+//! separate, operational obligation that never changes this aggregate
+//! (ADR 043). There was once a `RECEIPT_COMPLETED` status between `COMMITTED`
+//! and `FINALIZED`; it was removed in milestone 12 because it put a physical
+//! side effect inside the commercial close, which ADR 037 forbids.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +37,6 @@ pub enum TransactionStatus {
     Totalized,
     PaymentInProgress,
     Committed,
-    ReceiptCompleted,
     Finalized,
     Cancelled,
 }
@@ -41,7 +48,6 @@ impl TransactionStatus {
             TransactionStatus::Totalized => "TOTALIZED",
             TransactionStatus::PaymentInProgress => "PAYMENT_IN_PROGRESS",
             TransactionStatus::Committed => "COMMITTED",
-            TransactionStatus::ReceiptCompleted => "RECEIPT_COMPLETED",
             TransactionStatus::Finalized => "FINALIZED",
             TransactionStatus::Cancelled => "CANCELLED",
         }
@@ -53,7 +59,6 @@ impl TransactionStatus {
             "TOTALIZED" => Ok(TransactionStatus::Totalized),
             "PAYMENT_IN_PROGRESS" => Ok(TransactionStatus::PaymentInProgress),
             "COMMITTED" => Ok(TransactionStatus::Committed),
-            "RECEIPT_COMPLETED" => Ok(TransactionStatus::ReceiptCompleted),
             "FINALIZED" => Ok(TransactionStatus::Finalized),
             "CANCELLED" => Ok(TransactionStatus::Cancelled),
             other => Err(DomainError::UnknownEnumValue {
@@ -727,7 +732,6 @@ impl RetailTransaction {
             || matches!(
                 self.0.status,
                 TransactionStatus::Committed
-                    | TransactionStatus::ReceiptCompleted
                     | TransactionStatus::Finalized
                     | TransactionStatus::Cancelled
             )
@@ -780,25 +784,13 @@ impl RetailTransaction {
         self.0.payments = summary;
     }
 
-    /// Receipt printing/delivery finished. Optional in this milestone.
-    pub fn mark_receipt_completed(&mut self, now: Timestamp) -> Result<(), DomainError> {
-        match self.0.status {
-            TransactionStatus::Committed => {
-                self.0.status = TransactionStatus::ReceiptCompleted;
-                self.touch(now);
-                Ok(())
-            }
-            other => Err(DomainError::InvalidTransition {
-                aggregate: AGGREGATE,
-                from: other.as_str(),
-                attempted: "RECEIPT_COMPLETED",
-            }),
-        }
-    }
-
+    /// Close the sale commercially.
+    ///
+    /// Nothing about receipts is checked here, and nothing ever will be: a paid
+    /// sale does not depend on a printer to be valid (ADR 043).
     pub fn finalize(&mut self, now: Timestamp) -> Result<(), DomainError> {
         match self.0.status {
-            TransactionStatus::Committed | TransactionStatus::ReceiptCompleted => {}
+            TransactionStatus::Committed => {}
             other => {
                 return Err(DomainError::InvalidTransition {
                     aggregate: AGGREGATE,
@@ -1305,16 +1297,19 @@ mod tests {
         assert!(!tx.is_active());
     }
 
+    /// A covered, resolved sale closes commercially with no reference to a
+    /// receipt. The removed `RECEIPT_COMPLETED` status cannot come back by
+    /// accident: `FINALIZED` follows `COMMITTED` and nothing else (ADR 043).
     #[test]
-    fn supports_receipt_completed_before_finalize() {
+    fn a_committed_sale_finalizes_without_any_notion_of_a_receipt() {
         let mut tx = sale();
         tx.add_line(line(10_000, 1, 1_600, 1), ts(1)).unwrap();
         tx.totalize(ts(2)).unwrap();
         tx.apply_payment_summary(paid(11_600), ts(3)).unwrap();
-        tx.mark_receipt_completed(ts(4)).unwrap();
-        assert_eq!(tx.status(), TransactionStatus::ReceiptCompleted);
-        tx.finalize(ts(5)).unwrap();
+        assert_eq!(tx.status(), TransactionStatus::Committed);
+        tx.finalize(ts(4)).unwrap();
         assert_eq!(tx.status(), TransactionStatus::Finalized);
+        assert!(TransactionStatus::parse("RECEIPT_COMPLETED").is_err());
     }
 
     #[test]

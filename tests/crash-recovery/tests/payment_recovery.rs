@@ -362,3 +362,110 @@ fn a_finalized_sale_keeps_its_payment_history() {
     assert_eq!(payments[1].payment.tender_type.as_str(), "CARD");
     assert!(payments[1].attempts[0].provider_reference.is_some());
 }
+
+/// The window between the last payment and the commercial close.
+///
+/// Cash is durable the moment the payment commits — the drawer ledger does not
+/// wait for finalization (ADR 021) — so a crash here must leave exactly one
+/// cash movement, and the sale must still be finalizable.
+#[test]
+fn a_crash_between_the_last_cash_payment_and_the_close_loses_and_doubles_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("pi-edge.db");
+
+    {
+        let core = scripted_core_at(&db, 1, SimulatorScript::approving());
+        open_totalized_sale(&core);
+        cash(&core, TOTAL);
+        // The money is in the drawer and the sale is not closed yet.
+        assert_eq!(
+            core.get_cash_position()
+                .unwrap()
+                .position
+                .cash_sales
+                .minor(),
+            TOTAL
+        );
+        core.store().arm_commit_failure();
+        assert!(
+            core.finalize_transaction(FinalizeTransactionCommand::default())
+                .is_err(),
+            "the commercial commit must have failed"
+        );
+    }
+
+    let core = scripted_core_at(&db, 1_000, SimulatorScript::approving());
+    // Still one payment, one cash movement, and a sale waiting to be closed.
+    let sale = core.get_active_transaction().unwrap().unwrap();
+    assert_eq!(sale.status(), TransactionStatus::Committed);
+    assert!(sale.state().finalized_at.is_none());
+    let position = core.get_cash_position().unwrap().position;
+    assert_eq!(position.cash_sales.minor(), TOTAL);
+    assert_eq!(core.get_transaction_payments(sale.id()).unwrap().0.len(), 1);
+    assert_eq!(core.get_edge_state().unwrap().pending_outbox, 0);
+
+    // Closing it now moves the stock once and the cash not at all: the cash
+    // already moved when the payment did.
+    let finalized = core
+        .finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap();
+    assert_eq!(finalized.status(), TransactionStatus::Finalized);
+    assert_eq!(
+        core.get_cash_position()
+            .unwrap()
+            .position
+            .cash_sales
+            .minor(),
+        TOTAL,
+        "no second cash movement"
+    );
+    assert_eq!(core.get_edge_state().unwrap().pending_outbox, 1);
+    // And the obligation was created by the close, then satisfied by the
+    // simulated printer this harness configures (ADR 043).
+    assert_eq!(
+        core.get_receipt(finalized.id()).unwrap().status,
+        ReceiptStatus::Printed
+    );
+}
+
+/// The same window with a card: closing the sale must not talk to the provider
+/// again.
+#[test]
+fn a_crash_between_a_card_authorization_and_the_close_never_charges_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("pi-edge.db");
+
+    let authorized = {
+        let core = scripted_core_at(&db, 1, SimulatorScript::approving());
+        open_totalized_sale(&core);
+        let outcome = card(&core, TOTAL);
+        assert_eq!(
+            outcome.payment.attempts[0].status,
+            AttemptStatus::Authorized
+        );
+        core.store().arm_commit_failure();
+        assert!(core
+            .finalize_transaction(FinalizeTransactionCommand::default())
+            .is_err());
+        outcome.payment.attempts[0].clone()
+    };
+
+    let core = scripted_core_at(&db, 1_000, SimulatorScript::approving());
+    let finalized = core
+        .finalize_transaction(FinalizeTransactionCommand::default())
+        .unwrap();
+    assert_eq!(finalized.status(), TransactionStatus::Finalized);
+
+    // One attempt, the same one: a second charge would be a second attempt
+    // with a new correlation id (ADR 018, ADR 020).
+    let (payments, settlement) = core.get_transaction_payments(finalized.id()).unwrap();
+    assert_eq!(payments.len(), 1);
+    let attempts = &payments[0].attempts;
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].correlation_id, authorized.correlation_id);
+    assert_eq!(
+        attempts[0].provider_reference, authorized.provider_reference,
+        "finalizing reads the authorization; it never asks for a new one"
+    );
+    assert_eq!(settlement.committed_total.minor(), TOTAL);
+}

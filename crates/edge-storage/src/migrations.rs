@@ -66,6 +66,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0010_sync",
         sql: include_str!("../migrations/0010_sync.sql"),
     },
+    Migration {
+        version: 11,
+        name: "0011_receipts",
+        sql: include_str!("../migrations/0011_receipts.sql"),
+    },
 ];
 
 /// Schema version this binary expects.
@@ -84,6 +89,43 @@ pub fn apply(conn: &Connection) -> Result<(), StorageError> {
 /// the only honest way to check that a table rebuild kept what was already
 /// there.
 pub(crate) fn apply_through(conn: &Connection, through: i64) -> Result<(), StorageError> {
+    // Narrowing a CHECK means rebuilding the table, and SQLite cannot do that
+    // with foreign keys enforced: `ALTER TABLE ... RENAME` repoints every
+    // child's `REFERENCES` clause at the table the rebuild is about to drop,
+    // and dropping a parent with live children violates the constraint
+    // outright. Turning enforcement off for the duration is SQLite's own
+    // prescribed procedure for the rebuild, not a shortcut around it.
+    //
+    // It is restored before returning, and `foreign_key_check` refuses to let
+    // a migration leave an orphan behind — so a rebuild that copied the rows
+    // badly fails at startup instead of being discovered months later.
+    let enforced: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    if enforced == 1 {
+        conn.pragma_update(None, "foreign_keys", "OFF")?;
+    }
+    let outcome = apply_each(conn, through);
+    if enforced == 1 {
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        outcome?;
+        return verify_no_orphans(conn);
+    }
+    outcome
+}
+
+/// Every child row whose parent is missing, which must be none.
+fn verify_no_orphans(conn: &Connection) -> Result<(), StorageError> {
+    let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        return Err(StorageError::MigrationLeftOrphans {
+            table: row.get(0)?,
+            parent: row.get(2)?,
+        });
+    }
+    Ok(())
+}
+
+fn apply_each(conn: &Connection, through: i64) -> Result<(), StorageError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
              version    INTEGER PRIMARY KEY,
@@ -677,6 +719,177 @@ mod tests {
             )
             .unwrap();
         assert_eq!(next, 4);
+    }
+
+    /// A row in the removed state stops the upgrade instead of being guessed
+    /// at.
+    ///
+    /// `RECEIPT_COMPLETED` has no honest conversion: it is not `FINALIZED`
+    /// (no `finalized_at`) and inventing one would be writing history
+    /// (ADR 043).
+    #[test]
+    fn upgrading_refuses_a_sale_left_in_the_removed_receipt_state() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, 10).unwrap();
+        seed_sale(&conn, "t-legacy", "RECEIPT_COMPLETED", None);
+
+        let error = apply(&conn).expect_err("the migration must refuse to run");
+        let message = error.to_string();
+        assert!(
+            message.contains("RECEIPT_COMPLETED"),
+            "the refusal must name the state: {message}"
+        );
+        assert!(
+            message.contains("no conversion"),
+            "and say that nothing is converted: {message}"
+        );
+
+        // Nothing was half-applied: the sale is still there, untouched, and
+        // the new table does not exist.
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM retail_transactions WHERE transaction_id = 't-legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "RECEIPT_COMPLETED");
+        assert!(conn
+            .query_row("SELECT COUNT(*) FROM transaction_receipts", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .is_err());
+    }
+
+    /// The rebuild keeps the sales and leaves the children pointing at the
+    /// table that is actually there.
+    #[test]
+    fn upgrading_a_populated_sales_table_preserves_rows_and_foreign_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, 10).unwrap();
+        seed_sale(&conn, "t-open", "OPEN", None);
+        seed_sale(&conn, "t-done", "FINALIZED", Some("2026-10-08T15:00:00Z"));
+        seed_line(&conn, "l-1", "t-done").unwrap();
+
+        apply(&conn).unwrap();
+
+        let statuses: Vec<String> = conn
+            .prepare("SELECT status FROM retail_transactions ORDER BY transaction_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(statuses, vec!["FINALIZED".to_owned(), "OPEN".to_owned()]);
+        // The removed state is gone from the contract.
+        assert!(conn
+            .execute(
+                "UPDATE retail_transactions SET status = 'RECEIPT_COMPLETED'
+                 WHERE transaction_id = 't-open'",
+                [],
+            )
+            .is_err());
+
+        // The line still belongs to its sale, and the constraint is live
+        // again: foreign keys came back on and a dangling child is refused.
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let lines: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transaction_lines WHERE transaction_id = 't-done'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(lines, 1);
+        assert!(
+            seed_line(&conn, "l-2", "t-missing").is_err(),
+            "the rebuilt table is still the foreign key's target"
+        );
+    }
+
+    /// A receipt row is an obligation with a resolved-or-not shape.
+    #[test]
+    fn a_receipt_row_cannot_claim_a_printing_time_it_does_not_have() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn).unwrap();
+        seed_sale(&conn, "t-1", "FINALIZED", Some("2026-10-08T15:00:00Z"));
+
+        let put = |status: &str, attempts: i64, printed_at: Option<&str>| {
+            conn.execute(
+                "INSERT OR REPLACE INTO transaction_receipts
+                     (transaction_id, status, attempt_count, first_printed_at,
+                      created_at, updated_at)
+                 VALUES ('t-1', ?1, ?2, ?3, 'now', 'now')",
+                rusqlite::params![status, attempts, printed_at],
+            )
+        };
+        assert!(put("PENDING", 0, None).is_ok());
+        assert!(put("PRINTED", 1, Some("now")).is_ok());
+        assert!(
+            put("PRINTED", 1, None).is_err(),
+            "a printed receipt has a printing time"
+        );
+        assert!(
+            put("UNKNOWN", 1, Some("now")).is_err(),
+            "only a printed receipt has one"
+        );
+        assert!(
+            put("FAILED", 0, None).is_err(),
+            "a resolved receipt was attempted at least once"
+        );
+        assert!(put("SHREDDED", 1, None).is_err(), "the states are closed");
+    }
+
+    /// One line of a sale. `transaction_lines` cascades on delete, which is
+    /// exactly why the rebuild cannot run with foreign keys enforced: dropping
+    /// the old table would have taken every line with it.
+    fn seed_line(
+        conn: &Connection,
+        line_id: &str,
+        transaction_id: &str,
+    ) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO transaction_lines
+                 (line_id, transaction_id, line_number, product_ref, description,
+                  quantity_thousandths, unit_price_minor, tax_rate_bps, extended_amount_minor,
+                  discount_amount_minor, taxable_amount_minor, tax_amount_minor,
+                  line_total_minor, currency, created_at)
+             VALUES (?1, ?2, 1, 'P-1', 'Producto', 1000, 10000, 1600, 10000, 0, 10000,
+                     1600, 11600, 'MXN', 'now')",
+            rusqlite::params![line_id, transaction_id],
+        )
+    }
+
+    /// Enough of a sale to hang a child row off.
+    fn seed_sale(conn: &Connection, id: &str, status: &str, finalized_at: Option<&str>) {
+        conn.execute(
+            "INSERT OR IGNORE INTO business_days
+                 (business_day_id, tenant_id, store_id, status, opened_at, version,
+                  created_at, updated_at)
+             VALUES ('d-1', 't', 's', 'OPEN', 'now', 1, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO register_sessions
+                 (session_id, business_day_id, register_id, operator_id, status,
+                  opening_cash_minor, currency, opened_at, version, created_at, updated_at)
+             VALUES ('s-1', 'd-1', 'R-1', 'O-1', 'OPEN', 0, 'MXN', 'now', 1, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO retail_transactions
+                 (transaction_id, business_day_id, session_id, store_id, register_id, operator_id,
+                  register_sequence, status, currency, subtotal_minor, discount_total_minor,
+                  tax_total_minor, grand_total_minor, created_at, updated_at, finalized_at, version)
+             VALUES (?1, 'd-1', 's-1', 's', 'R-1', 'O-1',
+                     (SELECT COALESCE(MAX(register_sequence), 0) + 1 FROM retail_transactions),
+                     ?2, 'MXN', 10000, 0, 1600, 11600, 'now', 'now', ?3, 1)",
+            rusqlite::params![id, status, finalized_at],
+        )
+        .unwrap();
     }
 
     /// The inbound cursor is one row, by construction.

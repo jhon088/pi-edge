@@ -386,18 +386,14 @@ fn a_test_page_prints_and_touches_no_commercial_data() {
 }
 
 #[test]
-fn printing_a_finalized_sale_puts_its_totals_on_paper() {
+fn closing_a_sale_puts_its_receipt_on_paper_with_nobody_asking() {
     let fixture = HardwareFixture::working();
     let core = fixture.open_till();
     let sale = finalized_cash_sale(core, demo_item(), UNIT);
 
-    core.print_transaction(PrintTransactionCommand {
-        request_id: None,
-        transaction_id: sale,
-        reprint: false,
-    })
-    .unwrap();
-
+    // Nobody called `print_transaction`: the core attempted the first receipt
+    // itself, after the commercial commit (ADR 043).
+    assert_eq!(fixture.jobs(), 1);
     let job = &fixture.printer.jobs()[0];
     assert_eq!(job.kind, PrintKind::Receipt);
     let text: String = job
@@ -409,6 +405,13 @@ fn printing_a_finalized_sale_puts_its_totals_on_paper() {
     assert!(text.contains("116.00"), "{text}");
     assert!(text.contains("TOTAL"), "{text}");
     assert!(!text.contains("COPIA"), "a first receipt is not a copy");
+
+    // And the obligation records it, once.
+    let receipt = core.get_receipt(sale).unwrap();
+    assert_eq!(receipt.status, ReceiptStatus::Printed);
+    assert_eq!(receipt.attempt_count, 1);
+    assert!(receipt.first_printed_at.is_some());
+    assert!(core.get_receipt_attention().unwrap().is_clear());
 }
 
 #[test]
@@ -441,27 +444,17 @@ fn a_reprint_prints_again_and_changes_nothing_else() {
     let cash_before = core.get_cash_position().unwrap().position.expected_cash;
     let stock_before = on_hand(core, SKU);
 
-    core.print_transaction(PrintTransactionCommand {
-        request_id: None,
-        transaction_id: sale,
-        reprint: false,
-    })
-    .unwrap();
-    core.print_transaction(PrintTransactionCommand {
-        request_id: None,
-        transaction_id: sale,
-        reprint: true,
-    })
-    .unwrap();
-    core.print_transaction(PrintTransactionCommand {
-        request_id: None,
-        transaction_id: sale,
-        reprint: true,
-    })
-    .unwrap();
+    for _ in 0..2 {
+        core.print_transaction(PrintTransactionCommand {
+            request_id: None,
+            transaction_id: sale,
+            reprint: true,
+        })
+        .unwrap();
+    }
 
-    // Three jobs: the receipt and two copies. A reprint is always allowed,
-    // because paper jams and customers ask.
+    // Three jobs: the automatic receipt and two copies. A reprint is always
+    // allowed, because paper jams and customers ask.
     assert_eq!(fixture.jobs(), 3);
     assert_eq!(fixture.printer.jobs()[1].kind, PrintKind::Reprint);
     let copy = fixture.printer.jobs()[1]
@@ -482,34 +475,46 @@ fn a_reprint_prints_again_and_changes_nothing_else() {
         core.get_refund_eligibility(sale).unwrap().original_status,
         "FINALIZED"
     );
+    // Not even the obligation: a copy printed today says nothing about the
+    // first receipt, and the first receipt was attempted once (ADR 043).
+    let receipt = core.get_receipt(sale).unwrap();
+    assert_eq!(receipt.status, ReceiptStatus::Printed);
+    assert_eq!(receipt.attempt_count, 1);
 }
 
 #[test]
-fn printing_the_first_receipt_twice_automatically_is_refused() {
+fn asking_for_a_first_receipt_that_already_printed_is_refused() {
     let fixture = HardwareFixture::working();
     let core = fixture.open_till();
     let sale = finalized_cash_sale(core, demo_item(), UNIT);
 
-    let receipt = PrintTransactionCommand {
-        request_id: None,
-        transaction_id: sale,
-        reprint: false,
-    };
-    core.print_transaction(receipt.clone()).unwrap();
-    let error = core.print_transaction(receipt).unwrap_err();
+    let error = core
+        .print_transaction(PrintTransactionCommand {
+            request_id: None,
+            transaction_id: sale,
+            reprint: false,
+        })
+        .unwrap_err();
 
-    // The first receipt is keyed by the sale, so it happens once; asking again
-    // is a reprint and has to say so (ADR 037).
-    assert_eq!(error.kind(), "HARDWARE_ACTION_ALREADY_COMPLETED");
-    assert_eq!(fixture.jobs(), 1);
+    // The obligation knows the paper came out, so asking for a first receipt
+    // is refused by the receipt lifecycle — not by the device log, and not
+    // with a code about hardware (ADR 043).
+    assert_eq!(error.kind(), "RECEIPT_ALREADY_PRINTED");
+    assert_eq!(fixture.jobs(), 1, "nothing else was printed");
 }
 
+/// The certainty matrix, end to end.
+///
+/// What a failed receipt attempt leaves behind depends on one question only:
+/// did the printer get the job? Nothing was sent → `FAILED`, retryable.
+/// Something may have been → `UNKNOWN`, never retried automatically
+/// (ADR 043).
 #[test]
-fn a_printer_that_fails_does_not_change_the_sale() {
-    for outcome in [
-        SimulatedHardware::Unavailable,
-        SimulatedHardware::Timeout,
-        SimulatedHardware::IoError,
+fn what_a_failed_receipt_leaves_behind_depends_on_what_the_printer_got() {
+    for (outcome, expected, retryable) in [
+        (SimulatedHardware::Unavailable, ReceiptStatus::Failed, true),
+        (SimulatedHardware::Timeout, ReceiptStatus::Unknown, false),
+        (SimulatedHardware::IoError, ReceiptStatus::Unknown, false),
     ] {
         let fixture = HardwareFixture::new(
             SimulatorPrinter::answering(outcome),
@@ -518,16 +523,6 @@ fn a_printer_that_fails_does_not_change_the_sale() {
         let core = fixture.open_till();
         let sale = finalized_cash_sale(core, demo_item(), UNIT);
 
-        let error = core
-            .print_transaction(PrintTransactionCommand {
-                request_id: None,
-                transaction_id: sale,
-                reprint: false,
-            })
-            .unwrap_err();
-
-        assert!(error.kind().starts_with("HARDWARE_"));
-        assert_eq!(fixture.jobs(), 0);
         // The sale is finalized, paid, and its stock moved. Paper changes none
         // of that (ADR 005).
         let eligibility = core.get_refund_eligibility(sale).unwrap();
@@ -542,6 +537,55 @@ fn a_printer_that_fails_does_not_change_the_sale() {
                 .minor(),
             UNIT
         );
+        assert_eq!(fixture.jobs(), 0, "no paper, no job");
+
+        let receipt = core.get_receipt(sale).unwrap();
+        assert_eq!(receipt.status, expected, "for {outcome:?}");
+        assert_eq!(receipt.attempt_count, 1);
+        assert!(receipt.first_printed_at.is_none());
+        assert!(receipt.last_error_code.is_some());
+        assert_eq!(
+            core.get_receipt_attention().unwrap().total(),
+            1,
+            "it is on the attention list"
+        );
+
+        // And whether an operator may ask for the first receipt again.
+        let retry = core.print_transaction(PrintTransactionCommand {
+            request_id: None,
+            transaction_id: sale,
+            reprint: false,
+        });
+        if retryable {
+            // Still refused by the device, but the receipt lifecycle let the
+            // attempt through and counted it.
+            assert_eq!(
+                retry.unwrap_err().kind(),
+                "HARDWARE_UNAVAILABLE",
+                "a failure we know about may be retried"
+            );
+            assert_eq!(core.get_receipt(sale).unwrap().attempt_count, 2);
+        } else {
+            assert_eq!(
+                retry.unwrap_err().kind(),
+                "RECEIPT_OUTCOME_UNKNOWN",
+                "paper may have come out; a person decides"
+            );
+            assert_eq!(
+                core.get_receipt(sale).unwrap().attempt_count,
+                1,
+                "the refusal is not an attempt"
+            );
+        }
+
+        // A reprint is always available, and it does not rewrite history.
+        core.print_transaction(PrintTransactionCommand {
+            request_id: None,
+            transaction_id: sale,
+            reprint: true,
+        })
+        .ok();
+        assert_eq!(core.get_receipt(sale).unwrap().status, expected);
     }
 }
 

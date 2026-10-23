@@ -405,6 +405,24 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: i64,
     },
+    /// Abandon the active sale. Refused once any money has been applied
+    Cancel {
+        /// Why, for the journal
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// What a sale owes the customer in paper, and what became of it
+    Receipt {
+        #[arg(long)]
+        transaction: String,
+    },
+    /// Recent sales, newest first, with their receipt state
+    Sales {
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
+    },
     /// What sync knows: what is waiting, what is stuck, where the inbound
     /// stream got to.
     SyncStatus,
@@ -774,6 +792,11 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             "events": client.get_journal(*limit)?,
         })),
         Command::Outbox { limit } => to_value(&client.get_pending_outbox(*limit)?),
+        Command::Cancel { reason } => {
+            to_value(&client.cancel_transaction(reason.clone(), request_id)?)
+        }
+        Command::Receipt { transaction } => to_value(&client.get_receipt(transaction)?),
+        Command::Sales { limit, offset } => to_value(&client.list_recent_sales(*limit, *offset)?),
         Command::SyncStatus => to_value(&client.get_sync_status()?),
         Command::SyncRun => to_value(&client.run_sync_cycle(request_id)?),
         Command::Watch { count } => watch(&client, *count),

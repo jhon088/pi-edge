@@ -1,5 +1,5 @@
 {
-  "refund_id": "00000000-0000-0000-0000-000000000018",
+  "refund_id": "00000000-0000-0000-0000-00000000001a",
   "original_transaction_id": "00000000-0000-0000-0000-000000000009",
   "store_id": "STORE-DEMO",
   "business_day_id": "00000000-0000-0000-0000-000000000004",
@@ -11,7 +11,7 @@
   "authorization_ref": "GOLDEN-CENTRAL",
   "lines": [
     {
-      "refund_line_id": "00000000-0000-0000-0000-000000000019",
+      "refund_line_id": "00000000-0000-0000-0000-00000000001b",
       "original_line_number": 1,
       "product_ref": "SKU-16",
       "description": "Gravado 16%",
@@ -65,7 +65,7 @@
   "restock": true,
   "payments": [
     {
-      "refund_payment_id": "00000000-0000-0000-0000-00000000001e",
+      "refund_payment_id": "00000000-0000-0000-0000-000000000020",
       "original_payment_id": "00000000-0000-0000-0000-00000000000e",
       "tender_type": "CASH",
       "requested": {

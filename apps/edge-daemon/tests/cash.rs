@@ -314,7 +314,7 @@ fn a_forced_end_of_day_closes_the_till_without_inventing_a_count() {
         .expect_err("a drawer nobody counted");
     assert_eq!(blocked.code(), "BUSINESS_DAY_CLOSE_BLOCKED");
 
-    let day = client
+    let forced = client
         .force_close_business_day(
             ForceCloseBusinessDayRequestV1 {
                 reason: "central EOD".to_owned(),
@@ -323,7 +323,7 @@ fn a_forced_end_of_day_closes_the_till_without_inventing_a_count() {
             None,
         )
         .unwrap();
-    assert_eq!(day.status, "CLOSED");
+    assert_eq!(forced.day.status, "CLOSED");
 
     let state = client.get_edge_state().unwrap();
     assert!(state.business_day.is_none());

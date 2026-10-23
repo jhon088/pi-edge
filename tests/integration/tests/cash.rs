@@ -874,11 +874,11 @@ fn a_normal_close_needs_every_session_closed() {
         counted_minor: FLOAT,
     })
     .unwrap();
-    let day = core
+    let closed_day = core
         .close_business_day(CloseBusinessDayCommand::default())
         .unwrap();
-    assert_eq!(day.status(), BusinessDayStatus::Closed);
-    assert!(!day.was_forced());
+    assert_eq!(closed_day.day.status(), BusinessDayStatus::Closed);
+    assert!(!closed_day.day.was_forced());
 }
 
 #[test]
@@ -888,13 +888,14 @@ fn a_forced_close_ends_the_day_without_inventing_a_count() {
     cash_sale(&core, SALE);
     let session_id = core.get_edge_state().unwrap().session.unwrap().id();
 
-    let day = core
+    let forced = core
         .force_close_business_day(ForceCloseBusinessDayCommand {
             request_id: None,
             reason: "central EOD".to_owned(),
             actor: "OPERATIONS".to_owned(),
         })
         .unwrap();
+    let day = &forced.day;
 
     assert_eq!(day.status(), BusinessDayStatus::Closed);
     assert!(day.was_forced());
@@ -951,14 +952,14 @@ fn a_forced_close_handles_far_more_sessions_than_any_hardcoded_batch() {
     }
     let day_id = core.get_edge_state().unwrap().business_day.unwrap().id();
 
-    let day = core
+    let forced = core
         .force_close_business_day(ForceCloseBusinessDayCommand {
             request_id: None,
             reason: "central EOD".to_owned(),
             actor: "OPERATIONS".to_owned(),
         })
         .unwrap();
-    assert!(day.was_forced());
+    assert!(forced.day.was_forced());
 
     // Every till was closed as forced, each with its own declaration and its
     // own expected figure — and none with a fabricated count.

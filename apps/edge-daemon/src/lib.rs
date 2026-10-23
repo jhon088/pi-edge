@@ -148,6 +148,19 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
     // configured: it is local state, and a `SENDING` row is never a resting
     // state (ADR 041).
     core.recover_interrupted_sync()?;
+    // And whatever receipt the previous runtime left in the air. Deterministic
+    // and one pass: an obligation with no device evidence is attempted, one
+    // whose printer call had begun becomes `UNKNOWN` and is never printed on a
+    // guess (ADR 043).
+    let receipts = core.recover_receipts()?;
+    if receipts.resumed > 0 || receipts.marked_unknown > 0 || receipts.resolved_from_evidence > 0 {
+        tracing::info!(
+            resumed = receipts.resumed,
+            marked_unknown = receipts.marked_unknown,
+            resolved_from_evidence = receipts.resolved_from_evidence,
+            "receipt recovery"
+        );
+    }
     let state = Arc::new(state::DaemonState::new(migrations::target_version()));
 
     let endpoint = paths.endpoint()?;

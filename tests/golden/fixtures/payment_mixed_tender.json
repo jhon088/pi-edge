@@ -70,7 +70,7 @@
           },
           "provider_kind": "SIMULATOR",
           "correlation_id": "00000000-0000-0000-0000-000000000016",
-          "provider_reference": "SIM-000000000000",
+          "provider_reference": "SIM-00000000000000000000000000000016",
           "failure_code": null,
           "unresolved": false,
           "created_at": "2026-10-08T15:00:00.000000Z",

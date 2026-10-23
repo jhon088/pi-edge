@@ -6,19 +6,20 @@ use std::time::{Duration, Instant};
 
 use edge_ipc::{DesktopLocalTransport, EdgeEventStream, EdgeTransport, IpcError};
 use edge_protocol::{
-    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayV1,
-    CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotRequestV1,
-    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
-    CoreInfoV1, CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
-    ForceCloseBusinessDayRequestV1, HardwareStatusV1, ImportInventoryBootstrapRequestV1,
-    InitDeviceRequestV1, InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1,
-    InventoryPositionV1, InventoryQueryV1, JournalEventV1, LimitRequestV1,
-    OpenRegisterSessionRequestV1, OperationV1, PaymentRequestV1, PaymentResultV1, PendingOutboxV1,
-    PrintTransactionRequestV1, ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1,
-    RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1,
-    ReopenSessionRequestV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
-    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1,
-    SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
+    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayCloseV1,
+    BusinessDayV1, CancelTransactionRequestV1, CashMovementRequestV1, CashPositionV1,
+    CatalogImportStatusV1, CatalogSnapshotRequestV1, CatalogSnapshotViewV1, CatalogStatusV1,
+    ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1, CreateRefundRequestV1,
+    DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1, ForceCloseBusinessDayRequestV1,
+    HardwareStatusV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1, InventoryBootstrapV1,
+    InventoryMovementRequestV1, InventoryMovementV1, InventoryPositionV1, InventoryQueryV1,
+    JournalEventV1, LimitRequestV1, OpenRegisterSessionRequestV1, OperationV1, PageRequestV1,
+    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, PrintTransactionRequestV1, ProductLookupV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
+    RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
+    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1,
+    SessionCloseRequirementsV1, SessionCloseResultV1, StartPaymentRequestV1, SubmitScanRequestV1,
+    SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -238,6 +239,45 @@ impl EdgeClient for IpcEdgeClient {
             self.call(OperationV1::GetSyncStatus, None)?,
             ResultV1::SyncStatus,
             "SYNC_STATUS"
+        )
+    }
+
+    fn get_receipt(&self, transaction_id: &str) -> Result<ReceiptV1, ClientError> {
+        expect_result!(
+            self.call(
+                OperationV1::GetReceipt(TransactionRequestV1 {
+                    transaction_id: transaction_id.to_owned(),
+                }),
+                None
+            )?,
+            ResultV1::Receipt,
+            "RECEIPT"
+        )
+    }
+
+    fn list_recent_sales(&self, limit: i64, offset: i64) -> Result<RecentSalesV1, ClientError> {
+        expect_result!(
+            self.call(
+                OperationV1::ListRecentSales(PageRequestV1 { limit, offset }),
+                None
+            )?,
+            ResultV1::RecentSales,
+            "RECENT_SALES"
+        )
+    }
+
+    fn cancel_transaction(
+        &self,
+        reason_code: Option<String>,
+        request_id: Option<Uuid>,
+    ) -> Result<RetailTransactionV1, ClientError> {
+        expect_result!(
+            self.call(
+                OperationV1::CancelTransaction(CancelTransactionRequestV1 { reason_code }),
+                request_id
+            )?,
+            ResultV1::Transaction,
+            "TRANSACTION"
         )
     }
 
@@ -684,19 +724,22 @@ impl EdgeClient for IpcEdgeClient {
         &self,
         request: ForceCloseBusinessDayRequestV1,
         request_id: Option<Uuid>,
-    ) -> Result<BusinessDayV1, ClientError> {
+    ) -> Result<BusinessDayCloseV1, ClientError> {
         expect_result!(
             self.call(OperationV1::ForceCloseBusinessDay(request), request_id)?,
-            ResultV1::BusinessDay,
-            "BUSINESS_DAY"
+            ResultV1::BusinessDayClose,
+            "BUSINESS_DAY_CLOSE"
         )
     }
 
-    fn close_business_day(&self, request_id: Option<Uuid>) -> Result<BusinessDayV1, ClientError> {
+    fn close_business_day(
+        &self,
+        request_id: Option<Uuid>,
+    ) -> Result<BusinessDayCloseV1, ClientError> {
         expect_result!(
             self.call(OperationV1::CloseBusinessDay, request_id)?,
-            ResultV1::BusinessDay,
-            "BUSINESS_DAY"
+            ResultV1::BusinessDayClose,
+            "BUSINESS_DAY_CLOSE"
         )
     }
 

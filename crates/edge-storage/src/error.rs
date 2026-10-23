@@ -24,6 +24,15 @@ pub enum StorageError {
         diagnostics: Option<String>,
     },
 
+    /// A migration left a child row pointing at a parent that is not there.
+    ///
+    /// Table rebuilds run with foreign keys off — SQLite's own prescribed
+    /// procedure — so this is the net that catches a rebuild which copied the
+    /// rows badly. It is a bug in the migration, never an operational
+    /// condition.
+    #[error("migrations left orphaned rows in `{table}` referencing `{parent}`")]
+    MigrationLeftOrphans { table: String, parent: String },
+
     #[error(
         "migration {version} ({name}) was applied with a different definition \
          (recorded checksum {recorded}, current {current})"

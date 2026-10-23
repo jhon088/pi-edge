@@ -16,5 +16,10 @@
     "currency": "MXN",
     "formatted": "0.00"
   },
-  "variance_label": "BALANCED"
+  "variance_label": "BALANCED",
+  "receipt_attention": {
+    "pending": 0,
+    "failed": 1,
+    "unknown": 0
+  }
 }

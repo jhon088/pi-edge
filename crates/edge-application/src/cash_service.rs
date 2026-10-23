@@ -27,7 +27,7 @@ use crate::context::{
 };
 use crate::error::AppError;
 use crate::ports::{Clock, DeviceProfile, EdgeStore, IdFactory, UnitOfWork};
-use crate::queries::{CashPositionView, SessionCloseResult};
+use crate::queries::{BusinessDayCloseResult, CashPositionView, SessionCloseResult};
 use crate::EdgeApplication;
 
 impl<S, C, I, P> EdgeApplication<S, C, I, P>
@@ -350,6 +350,11 @@ where
                 )?;
                 enqueue_session_closed(uow, outbox_event, &device, &day, &session, now)?;
 
+                // Scoped to **this session**: closing one till must not report
+                // another till's unresolved receipts, even on the same day
+                // (ADR 043).
+                let receipt_attention =
+                    uow.receipt_attention(ReceiptAttentionScope::RegisterSession(session.id()))?;
                 Ok(SessionCloseResult {
                     session_id: session.id(),
                     closure_kind: ClosureKind::Declared,
@@ -357,6 +362,7 @@ where
                     expected_at_close: declaration.expected_at_close,
                     variance: declaration.variance,
                     variance_label: declaration.variance_label().to_owned(),
+                    receipt_attention,
                 })
             })
         })
@@ -468,10 +474,13 @@ where
     /// Nothing is destroyed and no count is invented: every session still
     /// running is closed as `FORCED` with no declared cash, and its expected
     /// figure is recorded so the unknown variance is auditable.
+    /// Answers the same shape as the ordinary close: a day closed over open
+    /// sessions is still a day close, and it should report what needs
+    /// somebody just as loudly (ADR 043).
     pub fn force_close_business_day(
         &self,
         cmd: ForceCloseBusinessDayCommand,
-    ) -> Result<BusinessDay, AppError> {
+    ) -> Result<BusinessDayCloseResult, AppError> {
         let now = self.clock.now();
         let day_event = EventId::from_uuid(self.ids.new_uuid());
         let outbox_event = EventId::from_uuid(self.ids.new_uuid());
@@ -578,7 +587,14 @@ where
                     now,
                     payload,
                 ))?;
-                Ok(day)
+                // A forced close ends the whole day, so it reports the whole
+                // day (ADR 043).
+                let receipt_attention =
+                    uow.receipt_attention(ReceiptAttentionScope::BusinessDay(day.id()))?;
+                Ok(BusinessDayCloseResult {
+                    day,
+                    receipt_attention,
+                })
             })
         })
     }

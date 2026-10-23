@@ -614,6 +614,29 @@ impl SyncFixture {
     }
 }
 
+/// A till on a file path whose printer answers however the test says.
+///
+/// Needed to span two business days with different hardware: the first day
+/// ends with an unresolved receipt, the second one prints cleanly.
+pub fn core_at_with_printer(
+    path: &std::path::Path,
+    days: i64,
+    ids_from: u64,
+    printer: SimulatorPrinter,
+) -> TestCore {
+    EdgeApplication::with_hardware(
+        SqliteEdgeStore::open(path).unwrap(),
+        FixedClock::new(start_instant() + chrono::Duration::days(days), 1_000),
+        SequentialIdFactory::starting_at(ids_from),
+        SimulatorPaymentProvider::approving(),
+        Hardware::new(
+            Arc::new(printer) as _,
+            Arc::new(SimulatorDrawer::working()) as _,
+            48,
+        ),
+    )
+}
+
 /// A till with **no sync transport**, which is the production default.
 pub fn offline_core_at(path: &std::path::Path) -> TestCore {
     core_with_store(SqliteEdgeStore::open(path).unwrap())

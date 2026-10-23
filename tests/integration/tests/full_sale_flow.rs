@@ -91,10 +91,10 @@ fn completes_a_cash_sale_and_closes_the_day() {
         .unwrap();
     assert_eq!(closed.expected_at_close.minor(), 111_600);
     assert_eq!(closed.variance.map(|v| v.minor()), Some(0));
-    let day = core
+    let closed_day = core
         .close_business_day(CloseBusinessDayCommand::default())
         .unwrap();
-    assert_eq!(day.status(), BusinessDayStatus::Closed);
+    assert_eq!(closed_day.day.status(), BusinessDayStatus::Closed);
 
     let state = core.get_edge_state().unwrap();
     assert!(state.business_day.is_none());

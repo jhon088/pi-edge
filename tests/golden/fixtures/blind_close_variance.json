@@ -16,5 +16,10 @@
     "currency": "MXN",
     "formatted": "-25.00"
   },
-  "variance_label": "SHORTAGE"
+  "variance_label": "SHORTAGE",
+  "receipt_attention": {
+    "pending": 0,
+    "failed": 1,
+    "unknown": 0
+  }
 }

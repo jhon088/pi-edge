@@ -235,16 +235,26 @@ fn a_whole_cash_sale_prints_and_opens_the_drawer_over_the_wire() {
     assert_eq!(status.drawer.state, "AVAILABLE");
     assert!(status.drawer.last_success_at.is_some());
 
-    let after_print = client
-        .print_transaction(
-            PrintTransactionRequestV1 {
-                transaction_id: sale.clone(),
-                reprint: false,
-            },
-            None,
-        )
-        .unwrap();
-    assert_eq!(after_print.printer.state, "AVAILABLE");
+    // The receipt came out when the sale closed, with no client asking: the
+    // runtime attempted it after the commercial commit (ADR 043).
+    let receipt = client.get_receipt(&sale).unwrap();
+    assert_eq!(receipt.status, "PRINTED");
+    assert_eq!(receipt.attempt_count, 1);
+    assert!(receipt.first_printed_at.is_some());
+    // So asking for a first receipt again is refused by the obligation.
+    assert_eq!(
+        client
+            .print_transaction(
+                PrintTransactionRequestV1 {
+                    transaction_id: sale.clone(),
+                    reprint: false,
+                },
+                None,
+            )
+            .unwrap_err()
+            .code(),
+        "RECEIPT_ALREADY_PRINTED"
+    );
 
     // A reprint is always allowed and changes nothing.
     let cash_before = client.cash_position().unwrap().expected_cash.formatted;

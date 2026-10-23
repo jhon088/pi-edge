@@ -22,13 +22,13 @@ use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, RetailTransaction};
 use edge_payments::{PaymentError, SimulatorPaymentProvider};
 use edge_protocol::{
-    error_codes, BusinessDayV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
-    CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, HardwareStatusV1,
-    InventoryBootstrapV1, InventoryMovementV1, InventoryPositionV1, JournalEventV1, OperationV1,
-    PaymentResultV1, PendingOutboxV1, ProductLookupV1, RefundEligibilityV1, RefundV1,
-    RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1,
-    SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1, SyncCycleV1, SyncStatusV1,
-    TransactionPaymentsV1, PROTOCOL_VERSION,
+    error_codes, BusinessDayCloseV1, BusinessDayV1, CashPositionV1, CatalogImportStatusV1,
+    CatalogSnapshotViewV1, CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1,
+    HardwareStatusV1, InventoryBootstrapV1, InventoryMovementV1, InventoryPositionV1,
+    JournalEventV1, OperationV1, PaymentResultV1, PendingOutboxV1, ProductLookupV1, ReceiptV1,
+    RecentSalesV1, RefundEligibilityV1, RefundV1, RegisterSessionV1, RequestEnvelopeV1,
+    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
+    SessionCloseResultV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, PROTOCOL_VERSION,
 };
 use edge_refunds::RefundError;
 use edge_storage::SqliteEdgeStore;
@@ -139,6 +139,28 @@ impl Dispatcher {
                 Ok(ResultV1::MaybeTransaction(
                     transaction.as_ref().map(dto).transpose()?,
                 ))
+            }
+            OperationV1::GetReceipt(payload) => {
+                let transaction_id = payload.transaction_id().map_err(payment_error)?;
+                let receipt = self
+                    .core
+                    .get_receipt(transaction_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Receipt(ReceiptV1::from(&receipt)))
+            }
+            OperationV1::ListRecentSales(payload) => {
+                let view = self
+                    .core
+                    .list_recent_sales(payload.limit, payload.offset)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::RecentSales(RecentSalesV1::from(&view)))
+            }
+            OperationV1::CancelTransaction(payload) => {
+                let transaction = self
+                    .core
+                    .cancel_transaction(payload.into_command(Some(request_id)))
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Transaction(dto(&transaction)?))
             }
             OperationV1::GetSyncStatus => {
                 let view = self.core.get_sync_status().map_err(|e| self.app_error(e))?;
@@ -580,11 +602,13 @@ impl Dispatcher {
                 Ok(ResultV1::RegisterSession(RegisterSessionV1::from(&session)))
             }
             OperationV1::ForceCloseBusinessDay(payload) => {
-                let day = self
+                let result = self
                     .core
                     .force_close_business_day(payload.into_command(Some(request_id)))
                     .map_err(|e| self.app_error(e))?;
-                Ok(ResultV1::BusinessDay(BusinessDayV1::from(&day)))
+                Ok(ResultV1::BusinessDayClose(BusinessDayCloseV1::from(
+                    &result,
+                )))
             }
             OperationV1::BeginCatalogImport(payload) => {
                 let command = payload
@@ -649,13 +673,15 @@ impl Dispatcher {
                 )))
             }
             OperationV1::CloseBusinessDay => {
-                let day = self
+                let result = self
                     .core
                     .close_business_day(CloseBusinessDayCommand {
                         request_id: Some(request_id),
                     })
                     .map_err(|e| self.app_error(e))?;
-                Ok(ResultV1::BusinessDay(BusinessDayV1::from(&day)))
+                Ok(ResultV1::BusinessDayClose(BusinessDayCloseV1::from(
+                    &result,
+                )))
             }
         }
     }

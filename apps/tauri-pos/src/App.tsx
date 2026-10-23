@@ -12,6 +12,7 @@ import {
   fetchCashPosition,
   fetchCatalogStatus,
   fetchHardwareStatus,
+  fetchRecentSales,
   fetchSyncStatus,
   fetchInventoryPosition,
   openDrawer,
@@ -34,6 +35,7 @@ import type {
   CoreInfo,
   EdgeState,
   HardwareStatus,
+  RecentSales,
   SyncStatus,
   InventoryPosition,
   ProductLookup,
@@ -311,6 +313,10 @@ export default function App() {
         <HardwarePanel enabled={connection.connected} onChanged={refresh} />
       </Card>
 
+      <Card title="Sales">
+        <SalesHistory enabled={connection.connected} />
+      </Card>
+
       <Card title="Sync">
         <SyncPanel enabled={connection.connected} />
       </Card>
@@ -582,6 +588,74 @@ function HardwarePanel({
       <p className="muted">
         A device that fails changes nothing commercial: a sale stays paid, the
         drawer ledger stays right, and the failure is recorded.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Read-only operational history.
+ *
+ * Recent sales with what each owes in paper. It observes and nothing else:
+ * there is no print button here, because driving a receipt is the runtime's
+ * job and this window is a diagnostic surface, not the POS (ADR 043).
+ */
+function SalesHistory({ enabled }: { enabled: boolean }) {
+  const [history, setHistory] = useState<RecentSales | null>(null);
+  const [error, setError] = useState<BridgeError | null>(null);
+
+  const read = useCallback(async () => {
+    try {
+      setHistory(await fetchRecentSales(10));
+      setError(null);
+    } catch (failure) {
+      setHistory(null);
+      setError(describeError(failure));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (enabled) {
+      void read();
+    }
+  }, [enabled, read]);
+
+  if (error) {
+    return (
+      <p className="muted">
+        <code>{error.code}</code> {error.message}
+      </p>
+    );
+  }
+  if (!history || history.sales.length === 0) {
+    return <p className="muted">No finalized sales yet.</p>;
+  }
+  return (
+    <>
+      <table className="lines">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Closed</th>
+            <th>Total</th>
+            <th>Receipt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {history.sales.map((sale) => (
+            <tr key={sale.transaction_id}>
+              <td>{sale.register_sequence}</td>
+              <td className="muted">{sale.finalized_at}</td>
+              <td>{sale.grand_total.formatted}</td>
+              <td>{sale.receipt_status ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted">
+        {history.attention.pending + history.attention.failed + history.attention.unknown === 0
+          ? "Every sale has its receipt."
+          : `Needs attention — pending ${history.attention.pending}, failed ${history.attention.failed}, unknown ${history.attention.unknown}. A sale is closed whatever its receipt did.`}
       </p>
     </>
   );

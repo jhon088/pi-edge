@@ -68,6 +68,10 @@ deliberately does not reach for it, and in particular does not wire
 `RECEIPT_COMPLETED`, which exists in the transaction aggregate and is still
 driven by nothing.
 
+> **Amended by ADR 043 (milestone 12).** That milestone arrived: the receipt is
+> an obligation of the closed sale, `RECEIPT_COMPLETED` was removed rather than
+> wired, and the fiscal half is still out of scope.
+
 ## Consequences
 
 * A second printer protocol is a second renderer, and the application changes

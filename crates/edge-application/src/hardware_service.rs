@@ -217,37 +217,31 @@ where
         let job_id = self.ids.new_uuid();
         let (device, transaction) = self.store().transact(move |uow| {
             let device = require_device(uow)?;
-            let transaction = uow.find_transaction(cmd.transaction_id)?.ok_or_else(|| {
-                AppError::TransactionNotFound {
-                    transaction_id: cmd.transaction_id.to_string(),
-                }
-            })?;
-            if transaction.status() != TransactionStatus::Finalized {
-                return Err(AppError::Domain(DomainError::InvalidTransition {
-                    aggregate: "RetailTransaction",
-                    from: transaction.status().as_str(),
-                    attempted: "PRINT",
-                }));
-            }
+            let transaction =
+                crate::receipt_service::require_finalized_sale(uow, cmd.transaction_id)?;
             Ok((device, transaction))
         })?;
 
-        let kind = if cmd.reprint {
-            PrintKind::Reprint
-        } else {
-            PrintKind::Receipt
-        };
-        let document = self.receipt(job_id, kind, &device, &transaction);
+        if !cmd.reprint {
+            // An explicit retry of the first receipt. Allowed only while the
+            // obligation says no paper came out; the receipt lifecycle owns
+            // that decision (ADR 043).
+            self.attempt_first_receipt(cmd.transaction_id, now)?;
+            return self.get_hardware_status();
+        }
+
+        // A reprint is an explicit act, repeatable, marked as a copy, and it
+        // changes nothing: no cash, no stock, no drawer, no sale — and **not
+        // the receipt obligation**. If the first receipt's fate is unknown it
+        // stays unknown: printing a copy today says nothing about yesterday
+        // (ADR 037, ADR 043).
+        let document = self.receipt_document(job_id, PrintKind::Reprint, &device, &transaction);
         self.perform(
             HardwareActionKind::Print,
             HardwareDeviceKind::Printer,
-            kind.as_str(),
-            // Keyed by the sale *and* the kind, so a first receipt happens
-            // once automatically while a reprint is always an explicit act.
-            match kind {
-                PrintKind::Receipt => Some(transaction.id().to_string()),
-                _ => None,
-            },
+            PrintKind::Reprint.as_str(),
+            // Unkeyed: an operator asking for a copy is not a replay.
+            None,
             now,
             || self.hardware.printer.print(&document),
         )?;
@@ -449,7 +443,7 @@ where
     /// template engine. The commercial and fiscal lifecycle of a receipt is
     /// its own milestone, and this is what milestone 10 needs to put paper out
     /// of a real printer (ADR 039).
-    fn receipt(
+    pub(crate) fn receipt_document(
         &self,
         job_id: Uuid,
         kind: PrintKind,

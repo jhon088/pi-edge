@@ -156,12 +156,19 @@ impl EscPosTcpPrinter {
             detail: "the configured address resolves to nothing".to_owned(),
         })?;
 
+        // A connection that never opened is `Unavailable`, timeout included:
+        // no socket means no bytes, and reporting it as a timeout would make a
+        // printer we never reached look like one that may have printed
+        // (ADR 043).
         let stream =
             TcpStream::connect_timeout(&socket, self.config.connect_timeout).map_err(|error| {
                 match error.kind() {
-                    std::io::ErrorKind::TimedOut => HardwareError::Timeout {
+                    std::io::ErrorKind::TimedOut => HardwareError::Unavailable {
                         device,
-                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        detail: format!(
+                            "the connection timed out after {}ms",
+                            started.elapsed().as_millis()
+                        ),
                     },
                     _ => HardwareError::Unavailable {
                         device,

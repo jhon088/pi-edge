@@ -81,6 +81,28 @@ impl HardwareUnitOfWork for SqliteUnitOfWork<'_, '_> {
         Ok(())
     }
 
+    fn find_hardware_action_for(
+        &mut self,
+        kind: HardwareActionKind,
+        source_ref: &str,
+    ) -> Result<Option<HardwareAction>, AppError> {
+        let raw: Option<RawAction> = self
+            .tx
+            .query_row(
+                &format!(
+                    "SELECT {ACTION_COLUMNS} FROM hardware_actions
+                      WHERE kind = ?1 AND source_ref = ?2
+                      ORDER BY requested_at DESC, action_id DESC
+                      LIMIT 1"
+                ),
+                params![kind.as_str(), source_ref],
+                RawAction::from_row,
+            )
+            .optional()
+            .map_err(sqlite_err)?;
+        raw.map(RawAction::into_domain).transpose()
+    }
+
     fn latest_hardware_action(
         &mut self,
         device_kind: HardwareDeviceKind,

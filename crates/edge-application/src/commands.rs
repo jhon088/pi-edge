@@ -296,6 +296,15 @@ pub struct ReversePaymentCommand {
     pub payment_id: PaymentId,
 }
 
+/// Abandon a sale that has taken no money.
+#[derive(Debug, Clone, Default)]
+pub struct CancelTransactionCommand {
+    pub request_id: Option<Uuid>,
+    /// Why, for the journal. Optional: "the customer changed their mind" is
+    /// the common case and does not need a code.
+    pub reason_code: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct FinalizeTransactionCommand {
     pub request_id: Option<Uuid>,

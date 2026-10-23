@@ -13,7 +13,7 @@ use edge_inventory::{InventoryMovement, InventoryPosition};
 use edge_refunds::{FiscalState, LineRefundable, Refund, RefundPaymentView, TenderRefundable};
 use serde::{Deserialize, Serialize};
 
-use crate::ports::{DeviceProfile, OutboxCounts};
+use crate::ports::{DeviceProfile, OutboxCounts, RecentSale};
 
 /// Everything a client needs to render the POS after a cold start.
 /// Rebuilt entirely from SQLite: nothing lives only in memory.
@@ -105,6 +105,23 @@ pub struct SessionCloseResult {
     /// `BALANCED`, `SHORTAGE`, `OVERAGE` or `UNDECLARED` — so a report never
     /// renders an unknown variance as zero.
     pub variance_label: String,
+    /// Sales whose receipt still needs somebody. **Never a blocker**: a
+    /// receipt is an operational obligation, not a financial one, so the till
+    /// closes and the operator is told (ADR 043).
+    pub receipt_attention: ReceiptAttention,
+}
+
+/// What closing the business day produced.
+///
+/// The day *and* what still needs somebody, in one answer: a caller must not
+/// have to run a second query to learn that a receipt is outstanding at the
+/// moment it closes the day. The attention never blocks the close (ADR 043).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BusinessDayCloseResult {
+    pub day: BusinessDay,
+    /// Sales **of this day** whose receipt is `PENDING`, `FAILED` or
+    /// `UNKNOWN`. `PRINTED` is not an attention item.
+    pub receipt_attention: ReceiptAttention,
 }
 
 /// A product's position, with the movements that explain it.
@@ -233,4 +250,27 @@ pub enum SyncCycleOutcome {
     NotConfigured,
     /// The transport failed. Whatever was in flight is pending again.
     TransportFailed { code: String, detail: String },
+}
+
+// ------------------------------------------------------------------ receipts
+
+/// Recent sales plus what still needs attention.
+///
+/// The attention counts travel with the list because they answer the same
+/// question from the other end: "is there anything I have to deal with?"
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentSalesView {
+    pub attention: ReceiptAttention,
+    pub sales: Vec<RecentSale>,
+}
+
+/// What a receipt recovery pass did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ReceiptRecovery {
+    /// Obligations with no device evidence at all: safe to attempt now.
+    pub resumed: i64,
+    /// Obligations whose printer call had begun and never answered.
+    pub marked_unknown: i64,
+    /// Obligations settled from a device answer the crash had not applied.
+    pub resolved_from_evidence: i64,
 }

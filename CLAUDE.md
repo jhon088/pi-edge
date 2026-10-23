@@ -126,3 +126,8 @@ Clippy runs with warnings as errors; `unwrap`/`expect`/`panic!` and float
 arithmetic are denied outside tests. Golden fixtures are regenerated only
 through `UPDATE_GOLDEN=1`, and a diff that touches a money field is a bug until
 proven otherwise.
+
+**Run them in the foreground and wait for each one.** No `sleep`, no polling
+loops, no watchers, no background commands to find out whether a gate finished.
+Waiting on a gate by polling leaves a queue of orphaned shells behind and tells
+you nothing the command itself would not have told you.

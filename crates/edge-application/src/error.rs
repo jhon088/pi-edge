@@ -68,6 +68,25 @@ pub enum AppError {
     #[error("no transaction `{transaction_id}`")]
     TransactionNotFound { transaction_id: String },
 
+    /// No receipt obligation for this sale. A finalized sale always has one;
+    /// a sale that never finalized never did.
+    #[error("sale `{transaction_id}` has no receipt on record")]
+    ReceiptNotFound { transaction_id: String },
+
+    /// The first receipt already came out. A second copy is a reprint and has
+    /// to say so (ADR 043).
+    #[error("sale `{transaction_id}` already has its receipt")]
+    ReceiptAlreadyPrinted { transaction_id: String },
+
+    /// Paper may already have come out of the printer. PI.Edge will not print
+    /// a first receipt again on a guess; an operator decides, with an explicit
+    /// reprint (ADR 043).
+    #[error(
+        "whether the receipt for sale `{transaction_id}` printed is unknown; \
+         print a reprint explicitly if it did not"
+    )]
+    ReceiptOutcomeUnknown { transaction_id: String },
+
     #[error("no refund `{refund_id}`")]
     RefundNotFound { refund_id: String },
 
@@ -146,6 +165,9 @@ impl AppError {
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
             AppError::Serialization(_) => "SERIALIZATION_FAILURE",
             AppError::DeviceNotInitialized => "DEVICE_NOT_INITIALIZED",
+            AppError::ReceiptNotFound { .. } => "RECEIPT_NOT_FOUND",
+            AppError::ReceiptAlreadyPrinted { .. } => "RECEIPT_ALREADY_PRINTED",
+            AppError::ReceiptOutcomeUnknown { .. } => "RECEIPT_OUTCOME_UNKNOWN",
             AppError::TransactionNotFound { .. } => "TRANSACTION_NOT_FOUND",
             AppError::RefundNotFound { .. } => "REFUND_NOT_FOUND",
             AppError::BusinessDayAlreadyOpen { .. } => "BUSINESS_DAY_ALREADY_OPEN",

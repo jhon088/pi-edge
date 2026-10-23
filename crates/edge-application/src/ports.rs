@@ -424,6 +424,16 @@ pub trait HardwareUnitOfWork {
         outcome: Result<(), &HardwareError>,
         now: Timestamp,
     ) -> Result<(), AppError>;
+    /// The action already taken for one cause, if any.
+    ///
+    /// Recovery's only honest source of truth about whether a device call
+    /// began: a `PENDING` row here means the printer may already have the job
+    /// (ADR 043).
+    fn find_hardware_action_for(
+        &mut self,
+        kind: HardwareActionKind,
+        source_ref: &str,
+    ) -> Result<Option<HardwareAction>, AppError>;
     /// The most recent action of one device, for the diagnostic view.
     fn latest_hardware_action(
         &mut self,
@@ -487,6 +497,64 @@ impl HardwareActionStatus {
             HardwareActionStatus::Failed => "FAILED",
         }
     }
+}
+
+/// The receipt obligations of finalized sales.
+///
+/// Separate from [`HardwareUnitOfWork`] on purpose: that one records what was
+/// attempted on a device, this one records what a customer is owed. One sale
+/// can produce a failed attempt, a retry and any number of reprints and still
+/// owe exactly one receipt (ADR 043).
+pub trait ReceiptUnitOfWork {
+    /// Take on the obligation. Called in the same transaction that finalizes
+    /// the sale, so a closed sale always owes a receipt.
+    fn insert_receipt_obligation(&mut self, receipt: &TransactionReceipt) -> Result<(), AppError>;
+
+    fn find_receipt(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Result<Option<TransactionReceipt>, AppError>;
+
+    fn update_receipt(&mut self, receipt: &TransactionReceipt) -> Result<(), AppError>;
+
+    /// Obligations in one state, oldest first. Used by recovery and by the
+    /// attention list.
+    fn list_receipts_by_status(
+        &mut self,
+        status: ReceiptStatus,
+        limit: i64,
+    ) -> Result<Vec<TransactionReceipt>, AppError>;
+
+    /// How many sales still need somebody to look at their receipt.
+    ///
+    /// The scope is what makes the number actionable: a session close reports
+    /// its own till, a day close reports its own day, and the operational
+    /// history reports the installation. No close is ever judged by another
+    /// one's leftovers (ADR 043).
+    fn receipt_attention(
+        &mut self,
+        scope: ReceiptAttentionScope,
+    ) -> Result<ReceiptAttention, AppError>;
+
+    /// Recent finalized sales, newest first, with their receipt state.
+    ///
+    /// Operational history, not reporting: enough for an operator to find the
+    /// sale they just made and reprint it. The money comes from the sale's
+    /// own materialised total — nothing is recomputed here (ADR 043).
+    fn list_recent_sales(&mut self, limit: i64, offset: i64) -> Result<Vec<RecentSale>, AppError>;
+}
+
+/// One line of the operational history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentSale {
+    pub transaction_id: TransactionId,
+    pub register_id: RegisterId,
+    pub register_sequence: i64,
+    pub finalized_at: Timestamp,
+    pub grand_total: Money,
+    /// `None` for a sale closed before this installation tracked receipts.
+    /// Saying `PRINTED` about one would be inventing evidence (ADR 043).
+    pub receipt_status: Option<ReceiptStatus>,
 }
 
 /// How many facts sit in each outbox state.
@@ -600,6 +668,7 @@ pub trait UnitOfWork:
     + InventoryUnitOfWork
     + RefundUnitOfWork
     + HardwareUnitOfWork
+    + ReceiptUnitOfWork
     + SyncUnitOfWork
 {
     fn device_profile(&mut self) -> Result<Option<DeviceProfile>, AppError>;

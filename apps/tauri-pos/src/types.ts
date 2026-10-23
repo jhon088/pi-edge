@@ -533,6 +533,30 @@ export interface HardwareDevice {
   last_error_message: string | null;
 }
 
+/** How many sales still need somebody to look at their receipt. */
+export interface ReceiptAttention {
+  pending: number;
+  failed: number;
+  unknown: number;
+}
+
+/** One line of the operational history. */
+export interface RecentSale {
+  transaction_id: string;
+  register_id: string;
+  register_sequence: number;
+  finalized_at: string;
+  grand_total: Money;
+  /** `PENDING`, `PRINTED`, `FAILED`, `UNKNOWN`, or null if untracked. */
+  receipt_status: string | null;
+}
+
+export interface RecentSales {
+  protocol_version: number;
+  attention: ReceiptAttention;
+  sales: RecentSale[];
+}
+
 /** One fact the server rejected for good. Each one needs a person. */
 export interface FailedFact {
   seq: number;

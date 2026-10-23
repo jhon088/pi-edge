@@ -100,3 +100,65 @@ fn a_finalized_sale_stays_finalized_across_restarts() {
     let next = core.get_active_transaction().unwrap().unwrap();
     assert_eq!(next.state().register_sequence, 2);
 }
+
+/// A cancelled sale stays cancelled, and stops blocking the till.
+///
+/// The reason the use case exists: an abandoned sale would otherwise hold the
+/// session close open forever, with no way out that does not involve money
+/// (ADR 043).
+#[test]
+fn a_cancelled_sale_survives_a_restart_and_frees_the_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("pi-edge.db");
+
+    let cancelled_id = {
+        let core = core_at(&db, 1);
+        open_register(&core);
+        core.start_transaction(StartTransactionCommand::default())
+            .unwrap();
+        core.add_item(demo_item()).unwrap();
+        core.totalize_transaction(TotalizeTransactionCommand::default())
+            .unwrap();
+        let cancelled = core
+            .cancel_transaction(CancelTransactionCommand {
+                request_id: None,
+                reason_code: Some("CUSTOMER_LEFT".to_owned()),
+            })
+            .unwrap();
+        assert_eq!(cancelled.status(), TransactionStatus::Cancelled);
+        cancelled.id()
+    };
+
+    let core = core_at(&db, 1_000);
+    let state = core.get_edge_state().unwrap();
+    assert!(
+        state.active_transaction.is_none(),
+        "a cancelled sale is not active"
+    );
+    assert!(state.session.is_some());
+    // Nothing commercial happened, so there is nothing to report and nothing
+    // to print.
+    assert_eq!(state.pending_outbox, 0);
+    assert_eq!(
+        core.get_cash_position()
+            .unwrap()
+            .position
+            .cash_sales
+            .minor(),
+        0
+    );
+    assert!(core.get_receipt(cancelled_id).is_err());
+
+    // And the till can close, which was the whole point.
+    core.request_session_close(RequestSessionCloseCommand::default())
+        .unwrap();
+    let closed = core
+        .declare_closing_cash(DeclareClosingCashCommand {
+            request_id: None,
+            counted_minor: 100_000,
+        })
+        .unwrap();
+    assert_eq!(closed.variance.map(|v| v.minor()), Some(0));
+    core.close_business_day(CloseBusinessDayCommand::default())
+        .unwrap();
+}
