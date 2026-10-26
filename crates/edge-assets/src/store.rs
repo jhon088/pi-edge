@@ -435,15 +435,14 @@ impl LocalAssetStore for FileSystemAssetStore {
 
         // Durable before visible: the staged bytes reach the disk, and only
         // then does the rename make them readable under their hash.
-        File::open(&staging)
-            .and_then(|file| file.sync_all())
+        durable::sync_file(&staging)
             .map_err(|error| io_error("sync staging", &asset.content_hash, error))?;
         if let Some(shard) = content.parent() {
             create_dir(shard)?;
         }
         std::fs::rename(&staging, &content)
             .map_err(|error| io_error("promote asset", &asset.content_hash, error))?;
-        sync_directory(content.parent());
+        durable::sync_parent_directory(content.parent());
         Ok(AssetState::Ready)
     }
 
@@ -636,15 +635,63 @@ fn media_type_disagreement(media_type: &str, prefix: &[u8]) -> Option<String> {
     }
 }
 
-/// Make a rename durable where the platform lets us ask. Best effort on
-/// purpose: a failure here means the directory entry may be lost on power
-/// loss, and the next import converges on the same bytes anyway.
-fn sync_directory(path: Option<&Path>) {
-    if let Some(path) = path {
-        if let Ok(dir) = File::open(path) {
-            let _ = dir.sync_all();
+/// Getting bytes onto the device, which is the one part of this store that
+/// POSIX and Windows do not agree on.
+///
+/// Both operations live here together so the difference is readable in one
+/// place rather than spread through `AssetStore` as scattered `cfg`s.
+mod durable {
+    use std::fs::OpenOptions;
+    use std::io;
+    use std::path::Path;
+
+    /// Flush a file's bytes to the device.
+    ///
+    /// Opened for **writing**, which looks redundant for something that only
+    /// flushes and is not. `fsync(2)` is defined for any open descriptor, so
+    /// a read handle is enough on Unix — but its Windows counterpart,
+    /// `FlushFileBuffers`, requires the handle to carry `GENERIC_WRITE` and
+    /// answers `ERROR_ACCESS_DENIED` to a read-only one. Asking for write
+    /// access satisfies both platforms with a single open mode, and truncates
+    /// nothing: only `truncate(true)` would.
+    pub fn sync_file(path: &Path) -> io::Result<()> {
+        OpenOptions::new().write(true).open(path)?.sync_all()
+    }
+
+    /// Flush the directory entry a rename just created.
+    ///
+    /// Best effort on purpose, on every platform: if the entry is lost to
+    /// power failure the bytes are simply missing, and because the store is
+    /// addressed by content hash the next import re-stages the identical
+    /// bytes and converges. Nothing is corrupted either way — the rename is
+    /// atomic, so a reader sees the whole file or no file.
+    #[cfg(unix)]
+    pub fn sync_parent_directory(path: Option<&Path>) {
+        use std::fs::File;
+        if let Some(path) = path {
+            // POSIX: a directory is openable as a file and `fsync` on it
+            // commits the entries within.
+            if let Ok(directory) = File::open(path) {
+                let _ = directory.sync_all();
+            }
         }
     }
+
+    /// Windows has no directory flush, so this is deliberately nothing.
+    ///
+    /// A directory handle cannot even be opened without
+    /// `FILE_FLAG_BACKUP_SEMANTICS`, and `FlushFileBuffers` does not apply to
+    /// one. What stands in for it is NTFS: metadata operations go through the
+    /// journal, so the rename either happened or did not. `std::fs::rename`
+    /// maps to `MoveFileExW` without `MOVEFILE_WRITE_THROUGH`, so the entry
+    /// is not forced to the device before the call returns — the same
+    /// exposure the Unix path has if its `fsync` fails, and the same recovery
+    /// answers it: re-import the bytes, which are addressed by their hash.
+    ///
+    /// Written out rather than left as a silently-failing `File::open`, which
+    /// is what this was and which hid the difference.
+    #[cfg(not(unix))]
+    pub fn sync_parent_directory(_path: Option<&Path>) {}
 }
 
 fn io_error(operation: &'static str, content_hash: &str, error: io::Error) -> AssetError {
