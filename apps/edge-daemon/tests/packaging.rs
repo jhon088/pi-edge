@@ -178,3 +178,91 @@ fn seeding_twice_leaves_one_menu_and_one_till() {
         "a second launch opened a second till"
     );
 }
+
+/// The sidecar names the installer stages must be the names Tauri looks for.
+///
+/// Tauri resolves an `externalBin` entry by appending the target triple and
+/// the platform's executable suffix. Nothing checks that the build script
+/// agrees with the manifest, so a rename in either would surface as "resource
+/// path doesn't exist" halfway through a CI packaging run. This compares the
+/// two directly, from the files themselves.
+#[test]
+fn the_staged_sidecar_names_match_what_tauri_will_look_for() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join("apps/tauri-pos/src-tauri/tauri.windows.conf.json")).unwrap(),
+    )
+    .unwrap();
+
+    let declared: Vec<String> = manifest["bundle"]["externalBin"]
+        .as_array()
+        .expect("the Windows bundle declares externalBin")
+        .iter()
+        .map(|entry| entry.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        declared,
+        vec![
+            "binaries/edge-daemon".to_owned(),
+            "binaries/edge-cli".to_owned()
+        ],
+        "the runtime must travel with the app"
+    );
+
+    // What the build script and the workflow actually write.
+    let script = std::fs::read_to_string(root.join("scripts/build-windows-installer.ps1")).unwrap();
+    let workflow =
+        std::fs::read_to_string(root.join(".github/workflows/windows-installer.yml")).unwrap();
+    for entry in &declared {
+        let name = entry.rsplit('/').next().unwrap();
+        // Both producers name the file `<bin>-<triple>.exe`, which is the
+        // only spelling Tauri resolves.
+        assert!(
+            script.contains("$name-$Target.exe"),
+            "the build script does not append the target triple"
+        );
+        assert!(
+            workflow.contains("$name-$env:TARGET.exe"),
+            "the workflow does not append the target triple"
+        );
+        assert!(
+            script.contains(name) || script.contains("'edge-daemon', 'edge-cli'"),
+            "the build script never builds `{name}`"
+        );
+    }
+    assert!(
+        script.contains("x86_64-pc-windows-msvc") && workflow.contains("x86_64-pc-windows-msvc"),
+        "both producers must target x86_64-pc-windows-msvc"
+    );
+}
+
+/// The helper that finds `edge-cli` returns something runnable.
+///
+/// It resolves a sibling of the test's own binary and builds it if absent,
+/// which is only correct if the result carries the platform's executable
+/// suffix and actually exists. On Windows a missing `.exe` is the difference
+/// between a path and a program.
+#[test]
+fn the_cli_helper_resolves_a_real_executable() {
+    let path = common::cli_binary();
+    assert!(path.is_file(), "{} is not a file", path.display());
+    assert_eq!(
+        path.extension().map(|e| e.to_string_lossy().into_owned()),
+        if std::env::consts::EXE_SUFFIX.is_empty() {
+            None
+        } else {
+            Some(
+                std::env::consts::EXE_SUFFIX
+                    .trim_start_matches('.')
+                    .to_owned(),
+            )
+        },
+        "the resolved binary must carry this platform's executable suffix"
+    );
+    // And it runs: the point of resolving it at all.
+    let output = std::process::Command::new(&path)
+        .arg("--help")
+        .output()
+        .unwrap_or_else(|error| panic!("{} did not run: {error}", path.display()));
+    assert!(output.status.success());
+}

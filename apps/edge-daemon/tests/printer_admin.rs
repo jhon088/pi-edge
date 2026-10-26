@@ -232,3 +232,66 @@ fn whatever_printers_the_host_has_are_offered_by_name() {
         assert!(accepted.is_ok(), "`{}` was offered but refused", queue.name);
     }
 }
+
+/// Resetting the demo must not cost the operator their printer.
+///
+/// "Restablecer demo" exists so a stand can be handed to the next visitor
+/// clean. It abandons the open order — and that is all it may do: the printer
+/// was configured once, physically, by somebody who is not going to do it
+/// again between customers.
+#[test]
+fn resetting_the_demo_keeps_the_printer_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+
+    let admin = client(&database, "edge-cli");
+    let configured = admin
+        .set_printer_settings(settings("PX_RECEIPT", true), None)
+        .unwrap()
+        .settings;
+
+    // A sale in progress, as there would be mid-visit.
+    let output = std::process::Command::new(common::cli_binary())
+        .arg("--db")
+        .arg(&database)
+        .arg("--format")
+        .arg("json")
+        .arg("demo-seed")
+        .arg("--path")
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demo"))
+        .env("PI_EDGE_LOG", "warn")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let kiosk = client(&database, "tauri-pos");
+    kiosk.start_transaction(None).unwrap();
+    kiosk
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef("NUGGETS".to_owned()),
+                quantity_thousandths: 1_000,
+                selections: Vec::new(),
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+    assert!(kiosk.get_active_transaction().unwrap().is_some());
+
+    // What the admin screen's reset does.
+    kiosk
+        .cancel_transaction(Some("DEMO_RESET".to_owned()), None)
+        .unwrap();
+
+    assert!(
+        kiosk.get_active_transaction().unwrap().is_none(),
+        "the order should be gone"
+    );
+    assert_eq!(
+        admin.printer_settings().unwrap().settings,
+        configured,
+        "the printer configuration must survive a demo reset"
+    );
+}

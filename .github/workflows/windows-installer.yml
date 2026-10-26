@@ -2,8 +2,13 @@
 #
 # A Windows runner, because the installer links MSVC and packages a Windows
 # WebView2 runtime. Cross-compiling either from macOS is a worse answer than
-# using the machine that does it natively, so this is where the artifact is
-# produced.
+# using the machine that does it natively.
+#
+# The run is arranged to report *everything* wrong in one pass rather than
+# stopping at the first problem: gates continue past failures, the diagnostic
+# steps run with `if: always()`, and only the final upload is conditional on
+# every required gate having passed. A red run should leave nothing to
+# discover on the next one.
 name: Windows installer
 
 on:
@@ -26,7 +31,7 @@ env:
 jobs:
   installer:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -53,43 +58,106 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/tauri-pos/pnpm-lock.yaml
 
-      # The same gates the repository runs everywhere else, on the platform
-      # the installer is actually for. A Windows-only `cfg` that does not
-      # compile is a broken installer, and this is where that shows up.
+      # ---------------------------------------------------------------- gates
+      # Each records its own outcome and lets the run continue, so one pass
+      # reports every failure instead of only the first.
+
       - name: Gate — fmt
+        id: fmt
+        continue-on-error: true
         run: cargo fmt --all --check
 
       - name: Gate — clippy
+        id: clippy
+        continue-on-error: true
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # `--no-fail-fast` runs every test binary rather than stopping at the
+      # first target that fails, which is what turned the last four runs into
+      # one failure each.
       - name: Gate — tests
-        run: cargo test --workspace
+        id: tests
+        continue-on-error: true
+        run: cargo test --workspace --no-fail-fast
 
       - name: Frontend dependencies
+        id: deps
+        continue-on-error: true
         working-directory: apps/tauri-pos
         run: pnpm install --frozen-lockfile
 
-      - name: Gate — lint, typecheck, build
+      - name: Gate — lint
+        id: lint
+        if: always()
+        continue-on-error: true
         working-directory: apps/tauri-pos
-        run: |
-          pnpm lint
-          pnpm typecheck
-          pnpm build
+        run: pnpm lint
+
+      - name: Gate — typecheck
+        id: typecheck
+        if: always()
+        continue-on-error: true
+        working-directory: apps/tauri-pos
+        run: pnpm typecheck
+
+      - name: Gate — frontend build
+        id: fe_build
+        if: always()
+        continue-on-error: true
+        working-directory: apps/tauri-pos
+        run: pnpm build
 
       - name: Gate — tauri crate
+        id: tauri_crate
+        if: always()
+        continue-on-error: true
         working-directory: apps/tauri-pos/src-tauri
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
 
-      - name: Build the installer
-        shell: pwsh
-        run: ./scripts/build-windows-installer.ps1 -SkipFrontend
+      # ------------------------------------------------------------ packaging
+      # Attempted even when a gate failed, so one run also tells us whether
+      # the installer itself is sound. The upload at the end is what stays
+      # conditional.
 
-      # Proof the demo actually travelled, checked before anyone downloads it.
-      # Proof the demo actually travelled, and that no build step flattened
-      # an animation into a still. Checked before anyone downloads it.
-      - name: Verify the bundle carries the demo
+      - name: Build PI.Edge for Windows
+        id: core_build
+        if: always()
+        continue-on-error: true
+        run: cargo build --release --target $env:TARGET -p edge-daemon -p edge-cli
+
+      - name: Stage the sidecars
+        id: staging
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = 'apps/tauri-pos/src-tauri/binaries'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          foreach ($name in 'edge-daemon', 'edge-cli') {
+            $from = "target/$env:TARGET/release/$name.exe"
+            if (-not (Test-Path $from)) { throw "missing $from" }
+            # Tauri resolves externalBin by appending the target triple.
+            Copy-Item $from "$dir/$name-$env:TARGET.exe" -Force
+            $mb = [math]::Round((Get-Item "$dir/$name-$env:TARGET.exe").Length / 1MB, 1)
+            Write-Host "  $name-$env:TARGET.exe  $mb MB"
+          }
+
+      - name: Tauri build (NSIS)
+        id: tauri_build
+        if: always()
+        continue-on-error: true
+        working-directory: apps/tauri-pos
+        run: pnpm tauri build --target x86_64-pc-windows-msvc
+
+      # ---------------------------------------------------------- diagnostics
+
+      - name: Check the bundled demo
+        id: demo
+        if: always()
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -97,41 +165,91 @@ jobs:
             -Filter 'menu.json' -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match '[\\/]demo[\\/]' } |
             Select-Object -First 1
-          if (-not $staged) { throw 'the demo catalog was not staged into the bundle' }
+          if (-not $staged) { throw 'menu.json was not staged into the bundle' }
+          Write-Host "menu.json: $($staged.FullName)"
+
           $assets = Join-Path $staged.Directory.FullName 'assets'
-          if (-not (Test-Path $assets)) { throw "no assets beside $($staged.FullName)" }
+          if (-not (Test-Path $assets)) { throw "no assets beside menu.json" }
+
+          $jpegs = @(Get-ChildItem $assets -Filter *.jpg)
+          Write-Host "photographs: $($jpegs.Count)"
+          if ($jpegs.Count -lt 13) { throw "expected 13 photographs, found $($jpegs.Count)" }
 
           $gifs = @(Get-ChildItem $assets -Filter *.gif)
-          if ($gifs.Count -lt 2) { throw "expected 2 animations, found $($gifs.Count)" }
+          if ($gifs.Count -ne 2) { throw "expected 2 animations, found $($gifs.Count)" }
           foreach ($gif in $gifs) {
             $bytes = [System.IO.File]::ReadAllBytes($gif.FullName)
             $magic = -join ($bytes[0..5] | ForEach-Object { [char]$_ })
-            if ($magic -ne 'GIF89a') { throw "$($gif.Name) is no longer a GIF: $magic" }
-            # More than one Graphic Control Extension means it still moves.
+            if ($magic -notin @('GIF89a', 'GIF87a')) { throw "$($gif.Name) is not a GIF: $magic" }
             $frames = 0
             for ($i = 0; $i -lt $bytes.Length - 3; $i++) {
               if ($bytes[$i] -eq 0x00 -and $bytes[$i+1] -eq 0x21 -and
                   $bytes[$i+2] -eq 0xF9 -and $bytes[$i+3] -eq 0x04) { $frames++ }
             }
             if ($frames -le 1) { throw "$($gif.Name) was flattened to a still" }
-            Write-Host "  $($gif.Name): $frames frames"
+            Write-Host "  $($gif.Name): $magic, $frames frames, $($bytes.Length) bytes"
           }
-          $jpegs = @(Get-ChildItem $assets -Filter *.jpg).Count
-          Write-Host "demo shipped: $jpegs photographs, $($gifs.Count) animations"
 
-      # The runtime has to be inside the installer, not merely built.
-      - name: Verify the sidecars were staged
+      - name: Check the installer
+        id: nsis
+        if: always()
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($name in 'edge-daemon', 'edge-cli') {
-            $staged = "apps/tauri-pos/src-tauri/binaries/$name-$env:TARGET.exe"
-            if (-not (Test-Path $staged)) { throw "$staged was never staged" }
-            $mb = [math]::Round((Get-Item $staged).Length / 1MB, 1)
-            Write-Host "  $name-$env:TARGET.exe  $mb MB"
+          $dir = "target/$env:TARGET/release/bundle/nsis"
+          $found = Get-ChildItem $dir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $found) { throw "no NSIS installer in $dir" }
+          $final = Join-Path $dir 'PX-Kiosk-Setup-x64.exe'
+          Copy-Item $found.FullName $final -Force
+          $mb = [math]::Round((Get-Item $final).Length / 1MB, 1)
+          Write-Host "installer: $final  $mb MB"
+          # The offline WebView2 bootstrapper is tens of MB; an installer far
+          # below that means the setting did not take effect.
+          if ($mb -lt 40) {
+            Write-Host "::warning::installer is ${mb} MB — check webviewInstallMode=offlineInstaller"
           }
 
-      - uses: actions/upload-artifact@v4
+      # ------------------------------------------------------------- verdict
+      # One place that says what passed and what did not, so the log does not
+      # have to be read step by step.
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $rows = @(
+            @{ n = 'fmt';              r = '${{ steps.fmt.outcome }}' }
+            @{ n = 'clippy';           r = '${{ steps.clippy.outcome }}' }
+            @{ n = 'tests';            r = '${{ steps.tests.outcome }}' }
+            @{ n = 'frontend install'; r = '${{ steps.deps.outcome }}' }
+            @{ n = 'lint';             r = '${{ steps.lint.outcome }}' }
+            @{ n = 'typecheck';        r = '${{ steps.typecheck.outcome }}' }
+            @{ n = 'frontend build';   r = '${{ steps.fe_build.outcome }}' }
+            @{ n = 'tauri crate';      r = '${{ steps.tauri_crate.outcome }}' }
+            @{ n = 'edge-daemon/cli';  r = '${{ steps.core_build.outcome }}' }
+            @{ n = 'sidecar staging';  r = '${{ steps.staging.outcome }}' }
+            @{ n = 'tauri build';      r = '${{ steps.tauri_build.outcome }}' }
+            @{ n = 'bundled demo';     r = '${{ steps.demo.outcome }}' }
+            @{ n = 'nsis installer';   r = '${{ steps.nsis.outcome }}' }
+          )
+          "## Windows build" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "| step | result |`n| --- | --- |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          foreach ($row in $rows) {
+            $mark = if ($row.r -eq 'success') { 'PASS' } else { 'FAIL' }
+            "| $($row.n) | $mark |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            Write-Host ("{0,-18} {1}" -f $row.n, $mark)
+          }
+          $failed = @($rows | Where-Object { $_.r -ne 'success' })
+          if ($failed.Count -gt 0) {
+            throw "$($failed.Count) step(s) failed: $($failed.n -join ', ')"
+          }
+
+      # Only ever uploaded from a run where every step above succeeded.
+      - name: Upload the installer
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: PX-Kiosk-Setup-x64
           path: target/${{ env.TARGET }}/release/bundle/nsis/PX-Kiosk-Setup-x64.exe

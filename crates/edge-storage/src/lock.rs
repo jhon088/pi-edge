@@ -10,12 +10,18 @@
 //! means it is released automatically when the process dies — including a
 //! `SIGKILL` or a power cut. There is no stale-lock cleanup to get wrong.
 //!
-//! The lock file's contents are **diagnostics only**. The pid written inside is
-//! never consulted to decide whether the lock is free; only the OS lock is
+//! Who owns it is written **beside** the lock, not inside it. That is not a
+//! stylistic choice: Windows locks a byte range, so a second process cannot
+//! read the bytes of a file the first one holds — `ERROR_LOCK_VIOLATION`,
+//! not a permission problem. Unix locks are advisory and let the read
+//! through, which is why writing diagnostics into the locked file worked
+//! there and silently produced nothing on Windows.
+//!
+//! Either way the owner file is **diagnostics only**. The pid in it is never
+//! consulted to decide whether the lock is free; only the OS lock is
 //! authoritative.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::StorageError;
@@ -64,8 +70,16 @@ impl SingleWriterLock {
         &self.path
     }
 
-    /// Record who owns the lock, for humans reading the directory. Never used
-    /// as lock state.
+    /// Where the owner's identity is recorded: beside the lock, never in it.
+    fn owner_path(lock: &Path) -> PathBuf {
+        lock.with_extension("owner")
+    }
+
+    /// Record who owns the lock, for humans reading the directory and for the
+    /// next runtime's refusal message. Never used as lock state.
+    ///
+    /// Written to a sibling file rather than into the lock, so that a process
+    /// refused the lock can still read it. See the module note.
     pub fn write_diagnostics(
         &mut self,
         pid: u32,
@@ -73,19 +87,14 @@ impl SingleWriterLock {
         started_at: &str,
     ) -> Result<(), StorageError> {
         let body = format!(
-            "# PI.Edge single-writer lock — diagnostics only, not lock state.\n\
+            "# PI.Edge single-writer owner — diagnostics only, not lock state.\n\
              pid = {pid}\n\
              endpoint = {endpoint}\n\
              started_at = {started_at}\n"
         );
-        let mut write = || -> std::io::Result<()> {
-            self.file.seek(SeekFrom::Start(0))?;
-            self.file.set_len(0)?;
-            self.file.write_all(body.as_bytes())?;
-            self.file.flush()
-        };
-        write().map_err(|source| StorageError::Io {
-            path: self.path.display().to_string(),
+        let owner = Self::owner_path(&self.path);
+        std::fs::write(&owner, body).map_err(|source| StorageError::Io {
+            path: owner.display().to_string(),
             source,
         })
     }
@@ -102,10 +111,10 @@ impl Drop for SingleWriterLock {
     }
 }
 
-fn read_diagnostics(path: &Path) -> Option<String> {
-    let mut file = File::open(path).ok()?;
-    let mut body = String::new();
-    file.read_to_string(&mut body).ok()?;
+fn read_diagnostics(lock: &Path) -> Option<String> {
+    // The owner file, never the lock file: on Windows the lock covers the
+    // whole byte range and reading it from here would fail.
+    let body = std::fs::read_to_string(SingleWriterLock::owner_path(lock)).ok()?;
     let summary: Vec<&str> = body
         .lines()
         .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
@@ -142,6 +151,45 @@ mod tests {
         }
     }
 
+    /// The refusal has to name the owner, on every platform.
+    ///
+    /// This is what Windows failed: diagnostics used to live *inside* the
+    /// locked file, and Windows locks a byte range, so the process being
+    /// refused could not read them. The owner file is a sibling precisely so
+    /// that the refused process can.
+    #[test]
+    fn the_owner_is_readable_by_the_runtime_being_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.lock");
+
+        let mut held = SingleWriterLock::acquire(&path).unwrap();
+        held.write_diagnostics(4242, "endpoint", "2026-10-26T00:00:00Z")
+            .unwrap();
+
+        // Readable while the lock is held — the whole point.
+        let owner = SingleWriterLock::owner_path(&path);
+        let body = std::fs::read_to_string(&owner).expect("the owner file is readable");
+        assert!(body.contains("4242"));
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .contains("4242"),
+            "diagnostics must not be written into the locked file"
+        );
+
+        match SingleWriterLock::acquire(&path) {
+            Err(StorageError::SingleWriterViolation {
+                diagnostics,
+                path: named,
+            }) => {
+                let diagnostics = diagnostics.expect("the refusal names the owner");
+                assert!(diagnostics.contains("4242"), "no pid: {diagnostics}");
+                assert!(named.contains("daemon.lock"), "no lock path: {named}");
+            }
+            other => panic!("expected a single-writer violation, got {other:?}"),
+        }
+    }
+
     #[test]
     fn releasing_the_lock_lets_the_next_runtime_in() {
         let dir = tempfile::tempdir().unwrap();
@@ -158,8 +206,8 @@ mod tests {
     fn diagnostics_are_not_required_to_acquire() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("daemon.lock");
-        std::fs::write(&path, "pid = 999999\n").unwrap();
-        // A pid in the file from a dead process must not block acquisition.
+        std::fs::write(SingleWriterLock::owner_path(&path), "pid = 999999\n").unwrap();
+        // A pid left by a dead process must not block acquisition.
         let _held = SingleWriterLock::acquire(&path).unwrap();
     }
 }
