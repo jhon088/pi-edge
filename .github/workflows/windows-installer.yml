@@ -5,10 +5,14 @@
 # using the machine that does it natively.
 #
 # The run is arranged to report *everything* wrong in one pass rather than
-# stopping at the first problem: gates continue past failures, the diagnostic
-# steps run with `if: always()`, and only the final upload is conditional on
-# every required gate having passed. A red run should leave nothing to
-# discover on the next one.
+# stopping at the first problem: every step carries `if: always()`, so a
+# failure never prevents the rest from running, and only the final upload is
+# conditional on all of them having passed.
+#
+# Deliberately **not** `continue-on-error`. That also keeps a run going, but
+# it rewrites each step's conclusion to `success`, which hides which step
+# actually failed from everything that reads the run without log access. With
+# `if: always()` the conclusions stay truthful and the job still fails.
 name: Windows installer
 
 on:
@@ -64,12 +68,12 @@ jobs:
 
       - name: Gate — fmt
         id: fmt
-        continue-on-error: true
+        if: always()
         run: cargo fmt --all --check
 
       - name: Gate — clippy
         id: clippy
-        continue-on-error: true
+        if: always()
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       # `--no-fail-fast` runs every test binary rather than stopping at the
@@ -77,33 +81,30 @@ jobs:
       # one failure each.
       - name: Gate — tests
         id: tests
-        continue-on-error: true
+        if: always()
         run: cargo test --workspace --no-fail-fast
 
       - name: Frontend dependencies
         id: deps
-        continue-on-error: true
+        if: always()
         working-directory: apps/tauri-pos
         run: pnpm install --frozen-lockfile
 
       - name: Gate — lint
         id: lint
         if: always()
-        continue-on-error: true
         working-directory: apps/tauri-pos
         run: pnpm lint
 
       - name: Gate — typecheck
         id: typecheck
         if: always()
-        continue-on-error: true
         working-directory: apps/tauri-pos
         run: pnpm typecheck
 
       - name: Gate — frontend build
         id: fe_build
         if: always()
-        continue-on-error: true
         working-directory: apps/tauri-pos
         run: pnpm build
 
@@ -116,13 +117,11 @@ jobs:
       - name: Build PI.Edge for Windows
         id: core_build
         if: always()
-        continue-on-error: true
         run: cargo build --release --target $env:TARGET -p edge-daemon -p edge-cli
 
       - name: Stage the sidecars
         id: staging
         if: always()
-        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -140,7 +139,6 @@ jobs:
       - name: Gate — tauri crate
         id: tauri_crate
         if: always()
-        continue-on-error: true
         working-directory: apps/tauri-pos/src-tauri
         run: |
           cargo fmt --check
@@ -155,7 +153,6 @@ jobs:
       - name: Tauri build (NSIS)
         id: tauri_build
         if: always()
-        continue-on-error: true
         working-directory: apps/tauri-pos
         run: pnpm tauri build --target x86_64-pc-windows-msvc
 
@@ -167,7 +164,6 @@ jobs:
       - name: Check the bundled demo
         id: demo
         if: always()
-        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -213,7 +209,6 @@ jobs:
       - name: Check the installer
         id: nsis
         if: always()
-        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -275,7 +270,10 @@ jobs:
           }
           $failed = @($rows | Where-Object { $_.r -ne 'success' })
           if ($failed.Count -gt 0) {
-            throw "$($failed.Count) step(s) failed: $($failed.n -join ', ')"
+            # Reported, not thrown: the steps themselves now carry their own
+            # verdict, so the job already fails and each failure is visible
+            # without reading this log.
+            Write-Host "::warning::$($failed.Count) step(s) failed: $(($failed | ForEach-Object { $_.n }) -join ', ')"
           }
 
       # Only ever uploaded from a run where every step above succeeded.
