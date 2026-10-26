@@ -185,15 +185,53 @@ impl Drop for DaemonProcess {
 }
 
 /// Path of the sibling `edge-cli` binary, used as a real second process.
+///
+/// `CARGO_BIN_EXE_<name>` is the right answer for a binary in the *same*
+/// package as the test, which is how `edge-daemon` is found below. It is not
+/// available for `edge-cli`, which lives in another package, and Cargo's
+/// declarative answer to that — artifact dependencies, `artifact = "bin"` —
+/// is still nightly-only. So on stable this test has to satisfy its own build
+/// dependency rather than assume somebody else did.
+///
+/// It cannot assume it: `cargo test --workspace` builds a package's binaries
+/// only when that package has test targets to build them for, and `edge-cli`
+/// has none. A machine where it happens to exist is one where some earlier
+/// `cargo build` left it behind — which is every development machine, and no
+/// clean CI runner.
 pub fn cli_binary() -> PathBuf {
+    // Same directory, same profile, whatever profile that is.
     let daemon = PathBuf::from(env!("CARGO_BIN_EXE_edge-daemon"));
-    let candidate = daemon
-        .parent()
-        .unwrap()
-        .join(format!("edge-cli{}", std::env::consts::EXE_SUFFIX));
+    let dir = daemon.parent().expect("a built binary has a directory");
+    let candidate = dir.join(format!("edge-cli{}", std::env::consts::EXE_SUFFIX));
+    if candidate.exists() {
+        return candidate;
+    }
+
+    // Build it with the cargo that is running this test. `CARGO` is set for
+    // exactly this, so nothing here guesses at an executable or a layout.
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let mut build = Command::new(cargo);
+    build
+        .arg("build")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--package")
+        .arg("edge-cli");
+    // Match the profile the test itself was built with, read off the path
+    // rather than assumed, so `cargo test --release` puts it in the same
+    // place this function is about to look.
+    if dir.file_name().is_some_and(|name| name == "release") {
+        build.arg("--release");
+    }
+    let status = build
+        .status()
+        .unwrap_or_else(|error| panic!("could not run cargo to build edge-cli: {error}"));
+    assert!(status.success(), "building edge-cli failed");
     assert!(
         candidate.exists(),
-        "edge-cli must be built first (cargo test --workspace does): {}",
+        "edge-cli was built but is not at {}",
         candidate.display()
     );
     candidate
