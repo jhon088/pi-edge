@@ -118,8 +118,24 @@ impl PrinterSettings {
         if queue.is_empty() {
             return Err("choose a printer".to_owned());
         }
-        if queue.starts_with('-') || queue.contains(char::is_whitespace) {
-            return Err(format!("`{queue}` is not a print queue name"));
+        // A real queue is called "Microsoft Print to PDF" or "3nStar RPT008
+        // (Copy 1)". Spaces are ordinary and rejecting them rejects most of
+        // the printers people actually have.
+        //
+        // What is still refused is a name that could be read as an *option*
+        // rather than a name. On Windows the question does not arise — the
+        // name is handed to `OpenPrinterW` as a string, never parsed — and on
+        // Unix `Command::arg` passes it to `lp` without a shell, so the only
+        // real hazard is a leading `-` landing in `lp`'s own flag parsing.
+        if queue.starts_with('-') {
+            return Err(format!(
+                "`{queue}` starts with `-`, which a spooler would read as an option"
+            ));
+        }
+        // Control characters are never part of a queue name and would corrupt
+        // any log or argument list they reached.
+        if queue.chars().any(char::is_control) {
+            return Err("a printer name cannot contain control characters".to_owned());
         }
         if !(24..=96).contains(&self.columns) {
             return Err(format!(
@@ -220,9 +236,11 @@ mod tests {
         assert_eq!(settings.printer().driver(), edge_hardware::UNCONFIGURED);
     }
 
+    /// Spaces are ordinary in a printer name; options and control characters
+    /// are not.
     #[test]
     fn a_queue_name_cannot_smuggle_an_option_into_the_spooler() {
-        for queue in ["-o", "-d other", "two words", ""] {
+        for queue in ["-o", "-d other", "", "name\twith\ttabs", "line\nbreak"] {
             let settings = PrinterSettings {
                 enabled: true,
                 model: "RPT004".to_owned(),
@@ -231,6 +249,31 @@ mod tests {
                 auto_print: false,
             };
             assert!(settings.validate().is_err(), "`{queue}` must be refused");
+        }
+    }
+
+    /// The names Windows actually reports have spaces and punctuation in
+    /// them, and every one has to be storable.
+    #[test]
+    fn a_printer_name_with_spaces_is_an_ordinary_printer_name() {
+        for queue in [
+            "Microsoft Print to PDF",
+            "3nStar RPT008",
+            "RPT015 (Copy 1)",
+            "Receipt Printer #2",
+            "\\\\server\\queue",
+        ] {
+            let settings = PrinterSettings {
+                enabled: true,
+                model: "RPT008".to_owned(),
+                queue: queue.to_owned(),
+                columns: 48,
+                auto_print: false,
+            };
+            settings
+                .validate()
+                .unwrap_or_else(|error| panic!("`{queue}` was refused: {error}"));
+            assert!(settings.is_configured());
         }
     }
 

@@ -5,6 +5,7 @@
 //! with `UPDATE_GOLDEN=1 cargo test -p edge-golden-tests`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -183,14 +184,35 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 /// Compare a protocol value against its recorded golden file.
+/// Line endings, and nothing else, made the same on both sides.
+///
+/// A golden file is a **text** snapshot, so the comparison stays textual:
+/// whitespace, field order, formatting and values all still have to match
+/// exactly. The one thing that must not count is how the checkout wrote the
+/// line separator — git on Windows hands back CRLF for a file committed with
+/// LF, which made every golden test fail there on payloads that were
+/// identical.
+///
+/// Applied to both sides, so this can never hide a difference that is really
+/// in the data: a `\r\n` in the *value* normalises on both sides too, and
+/// any other byte is still compared as written.
+fn normalize_line_endings(value: &str) -> Cow<'_, str> {
+    if !value.contains('\r') {
+        return Cow::Borrowed(value);
+    }
+    Cow::Owned(value.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
 pub fn assert_golden(name: &str, value: &Value) {
     let path = fixture_path(name);
     let mut actual = serde_json::to_string_pretty(value).unwrap();
     actual.push('\n');
 
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        // Canonical LF on every platform: a regenerated golden must not
+        // depend on which machine regenerated it.
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, actual.as_bytes()).unwrap();
+        std::fs::write(&path, normalize_line_endings(&actual).as_bytes()).unwrap();
         return;
     }
 
@@ -201,7 +223,8 @@ pub fn assert_golden(name: &str, value: &Value) {
         )
     });
     assert_eq!(
-        actual, expected,
+        normalize_line_endings(&actual),
+        normalize_line_endings(&expected),
         "golden mismatch for `{name}`; if this change is intended, regenerate with UPDATE_GOLDEN=1"
     );
 }
@@ -590,4 +613,53 @@ pub fn golden_cash_sale(core: &GoldenCore, tendered_minor: i64) {
     .unwrap();
     core.finalize_transaction(FinalizeTransactionCommand::default())
         .unwrap();
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod line_ending_tests {
+    use super::normalize_line_endings;
+
+    /// The same snapshot checked out two ways is the same snapshot.
+    #[test]
+    fn a_crlf_checkout_matches_an_lf_golden() {
+        let lf = "{\n  \"a\": 1\n}\n";
+        let crlf = "{\r\n  \"a\": 1\r\n}\r\n";
+        assert_eq!(normalize_line_endings(lf), normalize_line_endings(crlf));
+        // Old Mac line endings too, for the same reason.
+        assert_eq!(
+            normalize_line_endings(lf),
+            normalize_line_endings("{\r  \"a\": 1\r}\r")
+        );
+    }
+
+    /// And nothing else is forgiven.
+    #[test]
+    fn only_the_line_ending_is_normalised() {
+        let lf = "{\n  \"a\": 1\n}\n";
+        for different in [
+            "{\n  \"a\": 2\n}\n",     // a different value
+            "{\n  \"b\": 1\n}\n",     // a different field
+            "{\n   \"a\": 1\n}\n",    // different indentation
+            "{\n  \"a\":1\n}\n",      // different spacing
+            "{\n  \"a\": 1\n}",       // a missing trailing newline
+            "{\n  \"a\": \"1\"\n}\n", // a number that became a string
+        ] {
+            assert_ne!(
+                normalize_line_endings(lf),
+                normalize_line_endings(different),
+                "`{different}` must not match"
+            );
+        }
+    }
+
+    /// Borrowed when there is nothing to do, so the common path copies
+    /// nothing.
+    #[test]
+    fn lf_input_is_not_copied() {
+        assert!(matches!(
+            normalize_line_endings("already\nlf\n"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
 }

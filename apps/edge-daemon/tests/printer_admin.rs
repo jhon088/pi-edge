@@ -80,9 +80,9 @@ fn a_printer_configuration_that_cannot_work_is_refused() {
     let client = client(&database, "edge-cli");
 
     for bad in [
-        settings("", false),          // no printer chosen
-        settings("-o raw", false),    // an option, not a queue
-        settings("two words", false), // not a queue name either
+        settings("", false),                // no printer chosen
+        settings("-o raw", false),          // an option, not a queue
+        settings("name\twith\ttab", false), // a control character, not a name
         PrinterSettingsV1 {
             model: "RPT999".to_owned(), // not a model this build drives
             ..settings("PX_RECEIPT", false)

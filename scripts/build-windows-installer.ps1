@@ -86,7 +86,9 @@ try {
 }
 finally { Pop-Location }
 
-$NsisDir = Join-Path $Root "target/$Target/release/bundle/nsis"
+# The Tauri crate is outside the Cargo workspace, so it bundles into its own
+# target directory rather than the workspace's.
+$NsisDir = Join-Path $Root "apps/tauri-pos/src-tauri/target/$Target/release/bundle/nsis"
 $Installer = Get-ChildItem -Path $NsisDir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $Installer) { throw "no installer was produced in $NsisDir" }

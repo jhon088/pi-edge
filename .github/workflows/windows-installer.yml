@@ -107,19 +107,11 @@ jobs:
         working-directory: apps/tauri-pos
         run: pnpm build
 
-      - name: Gate — tauri crate
-        id: tauri_crate
-        if: always()
-        continue-on-error: true
-        working-directory: apps/tauri-pos/src-tauri
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-
-      # ------------------------------------------------------------ packaging
-      # Attempted even when a gate failed, so one run also tells us whether
-      # the installer itself is sound. The upload at the end is what stays
-      # conditional.
+      # ---------------------------------------------------- runtime sidecars
+      # Before the Tauri crate is even *checked*: `tauri-build` validates the
+      # `externalBin` entries from its build script, so `cargo clippy` on that
+      # crate fails with "resource path doesn't exist" until these are staged.
+      # Build and stage first, and the gate tests what actually ships.
 
       - name: Build PI.Edge for Windows
         id: core_build
@@ -145,6 +137,21 @@ jobs:
             Write-Host "  $name-$env:TARGET.exe  $mb MB"
           }
 
+      - name: Gate — tauri crate
+        id: tauri_crate
+        if: always()
+        continue-on-error: true
+        working-directory: apps/tauri-pos/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+      # ------------------------------------------------------------ packaging
+
+      # Attempted even when a gate failed, so one run also tells us whether
+      # the installer itself is sound. The upload at the end is what stays
+      # conditional.
+
       - name: Tauri build (NSIS)
         id: tauri_build
         if: always()
@@ -154,6 +161,9 @@ jobs:
 
       # ---------------------------------------------------------- diagnostics
 
+      # The Tauri crate is deliberately outside the Cargo workspace, so its
+      # build output is under its own target directory — not the workspace's,
+      # which is where this used to look and find nothing.
       - name: Check the bundled demo
         id: demo
         if: always()
@@ -161,33 +171,43 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $staged = Get-ChildItem -Path "target/$env:TARGET/release" -Recurse `
-            -Filter 'menu.json' -ErrorAction SilentlyContinue |
+          $tree = "apps/tauri-pos/src-tauri/target/$env:TARGET/release"
+          if (-not (Test-Path $tree)) { throw "no Tauri build output at $tree" }
+
+          # Find what Tauri actually staged rather than assuming a layout.
+          $staged = Get-ChildItem $tree -Recurse -Filter 'menu.json' -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match '[\\/]demo[\\/]' } |
             Select-Object -First 1
-          if (-not $staged) { throw 'menu.json was not staged into the bundle' }
-          Write-Host "menu.json: $($staged.FullName)"
+          if (-not $staged) {
+            Write-Host "::error::no demo/menu.json anywhere under $tree"
+            Get-ChildItem $tree -Recurse -Directory -Filter 'demo' |
+              ForEach-Object { Write-Host "  candidate: $($_.FullName)" }
+            throw 'the demo was not staged into the bundle'
+          }
+          Write-Host "staged menu.json: $($staged.FullName)"
 
           $assets = Join-Path $staged.Directory.FullName 'assets'
-          if (-not (Test-Path $assets)) { throw "no assets beside menu.json" }
+          if (-not (Test-Path $assets)) { throw "no assets beside $($staged.FullName)" }
 
           $jpegs = @(Get-ChildItem $assets -Filter *.jpg)
           Write-Host "photographs: $($jpegs.Count)"
-          if ($jpegs.Count -lt 13) { throw "expected 13 photographs, found $($jpegs.Count)" }
+          if ($jpegs.Count -lt 13) { throw "expected at least 13 photographs, found $($jpegs.Count)" }
 
-          $gifs = @(Get-ChildItem $assets -Filter *.gif)
-          if ($gifs.Count -ne 2) { throw "expected 2 animations, found $($gifs.Count)" }
-          foreach ($gif in $gifs) {
-            $bytes = [System.IO.File]::ReadAllBytes($gif.FullName)
+          foreach ($name in 'cerveza.gif', 'mozzarella.gif') {
+            $gif = Join-Path $assets $name
+            if (-not (Test-Path $gif)) { throw "$name did not ship" }
+            $bytes = [System.IO.File]::ReadAllBytes($gif)
             $magic = -join ($bytes[0..5] | ForEach-Object { [char]$_ })
-            if ($magic -notin @('GIF89a', 'GIF87a')) { throw "$($gif.Name) is not a GIF: $magic" }
+            if ($magic -notin @('GIF89a', 'GIF87a')) { throw "$name is not a GIF: $magic" }
+            # More than one Graphic Control Extension means it still moves,
+            # so no build step re-encoded or flattened it.
             $frames = 0
             for ($i = 0; $i -lt $bytes.Length - 3; $i++) {
               if ($bytes[$i] -eq 0x00 -and $bytes[$i+1] -eq 0x21 -and
                   $bytes[$i+2] -eq 0xF9 -and $bytes[$i+3] -eq 0x04) { $frames++ }
             }
-            if ($frames -le 1) { throw "$($gif.Name) was flattened to a still" }
-            Write-Host "  $($gif.Name): $magic, $frames frames, $($bytes.Length) bytes"
+            if ($frames -le 1) { throw "$name was flattened to a still" }
+            Write-Host "  ${name}: $magic, $frames frames, $($bytes.Length) bytes"
           }
 
       - name: Check the installer
@@ -197,18 +217,30 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $dir = "target/$env:TARGET/release/bundle/nsis"
+          # Same reason as above: Tauri bundles into its own target tree.
+          $dir = "apps/tauri-pos/src-tauri/target/$env:TARGET/release/bundle/nsis"
+          if (-not (Test-Path $dir)) { throw "no NSIS output directory at $dir" }
           $found = Get-ChildItem $dir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $found) { throw "no NSIS installer in $dir" }
+          if (-not $found) {
+            Get-ChildItem $dir | ForEach-Object { Write-Host "  present: $($_.Name)" }
+            throw "no *-setup.exe in $dir"
+          }
+          Write-Host "built: $($found.Name)"
+
+          # One predictable name, beside the installer Tauri produced. No
+          # copying between target trees.
           $final = Join-Path $dir 'PX-Kiosk-Setup-x64.exe'
           Copy-Item $found.FullName $final -Force
           $mb = [math]::Round((Get-Item $final).Length / 1MB, 1)
           Write-Host "installer: $final  $mb MB"
-          # The offline WebView2 bootstrapper is tens of MB; an installer far
-          # below that means the setting did not take effect.
-          if ($mb -lt 40) {
-            Write-Host "::warning::installer is ${mb} MB — check webviewInstallMode=offlineInstaller"
+          "installer=$final" | Out-File $env:GITHUB_OUTPUT -Append
+          "size_mb=$mb"      | Out-File $env:GITHUB_OUTPUT -Append
+
+          # The offline WebView2 bootstrapper is well over a hundred MB; an
+          # installer far below that means the setting did not take effect.
+          if ($mb -lt 100) {
+            throw "installer is only ${mb} MB — webviewInstallMode=offlineInstaller did not take"
           }
 
       # ------------------------------------------------------------- verdict
@@ -252,6 +284,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PX-Kiosk-Setup-x64
-          path: target/${{ env.TARGET }}/release/bundle/nsis/PX-Kiosk-Setup-x64.exe
+          path: apps/tauri-pos/src-tauri/target/${{ env.TARGET }}/release/bundle/nsis/PX-Kiosk-Setup-x64.exe
           if-no-files-found: error
           retention-days: 30
