@@ -210,7 +210,13 @@ mod raw_frames {
 fn the_credential_never_appears_in_logs_or_errors() {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("pi-edge.db");
+    // The binding's mutability is conditional because its only mutable use
+    // is: `stop_gracefully` takes `&mut self` and is Unix-only, so on Windows
+    // a `mut` here would be unused and `-D warnings` is right to say so.
+    #[cfg(unix)]
     let mut daemon = DaemonProcess::start(&database);
+    #[cfg(not(unix))]
+    let daemon = DaemonProcess::start(&database);
     let token = stored_token(&database);
     assert_eq!(token.len(), 64);
 
