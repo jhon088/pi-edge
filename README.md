@@ -34,13 +34,14 @@ the active sale, the journal and the outbox live in the daemon.
 | --- | --- |
 | `crates/edge-domain` | pure rules, value objects, invariants, state machines. No SQLite, HTTP, Tauri, Android, filesystem or clock |
 | `crates/edge-application` | use cases, queries, ports. Knows the domain and the port traits, never an adapter |
-| `crates/edge-catalog` | local projection of the product master: versioned snapshots, lookup, price books, price/tax resolution and the promotion engine. Pure Rust |
+| `crates/edge-catalog` | local projection of the product master: versioned snapshots, lookup, price books, price/tax resolution, the promotion engine, and the universal extensions — selections, channel availability, categories, presentation, localized text, asset references. Pure Rust |
 | `crates/edge-payments` | tenders, the payment and attempt state machines, settlement arithmetic, the provider port and a deterministic simulator. Pure Rust: no SQLite, no HTTP, no provider SDK |
 | `crates/edge-cash` | the append-only drawer ledger, expected-cash arithmetic, safe-drop approval and the blind close declaration. Pure Rust |
 | `crates/edge-inventory` | the append-only stock ledger, its movement types and directions, and the derived on-hand fold. Pure Rust |
 | `crates/edge-refunds` | the refund document, its lines, the refundable arithmetic over a closed sale, the financial refund lifecycle and the fiscal consequence. Pure Rust |
 | `crates/edge-sync` | sync policy and the transport contract: batch formation, deterministic ordering, backoff, outcome classification, the inbound message shapes and a scripted simulator. No SQLite, no HTTP |
 | `crates/edge-hardware` | the device model, the deterministic scan parser, `PrinterPort`, `CashDrawerPort`, the ESC/POS renderer and transport, and simulators. The only crate that may contain an escape sequence |
+| `crates/edge-assets` | the local content-addressed asset store: staging, SHA-256 verification, atomic promotion and offline reads. The only crate that knows where an asset's bytes live |
 | `crates/edge-storage` | SQLite adapter, migrations, single-writer runtime lock |
 | `crates/edge-protocol` | versioned wire contract. Pure `serde` DTOs; core conversions behind the `core-mapping` feature |
 | `crates/edge-ipc` | the only crate that knows what a socket or a pipe is: `EdgeTransport`, JSON Lines framing, local credentials |
@@ -49,7 +50,247 @@ the active sale, the journal and the outbox live in the daemon.
 | `apps/edge-cli` | command line client |
 | `apps/tauri-pos` | diagnostic UI (React + TypeScript + Vite + Tauri 2). Excluded from the Cargo workspace on purpose |
 
-## Status — milestone 12 (standalone POS closure)
+## Status — Expo MVP (PX Kiosk, restaurant self-service)
+
+Done: a **self-service restaurant kiosk that runs entirely offline**, on the
+same core that sells retail — no second runtime, no second transaction engine,
+no mock catalog (ADR 046).
+
+```bash
+./scripts/demo-kiosk.sh      # core, menu and screen, in that order
+```
+
+Or the same three steps by hand, one per terminal:
+
+```bash
+cargo run -p edge-daemon -- --db ./data/pi-edge.db            # the runtime
+cargo run -p edge-cli -- --db ./data/pi-edge.db demo-seed     # assets + menu + till
+cd apps/tauri-pos && pnpm tauri dev                           # the kiosk screen
+```
+
+All three resolve the **same** installation: `<repo>/data/pi-edge.db`, and so
+the same endpoint at `<repo>/data/.pi-edge/d.sock`. The window does not infer
+that from its working directory — `pnpm tauri dev` runs it from
+`apps/tauri-pos/src-tauri`, and a relative default used to send it looking for
+a socket in there. `PI_EDGE_DB` overrides it; nothing needs a symlink.
+
+### Windows installer
+
+```powershell
+./scripts/build-windows-installer.ps1      # on Windows; produces PX-Kiosk-Setup-x64.exe
+```
+
+CI builds the same artifact on a Windows runner
+(`.github/workflows/windows-installer.yml`), because the installer links MSVC
+and packages a WebView2 runtime — neither cross-compiles from macOS.
+
+The installer carries the app, the PI.Edge runtime (`edge-daemon` and
+`edge-cli` as Tauri `externalBin` sidecars) and the whole demo as read-only
+resources. **First launch does what the three terminals do by hand**: resolve
+a writable data directory, start PI.Edge, import the bundled demo once, open
+the window. There is no console, no seed command and no path to configure.
+
+* **Data lives outside the install directory** — `%LOCALAPPDATA%\PX Kiosk`,
+  resolved by Tauri rather than hardcoded. Program Files is read-only for the
+  user running the kiosk, so a database there works for whoever installed it
+  and fails for everybody else.
+* **Bootstrap is idempotent.** The second launch asks the core whether a
+  catalog is already active and skips seeding if so. It never re-imports, never
+  opens a second till, and never touches `printer.json`.
+* **Upgrading** installs over the top. Data is outside the install directory,
+  so the database, the asset store and the printer configuration survive.
+* **Uninstalling removes the application only.** `%LOCALAPPDATA%\PX Kiosk` —
+  database, assets, printer settings and logs — is left alone, deliberately:
+  nobody's data should disappear without them asking. Delete that folder by
+  hand to remove it.
+* A startup that fails writes `%LOCALAPPDATA%\PX Kiosk\logs\px-kiosk.log`.
+
+`demo-seed` is the whole bootstrap and touches no network: it imports the
+local photographs into the content-addressed store, imports and activates the
+demo catalog, and opens the day and the kiosk till.
+
+```text
+attract → comer aquí / para llevar → menú ⇄ producto → completa tu pedido
+        → carrito → ¿cómo quieres pagar? → efectivo | tarjeta → orden
+   ↑                                                                      │
+   └──────────────── inactividad, o la confirmación termina ──────────────┘
+```
+
+* **A sale line can be a configured product.** `Smash Clásica + doble carne +
+  tocino ×2 − cebolla` is one line carrying `base_unit_price`, its
+  materialised `selections[]` and a `unit_price` that **is** base plus the
+  chargeable choices. Tax, promotions, totals, payments, receipts and refunds
+  all work on it without knowing it is configured.
+* **The domain checks the sum.** A line whose base plus choices is not the
+  price being charged is refused, not stored — those amounts are what a
+  receipt and a refund will read years from now.
+* **The client sends ids; the core sends money.** `ADD_ITEM` takes
+  `{option_id, quantity}` and a preparation note, and nothing else. There is no
+  field anywhere in the protocol by which a screen could state a price, a
+  delta, a discount, or that a sale was paid.
+* **Two reads draw the whole kiosk**: `GET_MENU` and
+  `GET_PRODUCT_CONFIGURATION`, both derived from the snapshot in force.
+  Photographs come from the local asset store through `READ_ASSET` — **no HTTP
+  anywhere in the screen**.
+* **The cart's running total is the core's**, from the same arithmetic
+  `totalize` uses, with no state change. A screen never adds up its own lines.
+* **The order number is derived**, not stored: `K01-0042`, from the register
+  and the sale's own sequence.
+* **Cash or card, chosen on its own full screen**, both through the same
+  payment engine; the sale records which tender paid it.
+* **What to offer alongside a dish is catalog content.** Each product carries
+  `recommended_product_refs` — an ordered list, in the snapshot, hashed — and
+  the core drops anything the same menu does not show. Two surfaces read it:
+  "Completa tu pedido" after a dish is added (offered once, "No, gracias"
+  always available) and the rail in the cart. No product reference and no
+  category rule lives in a screen, and there is no scoring engine.
+* **An option that is a dish is shown as one.** The combo's side and drink
+  choices render as photo cards from the menu's own photographs; options with
+  nothing to show stay clean tiles rather than getting a placeholder.
+* **The configurator states its rules**: obligatorio/opcional, how many, and
+  `N/M` as you pick. The add button follows you down the screen and refuses to
+  look enabled while a required question is unanswered.
+* **The confirmation clears in four seconds** and resets to attract, so the
+  next customer never waits on the previous order.
+* **Every dish and every choice worth seeing is photographed.** Thirteen
+  files, all from the supplied shoot in `examples/fotos`, centre-cropped
+  square and nothing else. Ten dishes, three option photographs, and one file
+  serving several screens through the same content hash. A group is all photo
+  cards or all text tiles, never half of each; removals stay textual. The
+  dataset references images **by stem**, so dropping `burger-supreme.jpg` in
+  and re-seeding swaps it with no hash, filename or JSON to edit — and a stem
+  with no file behind it renders as a tile instead of failing the seed.
+* **A list in the contract is always a list**, and an optional value is always
+  `null`. Nothing disappears when it is empty — that cost a cart screen once
+  and is pinned by a test now.
+* The screens render inside an **error boundary that shows what failed**; a
+  kiosk that goes black tells nobody anything.
+
+Deliberate MVP simplifications, each with its cost written down in ADR 046:
+promotions apply to the configured total; dine-in/take-away lives in the
+screen; payment is the named, opt-in simulator; channel availability is
+advisory until the device profile carries a `channel_ref`; the screens are
+Spanish while the catalog already carries `es` + `en`.
+
+## Previously — milestone 13B (local asset runtime)
+
+Done: the bytes behind the catalog's image references live on the till, and a
+catalog **cannot go live without them** (ADR 045).
+
+```text
+AssetRef { content_hash, media_type, byte_size }     the catalog's promise (13A)
+     │
+     ├─ PutAssetChunk ×N → staging/<hex>.part        resumable, never served
+     ├─ CommitAsset      → sha256/<ab>/<hex>         length + SHA-256 + media type,
+     │                                              then one atomic rename
+     └─ ActivateCatalogSnapshot                      refuses unless every required
+                                                     asset verifies
+```
+
+* **The non-negotiable rule**: there is no path — including a crash in the
+  middle of activation — to a snapshot that is `ACTIVE` while an image it
+  references is missing, the wrong length, or does not hash to what it claims.
+  A refused activation leaves the snapshot `PENDING` and **the catalog that was
+  selling keeps selling**.
+* **An asset is the SHA-256 of its bytes and nothing else.** Not a filename,
+  not a URL. One photo shown by ten products is one file; importing it twice
+  stores it once.
+* **No blobs in SQLite — and no asset table either.** The content store *is*
+  the state: a file at the path its own digest dictates. That is the whole of
+  the crash recovery: a process that promoted an asset and died has nothing
+  left to record, so the next attempt finds the file and converges.
+* **Stage, verify, promote**, the catalog's own lifecycle applied to bytes.
+  Nothing unverified is ever readable, because promotion is a rename inside one
+  filesystem. A proven-wrong staging file is discarded so a retry starts clean;
+  **a verified asset is never deleted because another import went wrong.**
+* **The client never declares an asset valid.** It declares what it is sending;
+  PI.Edge hashes what it received. No field on the wire says "verified", and no
+  path or filename ever crosses the protocol — the only string that becomes a
+  path component is the 64-hex digest, re-validated where the path is built.
+* **Offline, with no fallback.** After activation, product images, category
+  images, the menu and its localized text all read from local storage with no
+  network of any kind. There is no remote URL to quietly reach for.
+* **An `AssetRef` present means the bytes are obligatory. An `AssetRef` absent
+  means the product has no photo.** The two are never confused.
+* **Nothing is ever evicted.** Usage is measurable and a per-asset ceiling is
+  configurable (`PI_EDGE_MAX_ASSET_BYTES`, default 32 MiB); a full disk is its
+  own explicit error. No garbage collection yet, on purpose: keeping a file
+  nobody references costs disk, deleting one somebody references costs a kiosk.
+
+```bash
+edge-cli import-asset burger.png --media-type image/png   # hash, stream, verify
+edge-cli snapshot-assets --snapshot <id>                   # what it needs, what is here
+edge-cli activate-catalog --snapshot <id>                  # refused until nothing is pending
+```
+
+Not built here: a kiosk UI, a screensaver, an HTTP/CDN downloader, image
+resizing or transcoding, and aggressive asset garbage collection.
+
+## Previously — milestone 13A (universal catalog extensions)
+
+Done: the catalog can now describe what a self-service kiosk needs — in which
+language, with which picture, on which channel, and which questions a product
+asks before it can be sold — **without a second runtime, a second transaction
+engine or a single vertical-specific concept** (ADR 044).
+
+```text
+Category ── Product ──┬── ProductPresentation   name, description, photo, order
+                      │
+                      └── SelectionGroup   min..max UNITS across the group
+                              └── SelectionOption   max, default, component_ref?
+                                      └── SelectionGroup   nested: a chosen answer asks more
+
+Channel ── ChannelAvailability ──> Product | Category | SelectionOption
+                                   OFFERED | WITHHELD | SNOOZED { until }
+```
+
+* **The names are universal and the verticals are data.** `SelectionGroup`,
+  `SelectionOption`, `Channel`, `ChannelAvailability`, `Category`,
+  `LocalizedText`, `AssetRef`. No `RestaurantModifier`, no `RestaurantMenu`. A
+  `ChannelRef` is opaque: the core never branches on `"kiosk"` or `"pos"`.
+* **A question is two integers, not a rules engine.** `min_quantity >= 1` *is*
+  what required means; `max_quantity` on the group is a total in units;
+  `max_quantity` on an option is how many of that one answer. "Exactly one
+  size", "up to five extras", "two of the same extra" and "no onions, on by
+  default" are all the same model.
+* **Nesting is a group owned by an option** — the whole of
+  `Bebida → Coca Cola → Tamaño`. No tree type, no condition language, and a
+  cycle is refused at commit.
+* **A chargeable option names a product and never carries a price.** It points
+  at a product the snapshot already contains, and the **existing** price books,
+  tax profiles and price modes price it. There is no price on an option, no
+  delta, and nothing on the wire by which a client could state what an extra
+  costs. An option with no component is semantic and free.
+* **Commercial availability is not inventory.** "We do not sell that here" is
+  catalog content per channel; "there is none left" stays the ledger's answer.
+  Each channel declares its own default, so a new self-checkout lane can start
+  offering nothing until somebody curates it, and a snapshot with no channels
+  filters nothing at all.
+* **Localization resolves by exact locale or the default** — no prefix
+  guessing — and every translation is part of the content hash, in locale
+  order, so the order of a JSON object cannot change a snapshot's identity.
+* **An image is a reference** (`sha256:…`, media type, byte size), part of the
+  hash so a changed photo is a changed snapshot. SQLite is not an asset store;
+  fetching the bytes is not this milestone.
+* **One importer, extended**: `begin → put_chunk → commit → activate`
+  unchanged, channels and categories in the header, bulk content in the chunks,
+  and structural validation before `PENDING` — so an invalid menu stays
+  `IMPORTING` and never prices a sale.
+* **A snapshot that declares none of this keeps the content hash it already
+  had.** The new hash sections contribute nothing when empty, which is what
+  protects an already-activated snapshot across the upgrade.
+
+What is deliberately **not** here: configured line pricing (the line still
+prices `unit_price × quantity`), transaction selections, an asset downloader, a
+kiosk UI, a KDS, order numbers, fulfillment, customers, loyalty and promo
+codes.
+
+```bash
+# A menu is an ordinary snapshot file with six more optional sections.
+edge-cli import-catalog menu.json --activate
+```
+
+## Previously — milestone 12 (standalone POS closure)
 
 Done: PI.Edge is a complete POS on its own. Open the day, sell, price, promote,
 take cash or a card or both, close the sale, print, reprint, refund, count the
@@ -619,6 +860,9 @@ Extras: `remove-item --line N`, `change-qty --line N --qty N`,
 `hardware-status`, `printer-test`, `drawer-open`,
 `print-transaction --transaction <id> [--reprint]`, `scan --barcode <code>`,
 `PI_EDGE_PRINTER` / `PI_EDGE_DRAWER` / `PI_EDGE_PAPER_WIDTH` to pick drivers,
+`import-asset <file> --media-type <type>`,
+`snapshot-assets --snapshot <id>`,
+`PI_EDGE_MAX_ASSET_BYTES` to raise or lower the per-asset ceiling,
 `init-demo --block-negative-inventory` for a till that refuses to oversell,
 `--format json`, `--db <path>` (or `PI_EDGE_DB`), `--request-id <uuid>` for
 idempotent retries, `PI_EDGE_LOG=info` for structured logs on stderr.
@@ -642,6 +886,74 @@ daemon — and re-running the same `import-catalog` resumes it.
 A sale captures the active snapshot when it starts and keeps it until it is
 finalized, so activating a new catalog mid-sale can never move a price
 (ADR 013). The next sale uses the new one.
+
+### What a snapshot may also carry (ADR 044)
+
+Six optional sections, all empty in a retail snapshot and all part of the
+content hash. Channels and categories travel in the import header; the rest
+travel in the chunks.
+
+| Section | Says |
+| --- | --- |
+| `channels` | the ways of selling this catalog is curated for, each with its own default: `OFFERED` or `WITHHELD` |
+| `categories` | browsable groupings, with a display order and an optional image |
+| `presentation` | per product: category, display name, description, order, image |
+| `selection_groups` | the questions a product — or a chosen option — asks, as `min..max` units |
+| `selection_options` | the answers, each with its own maximum, a default, and an optional `component_ref` |
+| `availability` | per channel and target: `OFFERED`, `WITHHELD` or `SNOOZED { until }` |
+
+```json
+{
+  "selection_groups": [
+    { "group_id": "G-DRINK", "owner_kind": "PRODUCT", "owner_ref": "BURGER",
+      "name": { "default": "Bebida", "translations": { "en": "Drink" } },
+      "min_quantity": 1, "max_quantity": 1 },
+    { "group_id": "G-DRINK-SIZE", "owner_kind": "OPTION", "owner_ref": "O-COKE",
+      "name": { "default": "Tamaño" }, "min_quantity": 1, "max_quantity": 1 }
+  ],
+  "selection_options": [
+    { "option_id": "O-COKE", "group_id": "G-DRINK", "name": { "default": "Refresco" },
+      "component_product_ref": "COKE", "max_quantity": 1 },
+    { "option_id": "O-LARGE", "group_id": "G-DRINK-SIZE", "name": { "default": "Grande" },
+      "component_product_ref": "SIZE-L", "max_quantity": 1 }
+  ],
+  "availability": [
+    { "channel_ref": "KIOSK", "target_kind": "SELECTION_OPTION",
+      "target_ref": "O-LARGE", "state": "WITHHELD" }
+  ]
+}
+```
+
+An option costs money by naming a product (`component_product_ref`) that the
+snapshot already contains — the existing price books price it. There is no
+price field on an option anywhere in the protocol, so a client cannot state
+what an extra costs. An option with no component is semantic and free.
+
+A snapshot that declares none of these sections hashes to exactly what it
+hashed before they existed, so an already-activated catalog still matches what
+an upgraded producer declares for the same content.
+
+### Assets (ADR 045)
+
+An `AssetRef` in a snapshot is a promise that the bytes exist locally, and the
+activation gate enforces it:
+
+```text
+import-catalog menu.json          -> PENDING   (the catalog is complete)
+activate-catalog --snapshot <id>  -> CATALOG_ASSET_NOT_READY
+import-asset burger.png --media-type image/png
+activate-catalog --snapshot <id>  -> ACTIVE
+```
+
+```text
+<db-dir>/.pi-edge/assets/staging/<hex>.part      arriving; never served
+<db-dir>/.pi-edge/assets/sha256/<ab>/<hex>       verified; immutable; shared
+```
+
+`snapshot-assets` reports what a snapshot needs and what of it is here, so a
+refused activation is a question with an answer rather than a mystery. A
+transfer that dies resumes: ask for the asset's status and continue from
+`bytes_received`.
 
 ## Pricing
 
@@ -1004,6 +1316,17 @@ arithmetic are denied outside tests.
 | `tests/integration` | the full sale against real SQLite; journal and outbox written atomically; cross-aggregate invariants; command idempotency |
 | `tests/crash-recovery` | state rebuilt by a brand new application object; a failure before `COMMIT` leaves no finalized sale without its journal + outbox rows |
 | `tests/integration/tests/catalog.rs` | barcode/sku/reference lookup, price and tax resolution, quantity and fractional quantity, unknown barcode, inactive and non-sellable products, duplicate barcode, invalid record, unknown tax profile, no active catalog |
+| `crates/edge-assets` store tests | the content store on a real directory: stage/verify/promote, a wrong digest, a wrong length (short stays resumable, overlong is discarded), a duplicate import storing one copy, identity independent of chunk boundaries, a refused gap and a free replay, an interrupted staging that never looks ready, content corrupted underneath the store, a digest that can never become a path, an unheld media type, bytes that are not their declared type, the size ceiling, reopening the store, and the three crash windows converging with no bookkeeping |
+| `tests/integration/tests/assets.rs` | the coupling with activation: a product image, a category image and an option image each blocking it; the catalog already selling surviving a refused activation and still pricing a sale; a snapshot with every asset ready activating atomically; a product with no `AssetRef` blocking nothing; a retail snapshot never touching the asset runtime; an installation with no store refusing rather than improvising; images and localized text read back with no network; one asset shared by three references and by two snapshots; a transfer resuming from `bytes_received`; a client unable to talk its bytes past the hash; content tampered with underneath the store stopping the next activation; and one hash refused when declared two ways |
+| `tests/crash-recovery/tests/asset_recovery.rs` | death during staging leaving the content store intact; death around promotion converging on the next commit; a snapshot waiting for assets still waiting after a restart with the previous one still `ACTIVE`; a commit failure between verifying the assets and activating changing nothing at all; and a corrupt asset that is never `READY` across a restart |
+| `apps/edge-daemon/tests/assets.rs` | the protocol half: an asset crossing the wire in ten frames and unblocking activation, a transfer resuming after the client died, the core hashing what it received rather than what it was told, the CLI importing a file idempotently, and a restarted runtime keeping its assets while the waiting snapshot keeps waiting |
+| `crates/edge-protocol` asset DTO tests | hex round-trip including the empty slice and every byte value, one JSON line per frame, a payload that is not bytes refused, the per-chunk ceiling leaving room under the 4 MiB frame, and the absence of any field by which a client could claim an asset is valid |
+| `tests/integration/tests/universal_catalog.rs` | a restaurant menu end to end on the retail core: a required size, five optional extras, two of the same extra, an ingredient removed by default, a combo, a nested question that only a chosen drink asks, a chargeable extra priced by the existing price books, an extra withheld on the kiosk and offered on the counter, a snooze that lifts by itself, localized names and an image surviving SQLite, the same menu hashing the same whatever order it arrives in, atomic activation of a menu over a menu — and every structural lie refused with the import left `IMPORTING`: a dangling option owner, a component outside the snapshot, a duplicate option, a cycle, an unknown availability target, an undeclared channel, a duplicate channel |
+| `crates/edge-catalog` selection/channel/presentation tests | the pure model: quantity ranges, defaults above a maximum, a group that accepts nothing, duplicate ids, unknown owners and components, cycles in the owner chain, availability defaults per channel, an unknown channel offering nothing, a product withheld through its category, locale validation, exact-match resolution with no prefix guessing, asset reference validation |
+| `crates/edge-catalog` content tests (M13A additions) | a catalog with no extensions hashing exactly as it did before they existed, order independence across all six new sections, a translation and a photo being content, availability states being content, and a chunk hash that covers everything a chunk may carry |
+| `crates/edge-protocol` content mapping tests | every extension record round-tripping domain → wire → domain, an availability state and its deadline having to agree, an unknown owner or target kind refused rather than guessed, translations in locale order |
+| `crates/edge-storage` migration 0012 tests | the universal catalog added to a schema-11 database with its snapshots, products and hashes untouched, the new expectations defaulting to zero, and the database itself refusing an impossible row: an unknown availability default, a group that accepts nothing or inverts its range, a product owner with no reference, an option defaulting above its maximum, a snooze with no end, a deadline on a permanent state, an undeclared channel and a half-written image reference |
+| `apps/edge-daemon/tests/catalog_import.rs` (M13A addition) | a menu crossing the real IPC transport: nested groups, a chargeable option, presentation, a category and a withheld extra, with the core's computed hash matching what the producer declared |
 | `tests/integration/tests/promotions.rs` | promotions from a real snapshot: the four rules, re-evaluation on add/remove/quantity change, retracted adjustments, retired line numbers, `AMBIGUOUS_PROMOTION`, store scope, inactive promotions, never below zero, tax-inclusive discounts, exact basket allocation, snapshot binding, audit after a catalog switch, journal summary, idempotent replay, lifecycle refusals |
 | `crates/edge-catalog` promotion tests | the engine itself: every rule kind, buy-2-get-1 at qty 6, threshold below/at/above, inactive, future, expired, store applicability, priority, exclusive, stackable, ambiguous, rounding boundaries, order independence, idempotence |
 | `apps/edge-daemon/tests/promotions.rs` | the promotion surface over real IPC: adjustments on the transaction DTO, `remove-item`/`change-qty`, `AMBIGUOUS_PROMOTION`, promotions in the chunked import, count mismatch, a promotion naming a product from another chunk |

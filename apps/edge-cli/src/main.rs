@@ -10,7 +10,9 @@
 //! The Tauri UI uses the same `EdgeClient` against the same daemon, which is
 //! how we know the contract is real and not CLI-shaped.
 
+mod assets;
 mod catalog;
+mod demo;
 mod error;
 mod inventory;
 mod refund;
@@ -164,6 +166,28 @@ enum Command {
         /// Per-chunk byte budget. A client policy, not a protocol rule.
         #[arg(long = "chunk-bytes")]
         chunk_bytes: Option<usize>,
+    },
+    /// Load the offline demo restaurant: assets, catalog, activation, session.
+    DemoSeed {
+        /// Directory holding `menu.json` and `assets/`.
+        #[arg(long, default_value = "demo")]
+        path: PathBuf,
+    },
+    /// Import one asset's bytes into the local content-addressed store.
+    ImportAsset {
+        /// File to import. Its SHA-256 is its identity; its name is not.
+        file: PathBuf,
+        /// What the bytes are, e.g. `image/webp`. Verified against them.
+        #[arg(long = "media-type")]
+        media_type: String,
+        /// Per-chunk byte budget. A client policy, not a protocol rule.
+        #[arg(long = "chunk-bytes")]
+        chunk_bytes: Option<usize>,
+    },
+    /// What a snapshot's content references, and what of it is local.
+    SnapshotAssets {
+        #[arg(long = "snapshot")]
+        snapshot_id: String,
     },
     /// Active, pending and in-flight catalog snapshots.
     CatalogStatus,
@@ -521,6 +545,8 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
                 AddItemRequestV1 {
                     product: product.to_selector()?,
                     quantity_thousandths,
+                    selections: Vec::new(),
+                    preparation_note: None,
                 },
                 request_id,
             )?)
@@ -555,6 +581,21 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             )?;
             outcome.to_value()
         }
+        Command::DemoSeed { path } => demo::seed(&client, path)?.to_value(),
+        Command::ImportAsset {
+            file,
+            media_type,
+            chunk_bytes,
+        } => {
+            let outcome = assets::import_asset(
+                &client,
+                file,
+                media_type,
+                chunk_bytes.unwrap_or(edge_protocol::MAX_ASSET_CHUNK_BYTES),
+            )?;
+            outcome.to_value()
+        }
+        Command::SnapshotAssets { snapshot_id } => to_value(&client.snapshot_assets(snapshot_id)?),
         Command::CatalogStatus => to_value(&client.catalog_status()?),
         Command::ImportStatus { snapshot_id } => {
             to_value(&client.catalog_import_status(snapshot_id)?)

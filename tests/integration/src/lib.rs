@@ -11,11 +11,12 @@ use edge_application::testing::{
     CatalogFixture, FixedClock, FixtureProduct, SequentialIdFactory, DEMO_BARCODE,
 };
 use edge_application::EdgeApplication;
+use edge_assets::FileSystemAssetStore;
 use edge_catalog::promotions::{
     NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
 };
 use edge_catalog::scope::CatalogScope;
-use edge_catalog::{Barcode, ProductSelector};
+use edge_catalog::{AssetRef, Barcode, ProductSelector};
 use edge_domain::prelude::*;
 use edge_inventory::BootstrapItem;
 use edge_payments::{SimulatorPaymentProvider, SimulatorScript, TenderType};
@@ -24,6 +25,8 @@ use edge_refunds::{
 };
 use edge_storage::SqliteEdgeStore;
 use edge_sync::simulator::SimulatorSyncTransport;
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::sync::Arc;
 
 use edge_application::hardware_service::Hardware;
@@ -57,6 +60,76 @@ pub fn core_with_store(store: SqliteEdgeStore) -> TestCore {
 
 pub fn in_memory_core() -> TestCore {
     core_with_store(SqliteEdgeStore::open_in_memory().unwrap())
+}
+
+/// A core with a real local asset store, in a directory that lives as long as
+/// the returned guard.
+///
+/// Explicit, like every other adapter: a test that needs asset bytes says so,
+/// and `in_memory_core` keeps the honest default of having no store at all
+/// (ADR 045).
+pub fn core_with_assets() -> (TestCore, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileSystemAssetStore::open(dir.path().join("assets")).unwrap();
+    let core = in_memory_core().with_assets(Arc::new(store));
+    (core, dir)
+}
+
+/// The bytes of a tiny, valid PNG, parameterised so a test can have more than
+/// one distinct asset.
+pub fn png_bytes(tag: u8) -> Vec<u8> {
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    bytes.extend((0..64_u8).map(|index| index.wrapping_mul(tag).wrapping_add(tag)));
+    bytes
+}
+
+/// The `AssetRef` those bytes answer to. Computed, never asserted: the hash
+/// is the identity, so a test that hard-coded one would be testing itself.
+pub fn asset_ref_for(bytes: &[u8]) -> AssetRef {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let mut hex = String::new();
+    for byte in hasher.finalize() {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    AssetRef::import(
+        format!("sha256:{hex}"),
+        "image/png",
+        i64::try_from(bytes.len()).unwrap(),
+    )
+    .unwrap()
+}
+
+/// Put one asset in the store the way a transport would: chunks, then commit.
+pub fn store_asset(core: &TestCore, bytes: &[u8], chunk: usize) -> AssetRef {
+    let asset = asset_ref_for(bytes);
+    let mut offset = 0_i64;
+    for slice in bytes.chunks(chunk.max(1)) {
+        core.put_asset_chunk(PutAssetChunkCommand {
+            asset: asset.clone(),
+            offset,
+            bytes: slice.to_vec(),
+        })
+        .unwrap();
+        offset += i64::try_from(slice.len()).unwrap();
+    }
+    let status = core
+        .commit_asset(CommitAssetCommand {
+            asset: asset.clone(),
+        })
+        .unwrap();
+    assert!(status.state.is_ready(), "the asset is stored");
+    asset
+}
+
+/// Read an asset back through the core, as a client eventually will.
+pub fn read_asset(core: &TestCore, asset: &AssetRef) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    core.open_asset(asset)
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    bytes
 }
 
 pub fn init_device(core: &TestCore) {
@@ -122,6 +195,8 @@ pub fn scan(barcode: &str, qty_units: i64) -> AddItemCommand {
         request_id: None,
         selector: ProductSelector::Barcode(Barcode::new(barcode).unwrap()),
         quantity: Quantity::from_units(qty_units).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     }
 }
 
@@ -131,6 +206,8 @@ pub fn item(product_ref: &str, qty_units: i64) -> AddItemCommand {
         request_id: None,
         selector: ProductSelector::ProductRef(ProductRef::new(product_ref).unwrap()),
         quantity: Quantity::from_units(qty_units).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     }
 }
 

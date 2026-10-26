@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 edge-application = { workspace = true }
+edge-assets = { workspace = true }
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
@@ -29,6 +30,7 @@ edge-protocol = { workspace = true, features = ["core-mapping"] }
 edge-storage = { workspace = true }
 edge-sync = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 signal-hook = { workspace = true }
 thiserror = { workspace = true }
@@ -38,6 +40,8 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 edge-client = { workspace = true }
+# The asset tests hash a file the way a producer of bytes would.
+sha2 = { workspace = true }
 # Enables the provider fault-injection hook for the whole test build, so a
 # daemon can be made to die between the provider call and the result
 # persistence (ADR 020). A production `cargo build` never has it.

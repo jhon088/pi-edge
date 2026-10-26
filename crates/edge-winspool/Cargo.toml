@@ -1,0 +1,29 @@
+[package]
+name = "edge-winspool"
+description = "The Windows print spooler, behind a safe API. The only crate in the workspace permitted raw FFI, and it exists so every other one can keep forbidding it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+# Deliberately NOT `workspace = true`. This crate is the FFI boundary: it
+# needs `unsafe` where the workspace forbids it. Every other lint is the
+# workspace's, copied rather than inherited so loosening one cannot loosen
+# the rest by accident.
+[lints.rust]
+unsafe_code = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+float_arithmetic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"

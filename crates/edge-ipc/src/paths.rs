@@ -36,12 +36,14 @@ pub struct Endpoint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EndpointInner {
     /// A path in the filesystem namespace (unix domain socket).
+    #[cfg_attr(windows, allow(dead_code))]
     Filesystem(PathBuf),
     /// A name in the OS-specific namespace (Windows named pipe).
     Namespaced(String),
 }
 
 impl Endpoint {
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) fn filesystem(path: PathBuf) -> Self {
         Self {
             label: path.display().to_string(),
@@ -144,6 +146,16 @@ impl RuntimePaths {
         self.runtime_dir.join("daemon.token")
     }
 
+    /// Root of the local content-addressed asset store.
+    ///
+    /// Part of the installation, like the database and the credential: the
+    /// hashes inside it are referenced by rows in that database, so the two
+    /// belong together and travel together. Inherits the runtime directory's
+    /// owner-only permissions (ADR 045).
+    pub fn asset_dir(&self) -> PathBuf {
+        self.runtime_dir.join("assets")
+    }
+
     /// Create the runtime directory with owner-only permissions.
     pub fn ensure_runtime_dir(&self) -> Result<(), IpcError> {
         std::fs::create_dir_all(&self.runtime_dir).map_err(|source| {
@@ -214,6 +226,35 @@ mod tests {
         assert!(paths.token_file().starts_with(paths.runtime_dir()));
         paths.ensure_runtime_dir().unwrap();
         assert!(paths.runtime_dir().is_dir());
+    }
+
+    /// On Windows the endpoint is a named pipe, not a path.
+    ///
+    /// Two things matter and both are checked: it carries no directory
+    /// separators, because a pipe name is not a path and `%LOCALAPPDATA%`
+    /// sits far deeper than the 104 bytes a Unix socket would allow; and it
+    /// is derived from the database, so two installations on one machine get
+    /// two pipes instead of fighting over one.
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_endpoint_is_a_named_pipe_per_installation() {
+        let dir = tempfile::tempdir().unwrap();
+        let one = RuntimePaths::for_database(dir.path().join("a/pi-edge.db")).unwrap();
+        let two = RuntimePaths::for_database(dir.path().join("b/pi-edge.db")).unwrap();
+
+        let name = one.endpoint().unwrap().label().to_owned();
+        assert!(
+            !name.contains('\\') && !name.contains('/'),
+            "`{name}` is a path"
+        );
+        assert!(name.starts_with("pi-edge-"));
+        assert_ne!(
+            name,
+            two.endpoint().unwrap().label(),
+            "two installations would share one pipe"
+        );
+        // Stable across calls: a client and a daemon must agree.
+        assert_eq!(name, one.endpoint().unwrap().label());
     }
 
     #[cfg(unix)]

@@ -45,6 +45,19 @@ pub enum DomainError {
     #[error("computed totals are inconsistent with line totals")]
     InconsistentTotals,
 
+    /// A configured line's own arithmetic does not add up: the base price plus
+    /// its chargeable choices is not the unit price being charged. Refused
+    /// rather than stored, because these amounts are what a receipt and a
+    /// refund will read long after the snapshot is gone (ADR 046).
+    #[error(
+        "configured unit price {actual_minor} is not base plus selections, which is \
+         {expected_minor}"
+    )]
+    ConfiguredPriceMismatch {
+        expected_minor: i64,
+        actual_minor: i64,
+    },
+
     #[error("field `{0}` is required")]
     MissingField(&'static str),
 

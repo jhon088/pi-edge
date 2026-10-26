@@ -28,6 +28,7 @@ edge-refunds = { workspace = true, optional = true }
 edge-payments = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [lints]

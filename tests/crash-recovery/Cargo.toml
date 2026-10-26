@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 edge-application = { workspace = true, features = ["testing"] }
+edge-assets = { workspace = true }
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-domain = { workspace = true }
@@ -20,6 +21,7 @@ edge-storage = { workspace = true, features = ["fault-injection"] }
 edge-sync = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tempfile = { workspace = true }
 uuid = { workspace = true }
 

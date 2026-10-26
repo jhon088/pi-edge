@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::DomainError;
 use crate::ids::{
     BusinessDayId, CatalogSnapshotId, LineId, OperatorId, PriceBookId, ProductRef, RegisterId,
-    SessionId, StoreId, TransactionId,
+    SelectionGroupId, SelectionOptionId, SessionId, StoreId, TransactionId,
 };
 use crate::money::{Currency, Money, MoneyError, PriceMode, Quantity, TaxRate};
 use crate::time::Timestamp;
@@ -115,6 +115,73 @@ pub struct TransactionLine {
     pub tax_amount: Money,
     /// `taxable_amount + tax_amount`; what this line adds to the sale.
     pub line_total: Money,
+    /// What the product costs before any choice was made.
+    ///
+    /// Equal to `unit_price` for an ordinary retail line. For a configured one
+    /// it is the base, and `unit_price` is the base plus every chargeable
+    /// selection — so `unit_price` **is** the configured unit price, and there
+    /// is no second money field to drift from it (ADR 046).
+    pub base_unit_price: Money,
+    /// The choices the customer made, materialised.
+    ///
+    /// Copied, not referenced: this row must still read correctly when the
+    /// snapshot that offered the option is long gone, exactly like a
+    /// promotion's code and name on a sale (ADR 015).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selections: Vec<TransactionSelection>,
+    /// A free-text note for whoever prepares it. Never priced, never taxed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_note: Option<String>,
+}
+
+/// One choice, materialised onto the line that carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionSelection {
+    pub option_id: SelectionOptionId,
+    pub group_id: SelectionGroupId,
+    /// What the question was called, as the customer saw it.
+    pub group_name: String,
+    /// What the answer was called, as the customer saw it.
+    pub name: String,
+    /// How many of this option, in whole units.
+    pub quantity: i64,
+    /// The product a chargeable option bills through, if any. `None` is a
+    /// purely semantic choice — "no onions" is not a product (ADR 044).
+    pub component_ref: Option<ProductRef>,
+    /// Resolved by the core from the price books, per unit of the option.
+    pub unit_price: Money,
+    /// `unit_price * quantity`.
+    pub amount: Money,
+}
+
+impl TransactionSelection {
+    /// Whether this choice was billed through a product.
+    pub const fn is_chargeable(&self) -> bool {
+        self.component_ref.is_some()
+    }
+}
+
+/// What makes a line a *configured* line.
+///
+/// Supplied by the application, which resolved every option against the sale's
+/// own snapshot and priced the chargeable ones through the existing price
+/// books. A client never supplies any of it (ADR 046).
+#[derive(Debug, Clone)]
+pub struct LineConfiguration {
+    pub base_unit_price: Money,
+    pub selections: Vec<TransactionSelection>,
+    pub preparation_note: Option<String>,
+}
+
+impl LineConfiguration {
+    /// What the chargeable choices add to one unit of the product.
+    pub fn selection_total(&self, currency: Currency) -> Result<Money, DomainError> {
+        let mut total = Money::zero(currency);
+        for selection in &self.selections {
+            total = total.checked_add(selection.amount)?;
+        }
+        Ok(total)
+    }
 }
 
 /// Input accepted by [`RetailTransaction::add_line`].
@@ -131,6 +198,9 @@ pub struct NewLineInput {
     pub price_mode: PriceMode,
     pub price_book_id: Option<PriceBookId>,
     pub discount_amount: Option<Money>,
+    /// Present only for a product that asked questions before it could be
+    /// sold. `None` is every retail line there has ever been.
+    pub configuration: Option<LineConfiguration>,
 }
 
 impl TransactionLine {
@@ -180,6 +250,34 @@ impl TransactionLine {
             )));
         }
         let currency = input.unit_price.currency();
+        // A configured line states its own arithmetic, so the domain checks
+        // it: base plus every chargeable choice must be the unit price being
+        // charged. An inconsistent configuration is refused rather than
+        // stored, because the materialised amounts are what a receipt, a
+        // refund and an audit will read years from now (ADR 046).
+        let (base_unit_price, selections, preparation_note) = match input.configuration {
+            Some(configuration) => {
+                let expected = configuration
+                    .base_unit_price
+                    .checked_add(configuration.selection_total(currency)?)?;
+                if expected != input.unit_price {
+                    return Err(DomainError::ConfiguredPriceMismatch {
+                        expected_minor: expected.minor(),
+                        actual_minor: input.unit_price.minor(),
+                    });
+                }
+                let note = configuration
+                    .preparation_note
+                    .map(|note| note.trim().to_owned())
+                    .filter(|note| !note.is_empty());
+                (
+                    configuration.base_unit_price,
+                    configuration.selections,
+                    note,
+                )
+            }
+            None => (input.unit_price, Vec::new(), None),
+        };
         let mut line = Self {
             line_id: input.line_id,
             line_number,
@@ -197,6 +295,9 @@ impl TransactionLine {
             taxable_amount: Money::zero(currency),
             tax_amount: Money::zero(currency),
             line_total: Money::zero(currency),
+            base_unit_price,
+            selections,
+            preparation_note,
         };
         line.recompute(discount)?;
         Ok(line)
@@ -698,6 +799,20 @@ impl RetailTransaction {
         Ok(totals)
     }
 
+    /// What the sale would total if it were totalized right now.
+    ///
+    /// The same arithmetic `totalize` uses, with no state change: a kiosk cart
+    /// shows a running total while the customer is still choosing, and that
+    /// number is still the **core's**, not a sum a screen did for itself
+    /// (ADR 002, ADR 046). An empty basket totals zero rather than failing,
+    /// because an empty cart is a screen, not an error.
+    pub fn preview_totals(&self) -> Result<Totals, DomainError> {
+        if self.0.lines.is_empty() {
+            return Ok(Totals::zero(self.0.currency));
+        }
+        Totals::compute(&self.0.lines, self.0.currency)
+    }
+
     /// What the sale's payments have applied against its debt.
     pub fn paid_total(&self) -> Result<Money, DomainError> {
         Ok(self.0.payments.committed_total)
@@ -881,6 +996,7 @@ mod tests {
             price_mode: PriceMode::TaxExclusive,
             price_book_id: None,
             discount_amount: None,
+            configuration: None,
         }
     }
 

@@ -9,6 +9,9 @@
 //! business day and *the* active transaction of that session. Ambiguity is an
 //! error, never a guess.
 
+use std::sync::Arc;
+
+use edge_assets::{LocalAssetStore, UnconfiguredAssetStore};
 use edge_catalog::basket::{
     evaluate, AdjustmentTarget, BasketLine, NewBasketLine, PricedBasket, PromotionContext,
 };
@@ -53,6 +56,12 @@ pub struct EdgeApplication<S, C, I, P = SimulatorPaymentProvider> {
     /// Default: nothing configured. A till with no server is a valid till
     /// (ADR 040).
     pub(crate) sync: SyncRuntime,
+    /// Where the bytes behind the catalog's `AssetRef`s live.
+    ///
+    /// Default: nothing configured, which is honest rather than convenient —
+    /// a snapshot that needs an image then cannot be activated, and a retail
+    /// snapshot that needs none is untouched (ADR 045).
+    pub(crate) assets: Arc<dyn LocalAssetStore>,
 }
 
 impl<S, C, I> EdgeApplication<S, C, I, SimulatorPaymentProvider>
@@ -93,6 +102,7 @@ where
             payments,
             hardware,
             sync: SyncRuntime::unconfigured(),
+            assets: Arc::new(UnconfiguredAssetStore),
         }
     }
 
@@ -104,6 +114,21 @@ where
     pub fn with_sync(mut self, sync: SyncRuntime) -> Self {
         self.sync = sync;
         self
+    }
+
+    /// Core whose assets live in the store the composition root opened.
+    ///
+    /// Builder-style for the same reason as sync: every earlier composition
+    /// root and test harness keeps working, and the default stays "no asset
+    /// store" (ADR 045).
+    pub fn with_assets(mut self, assets: Arc<dyn LocalAssetStore>) -> Self {
+        self.assets = assets;
+        self
+    }
+
+    /// The store the bytes of product and category images come from.
+    pub fn assets(&self) -> &Arc<dyn LocalAssetStore> {
+        &self.assets
     }
 
     /// The devices this core drives, for diagnostics and for tests that assert
@@ -406,6 +431,33 @@ where
                     cmd.selector.scanned_barcode(),
                     &context,
                 )?;
+                // The choices, if any: resolved against this sale's own
+                // snapshot and priced through the same price books a scanned
+                // barcode uses. `configured_unit_price` is the base plus the
+                // chargeable ones, and the domain re-checks that sum before
+                // it will store the line (ADR 046).
+                let configuration = self.resolve_configuration(
+                    uow,
+                    &device,
+                    &snapshot,
+                    &capture,
+                    &product.product_ref,
+                    resolved.unit_price,
+                    &cmd.selections,
+                    cmd.preparation_note.clone(),
+                )?;
+                let unit_price = match &configuration {
+                    Some(configuration) => {
+                        let extras = configuration
+                            .selection_total(device.currency)
+                            .map_err(AppError::Domain)?;
+                        configuration
+                            .base_unit_price
+                            .checked_add(extras)
+                            .map_err(DomainError::from)?
+                    }
+                    None => resolved.unit_price,
+                };
                 let line = transaction.add_line(
                     NewLineInput {
                         line_id,
@@ -417,13 +469,14 @@ where
                             .map(|code| code.as_str().to_owned()),
                         description: resolved.description.clone(),
                         quantity: resolved.quantity,
-                        unit_price: resolved.unit_price,
+                        unit_price,
                         tax_rate: resolved.tax_rate,
                         price_mode: resolved.price_mode,
                         price_book_id: Some(resolved.price_book_id.clone()),
                         // Promotions and manual overrides will supply this; no
                         // client may.
                         discount_amount: None,
+                        configuration,
                     },
                     now,
                 )?;

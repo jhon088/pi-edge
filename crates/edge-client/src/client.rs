@@ -3,19 +3,21 @@
 use std::fmt::Debug;
 
 use edge_protocol::{
-    AddItemRequestV1, ApproveSafeDropRequestV1, BeginCatalogImportRequestV1, BusinessDayCloseV1,
-    BusinessDayV1, CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1,
-    CatalogSnapshotViewV1, CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1,
-    CoreInfoV1, CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
+    AddItemRequestV1, ApproveSafeDropRequestV1, AssetChunkRequestV1, AssetChunkV1, AssetRefV1,
+    AssetStatusV1, BeginCatalogImportRequestV1, BusinessDayCloseV1, BusinessDayV1,
+    CashMovementRequestV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1,
+    CatalogStatusV1, ChangeQuantityRequestV1, CommitCatalogImportRequestV1, CoreInfoV1,
+    CreateRefundRequestV1, DeclareClosingCashRequestV1, DeviceV1, EdgeStateV1,
     ForceCloseBusinessDayRequestV1, HardwareStatusV1, ImportInventoryBootstrapRequestV1,
     InitDeviceRequestV1, InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1,
-    InventoryPositionV1, InventoryQueryV1, JournalEventV1, OpenRegisterSessionRequestV1,
-    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, PrintTransactionRequestV1, ProductLookupV1,
+    InventoryPositionV1, InventoryQueryV1, JournalEventV1, MenuV1, OpenRegisterSessionRequestV1,
+    PaymentRequestV1, PaymentResultV1, PendingOutboxV1, PrintTransactionRequestV1,
+    PrinterConfigurationV1, PrinterSettingsV1, ProductConfigurationV1, ProductLookupV1,
     ProductSelectorV1, PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
     RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
     RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
-    StartPaymentRequestV1, SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1,
-    TransactionRequestV1,
+    SnapshotAssetsV1, StartPaymentRequestV1, SubmitScanRequestV1, SyncCycleV1, SyncStatusV1,
+    TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -130,6 +132,15 @@ pub trait EdgeClient: Debug + Send + Sync {
         -> Result<RetailTransactionV1, ClientError>;
     /// A diagnostic page. Touches no commercial data.
     fn print_test_page(&self, request_id: Option<Uuid>) -> Result<HardwareStatusV1, ClientError>;
+    /// What receipt printer this installation drives, what models the build
+    /// offers, and what queues the host reports.
+    fn printer_settings(&self) -> Result<PrinterConfigurationV1, ClientError>;
+    /// Point it at a different one. Device configuration, never a sale.
+    fn set_printer_settings(
+        &self,
+        request: PrinterSettingsV1,
+        request_id: Option<Uuid>,
+    ) -> Result<PrinterConfigurationV1, ClientError>;
     /// Print a finalized sale, or print it again. A reprint changes nothing.
     fn print_transaction(
         &self,
@@ -289,6 +300,41 @@ pub trait EdgeClient: Debug + Send + Sync {
         snapshot_id: &str,
         request_id: Option<Uuid>,
     ) -> Result<CatalogSnapshotViewV1, ClientError>;
+
+    /// What one snapshot's content references and what of it is local.
+    ///
+    /// A client calls this to learn what bytes to send, and after a refused
+    /// activation to learn exactly which asset is missing (ADR 045).
+    fn snapshot_assets(&self, snapshot_id: &str) -> Result<SnapshotAssetsV1, ClientError>;
+
+    fn asset_status(&self, asset: AssetRefV1) -> Result<AssetStatusV1, ClientError>;
+
+    /// Send one slice of an asset's bytes. Resumable: the offset to continue
+    /// from is `bytes_received` of the asset's current status.
+    fn put_asset_chunk(&self, request: AssetChunkRequestV1) -> Result<AssetStatusV1, ClientError>;
+
+    /// Ask the core to verify and store what has been sent. **The client never
+    /// declares an asset valid**; it asks, and the core hashes.
+    fn commit_asset(&self, asset: AssetRefV1) -> Result<AssetStatusV1, ClientError>;
+
+    /// One slice of an asset's bytes. A client names a content hash, never a
+    /// path, and there is nothing remote behind it (ADR 045).
+    fn read_asset(
+        &self,
+        asset: AssetRefV1,
+        offset: i64,
+        length: i64,
+    ) -> Result<AssetChunkV1, ClientError>;
+
+    /// The menu in force, for one way of selling.
+    fn menu(&self, channel_ref: Option<String>) -> Result<MenuV1, ClientError>;
+
+    /// The questions one product asks, each answer with its own price.
+    fn product_configuration(
+        &self,
+        product_ref: &str,
+        channel_ref: Option<String>,
+    ) -> Result<ProductConfigurationV1, ClientError>;
 
     /// Abandon the active sale. Refused once any money has been applied.
     fn cancel_transaction(

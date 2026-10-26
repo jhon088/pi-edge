@@ -22,6 +22,8 @@ fn scan(barcode: &str, units: i64) -> AddItemRequestV1 {
     AddItemRequestV1 {
         product: ProductSelectorV1::Barcode(barcode.to_owned()),
         quantity_thousandths: units * 1_000,
+        selections: Vec::new(),
+        preparation_note: None,
     }
 }
 

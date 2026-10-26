@@ -12,7 +12,9 @@ use std::process::Command;
 use common::{client, product, CatalogSpec, DaemonProcess};
 use edge_client::EdgeClient;
 use edge_protocol::{
-    CatalogProductRecordV1, CommitCatalogImportRequestV1, InitDeviceRequestV1, ProductSelectorV1,
+    CatalogProductRecordV1, CategoryV1, ChannelAvailabilityV1, ChannelV1,
+    CommitCatalogImportRequestV1, InitDeviceRequestV1, LocalizedTextV1, ProductPresentationV1,
+    ProductSelectorV1, SelectionGroupV1, SelectionOptionV1,
 };
 
 fn provision(client: &edge_client::IpcEdgeClient) {
@@ -539,4 +541,143 @@ fn the_cli_importer_streams_a_catalog_end_to_end() {
     let status = client.catalog_status().unwrap();
     assert_eq!(status.active.as_ref().unwrap().snapshot.version, 1);
     assert!(status.pending.is_empty());
+}
+
+// -------------------------------------------- universal catalog extensions
+
+fn wire_text(default: &str) -> LocalizedTextV1 {
+    LocalizedTextV1 {
+        default: default.to_owned(),
+        translations: std::collections::BTreeMap::from([(
+            "en".to_owned(),
+            format!("{default} (en)"),
+        )]),
+    }
+}
+
+/// A menu over the wire: a product that asks a required question, one of
+/// whose answers is chargeable and asks a further question of its own, plus a
+/// category, presentation and an extra withheld on the kiosk.
+///
+/// This is the protocol half of the universal catalog: the DTOs carry every
+/// field, the daemon validates and stores them, and no price crosses the wire
+/// for an option (ADR 044).
+#[test]
+fn a_menu_crosses_the_wire_and_activates() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+    provision(&client);
+
+    let spec = CatalogSpec::with_products(
+        1,
+        vec![
+            product("7501000000100", "BURGER", 12_000, "IVA16"),
+            product("7501000000200", "BACON", 1_500, "IVA16"),
+            product("7501000000300", "SIZE-L", 800, "IVA16"),
+        ],
+    )
+    .with_channel(ChannelV1 {
+        channel_ref: "KIOSK".to_owned(),
+        name: wire_text("Kiosko"),
+        default_availability: "OFFERED".to_owned(),
+    })
+    .with_category(CategoryV1 {
+        category_ref: "C-BURGERS".to_owned(),
+        name: wire_text("Hamburguesas"),
+        display_order: 0,
+        image: None,
+    })
+    .with_presentation(ProductPresentationV1 {
+        product_ref: "BURGER".to_owned(),
+        category_ref: Some("C-BURGERS".to_owned()),
+        display_name: Some(wire_text("Hamburguesa clásica")),
+        description: None,
+        display_order: 0,
+        image: None,
+        recommended_product_refs: Vec::new(),
+    })
+    .with_selection(
+        SelectionGroupV1 {
+            group_id: "G-EXTRAS".to_owned(),
+            owner_kind: "PRODUCT".to_owned(),
+            owner_ref: "BURGER".to_owned(),
+            name: wire_text("Extras"),
+            min_quantity: 0,
+            max_quantity: 5,
+            display_order: 0,
+        },
+        vec![SelectionOptionV1 {
+            option_id: "O-BACON".to_owned(),
+            group_id: "G-EXTRAS".to_owned(),
+            name: wire_text("Tocino"),
+            component_product_ref: Some("BACON".to_owned()),
+            max_quantity: 2,
+            default_quantity: 0,
+            display_order: 0,
+            image: None,
+        }],
+    )
+    .with_selection(
+        SelectionGroupV1 {
+            group_id: "G-BACON-SIZE".to_owned(),
+            owner_kind: "OPTION".to_owned(),
+            owner_ref: "O-BACON".to_owned(),
+            name: wire_text("Porción"),
+            min_quantity: 1,
+            max_quantity: 1,
+            display_order: 0,
+        },
+        vec![
+            SelectionOptionV1 {
+                option_id: "O-BACON-REGULAR".to_owned(),
+                group_id: "G-BACON-SIZE".to_owned(),
+                name: wire_text("Normal"),
+                component_product_ref: None,
+                max_quantity: 1,
+                default_quantity: 1,
+                display_order: 0,
+                image: None,
+            },
+            SelectionOptionV1 {
+                option_id: "O-BACON-DOUBLE".to_owned(),
+                group_id: "G-BACON-SIZE".to_owned(),
+                name: wire_text("Doble"),
+                component_product_ref: Some("SIZE-L".to_owned()),
+                max_quantity: 1,
+                default_quantity: 0,
+                display_order: 1,
+                image: None,
+            },
+        ],
+    )
+    .with_availability(ChannelAvailabilityV1 {
+        channel_ref: "KIOSK".to_owned(),
+        target_kind: "SELECTION_OPTION".to_owned(),
+        target_ref: "O-BACON-DOUBLE".to_owned(),
+        state: "WITHHELD".to_owned(),
+        snoozed_until: None,
+    });
+
+    let view = spec.import(&client, true);
+    assert_eq!(view.snapshot.status, "ACTIVE");
+    assert_eq!(view.stored.channels, 1);
+    assert_eq!(view.stored.categories, 1);
+    assert_eq!(view.stored.presentation, 1);
+    assert_eq!(view.stored.selection_groups, 2);
+    assert_eq!(view.stored.selection_options, 3);
+    assert_eq!(view.stored.availability, 1);
+    // The core computed the hash it stored, and it matches what the producer
+    // declared over the wire.
+    assert_eq!(
+        view.snapshot.content_hash.as_deref(),
+        Some(view.snapshot.declared_content_hash.as_str())
+    );
+
+    // Retail is unaffected: the burger still resolves to its own price.
+    let lookup = client
+        .lookup_product(ProductSelectorV1::Barcode("7501000000100".to_owned()))
+        .unwrap();
+    assert_eq!(lookup.price.unwrap().unit_price.minor, 12_000);
 }

@@ -17,10 +17,12 @@
 //! 7. announce readiness,
 //! 8. serve until a signal arrives, then drain and release.
 
+pub mod asset_config;
 pub mod connection;
 pub mod dispatch;
 pub mod error;
 pub mod hardware_config;
+pub mod printer_settings;
 pub mod refund_authority;
 pub mod state;
 pub mod sync_config;
@@ -114,7 +116,11 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
     // Which devices this installation has. Read here and nowhere else: a host
     // or a port must never be reachable from a use case or a protocol payload
     // (ADR 039).
-    let hardware = hardware_config::from_env().map_err(DaemonError::Configuration)?;
+    // The stored admin choice wins over the environment when there is one, so
+    // a kiosk configured from its own screen comes back up on the same
+    // printer. The handle stays here, in the composition root.
+    let (hardware, printer_control) = hardware_config::from_env_with_control(paths.runtime_dir())
+        .map_err(DaemonError::Configuration)?;
     // Whether there is a server to talk to. Absent means no: facts accumulate
     // durably and the till keeps selling (ADR 040).
     let transport = sync_config::from_env().map_err(DaemonError::Configuration)?;
@@ -122,9 +128,14 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
         Some(transport) => SyncRuntime::with_transport(Arc::clone(transport)),
         None => SyncRuntime::unconfigured(),
     };
+    // Where the bytes behind the catalog's image references live. Local, and
+    // only local: nothing in PI.Edge reaches the network to draw a menu
+    // (ADR 045).
+    let assets = asset_config::open(&paths.asset_dir()).map_err(DaemonError::Configuration)?;
     let core = Arc::new(
         EdgeApplication::with_hardware(store, SystemClock, UuidFactory, provider, hardware)
-            .with_sync(sync),
+            .with_sync(sync)
+            .with_assets(assets),
     );
     // How refunds get authority over an original sale. The explicit
     // development switch wins when it is set; otherwise a configured
@@ -171,11 +182,10 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
         &SystemClock.now().to_rfc3339(),
     )?;
 
-    let dispatcher = Arc::new(Dispatcher::with_refund_authority(
-        Arc::clone(&core),
-        Arc::clone(&state),
-        refund_authority,
-    ));
+    let dispatcher = Arc::new(
+        Dispatcher::with_refund_authority(Arc::clone(&core), Arc::clone(&state), refund_authority)
+            .with_printer_control(printer_control),
+    );
     let context = Arc::new(ConnectionContext::new(Arc::clone(&dispatcher), token));
 
     state.set_status(CoreStatusV1::Ready);

@@ -233,6 +233,11 @@ pub const HARDWARE_IO_ERROR: &str = "HARDWARE_IO_ERROR";
 /// No driver configured, or the configured driver has no bridge in this build.
 /// Never a silent fallback to another driver (ADR 038).
 pub const HARDWARE_NOT_CONFIGURED: &str = "HARDWARE_NOT_CONFIGURED";
+/// A printer configuration a client asked for cannot be stored: an unknown
+/// model, a queue name that is not one, a paper width outside the range the
+/// document composer can set. Refused before it is written, so the
+/// configuration in force is always one that could print (ADR 039).
+pub const HARDWARE_INVALID_CONFIGURATION: &str = "HARDWARE_INVALID_CONFIGURATION";
 /// This physical action already happened for the same cause. A drawer must not
 /// open twice because a command was replayed (ADR 037).
 pub const HARDWARE_ACTION_ALREADY_COMPLETED: &str = "HARDWARE_ACTION_ALREADY_COMPLETED";

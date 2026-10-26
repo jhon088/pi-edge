@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PI.Edge Diagnostic",
-  "version": "0.1.0",
-  "identifier": "com.picommerce.piedge.diagnostic",
+  "productName": "PX Kiosk",
+  "version": "1.0.0",
+  "identifier": "com.pxcommerce.pxkiosk",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -13,19 +13,33 @@
     "windows": [
       {
         "label": "main",
-        "title": "PI.Edge Diagnostic",
-        "width": 1100,
-        "height": 820,
+        "title": "PX Kiosk",
+        "width": 1280,
+        "height": 900,
         "resizable": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "PX Commerce",
+    "copyright": "\u00a9 PX Commerce",
+    "category": "Business",
+    "shortDescription": "Self-service restaurant kiosk",
+    "longDescription": "PX Kiosk \u2014 the self-service ordering screen for PX Commerce, running entirely on the machine it is installed on.",
+    "resources": {
+      "../../../demo/menu.json": "demo/menu.json",
+      "../../../demo/assets/": "demo/assets/"
+    },
+    "targets": "all"
   }
 }

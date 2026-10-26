@@ -53,7 +53,19 @@
         "minor": 11600,
         "currency": "MXN",
         "formatted": "116.00"
-      }
+      },
+      "base_unit_price": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "configured_unit_price": {
+        "minor": 11600,
+        "currency": "MXN",
+        "formatted": "116.00"
+      },
+      "selections": [],
+      "preparation_note": null
     },
     {
       "line_id": "00000000-0000-0000-0000-00000000000d",
@@ -96,7 +108,19 @@
         "minor": 10800,
         "currency": "MXN",
         "formatted": "108.00"
-      }
+      },
+      "base_unit_price": {
+        "minor": 10800,
+        "currency": "MXN",
+        "formatted": "108.00"
+      },
+      "configured_unit_price": {
+        "minor": 10800,
+        "currency": "MXN",
+        "formatted": "108.00"
+      },
+      "selections": [],
+      "preparation_note": null
     },
     {
       "line_id": "00000000-0000-0000-0000-00000000000f",
@@ -139,7 +163,19 @@
         "minor": 9999,
         "currency": "MXN",
         "formatted": "99.99"
-      }
+      },
+      "base_unit_price": {
+        "minor": 9999,
+        "currency": "MXN",
+        "formatted": "99.99"
+      },
+      "configured_unit_price": {
+        "minor": 9999,
+        "currency": "MXN",
+        "formatted": "99.99"
+      },
+      "selections": [],
+      "preparation_note": null
     }
   ],
   "applied_promotions": [],
@@ -192,6 +228,34 @@
   },
   "basket_locked": false,
   "requires_payment_resolution": false,
+  "running_totals": {
+    "subtotal": {
+      "minor": 32399,
+      "currency": "MXN",
+      "formatted": "323.99"
+    },
+    "discount_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "net_total": {
+      "minor": 29999,
+      "currency": "MXN",
+      "formatted": "299.99"
+    },
+    "tax_total": {
+      "minor": 2400,
+      "currency": "MXN",
+      "formatted": "24.00"
+    },
+    "grand_total": {
+      "minor": 32399,
+      "currency": "MXN",
+      "formatted": "323.99"
+    }
+  },
+  "order_code": "K01-0001",
   "created_at": "2026-10-08T15:00:00.000000Z",
   "updated_at": "2026-10-08T15:00:00.000000Z",
   "finalized_at": null,

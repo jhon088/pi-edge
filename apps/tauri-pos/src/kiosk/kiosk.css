@@ -1,0 +1,2254 @@
+/*
+ * PX Kiosk — design system.
+ *
+ * Photo-forward, touch-first, commercial. The rules it is built on:
+ *   · the food is the hero — photography fills its card, type sits on it
+ *   · nothing interactive is under 68px, nothing readable under 17px
+ *   · one accent (ember) earns attention; everything else recedes
+ *   · surfaces are glass over a warm, dark ground, with real elevation
+ *   · motion is short, eased, and never blocks a tap
+ */
+
+/* The kiosk palette.
+   ----------------------------------------------------------------------
+   Declared on `body.kiosk` as well as `:root`, and that is load-bearing.
+   `styles.css` — the diagnostic shell, imported globally by `main.tsx` —
+   also declares `--bg` on `:root`, as near-black, and it is emitted after
+   this file. At equal specificity the later rule wins, so the kiosk's
+   ground was being replaced by the operator screen's: every page rendered
+   white at the top and faded to #0f1115 from 42% down, which is why the
+   lower half of the payment and confirmation screens went dark under
+   perfectly correct dark ink.
+   `body.kiosk` outranks `:root`, so the kiosk's own ground wins wherever
+   `main.tsx` has marked the document as the kiosk, and the diagnostic
+   screen keeps its dark palette untouched. */
+:root,
+body.kiosk {
+  /* ground — light, because the photography is the dark thing on the page */
+  --bg: #f6f8f8;
+  --bg-2: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f1f4f4;
+  --line: #e4e9e8;
+  --line-strong: #cfd7d5;
+
+  /* ink, named for the surface it sits on
+     --------------------------------------------------------------------
+     The kiosk has two kinds of ground: light panels, and photographs under
+     a dark scrim. Text has to know which one it is on, so the colour is
+     named after the surface rather than after how dark it looks. A block
+     that sits on a photograph carries `.k-on-dark` and every piece of type
+     inside it follows. */
+
+  /* on a light panel */
+  --on-surface: #16201d;
+  --on-surface-muted: #56655f;
+  /* Faint, but still legible: the old value was 2.6:1 on this ground, which
+     is a label nobody can read. */
+  --on-surface-faint: #63716c;
+
+  /* on a photograph, a scrim, or any dark panel */
+  --on-dark: #ffffff;
+  --on-dark-muted: #d8e2de;
+  --on-dark-faint: #aebab5;
+
+  /* on a mint control */
+  --on-accent: #04352a;
+
+  /* mint as *text* on a light panel. The brand mint is a fill colour; at
+     1.9:1 it cannot carry a word. */
+  --mint-text: #0a7a5f;
+
+  /* Kept as the names the rest of the sheet already uses. */
+  --fg: var(--on-surface);
+  --fg-2: var(--on-surface-muted);
+  --fg-3: var(--on-surface-faint);
+
+  /* accent — one colour carries every control, selection and success state.
+     Change `--mint` and the whole kiosk follows. */
+  --mint: #19c39a;
+  --mint-2: #2ad9ae;
+  --mint-deep: #0e9c7a;
+  --mint-soft: #e8f8f3;
+  --mint-line: #a8e6d5;
+  /* Text on mint is dark, not white: white on this green is about 2.3:1 and
+     fails at any size, while this reads near 8:1. */
+  --mint-ink: var(--on-accent);
+
+  --gold: #8a5a0e;
+  --green: #0e9c7a;
+  --red: #b8333f;
+  --red-soft: #fdeced;
+
+  --r-xl: 34px;
+  --r-lg: 26px;
+  --r-md: 18px;
+  --r-pill: 999px;
+
+  /* Kept as names the rest of the sheet already uses; on a light ground a
+     "paper" surface and an ordinary surface are the same thing. */
+  --paper: var(--surface);
+  --paper-2: var(--surface-2);
+  --paper-ink: var(--fg);
+  --paper-ink-2: var(--fg-2);
+
+  /* Shadows lift a white card off a near-white ground. They have to be
+     faint; anything heavier reads as a dashboard. */
+  --sh-1: 0 2px 8px rgba(18, 38, 33, 0.06);
+  --sh-card: 0 4px 16px rgba(18, 38, 33, 0.07);
+  --sh-2: 0 12px 34px rgba(18, 38, 33, 0.12);
+  --sh-mint: 0 6px 20px rgba(14, 156, 122, 0.26);
+
+  --font: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body.kiosk {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font-family: inherit;
+}
+
+.k-app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  /* Off-white, with the faintest mint wash at the top so the page has a
+     direction without having a colour. */
+  background:
+    radial-gradient(120% 70% at 12% -18%, rgba(25, 195, 154, 0.07), transparent 60%),
+    linear-gradient(180deg, var(--bg-2), var(--bg) 42%);
+  color: var(--fg);
+}
+
+/* ============================================================ typography */
+
+.k-display {
+  font-size: clamp(50px, 7vw, 108px);
+  font-weight: 800;
+  letter-spacing: -0.042em;
+  line-height: 0.95;
+  margin: 0;
+}
+
+.k-h1 {
+  font-size: clamp(32px, 3.6vw, 52px);
+  font-weight: 780;
+  letter-spacing: -0.032em;
+  line-height: 1.04;
+  margin: 0;
+}
+
+.k-h2 {
+  font-size: clamp(23px, 2vw, 30px);
+  font-weight: 740;
+  letter-spacing: -0.024em;
+  margin: 0;
+}
+
+.k-body {
+  font-size: clamp(17px, 1.45vw, 21px);
+  font-weight: 450;
+  color: var(--fg-2);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.k-eyebrow {
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--mint-text);
+  margin: 0;
+}
+
+.k-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ================================================================= brand */
+
+.k-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.k-brand__mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: linear-gradient(145deg, var(--mint-2), var(--mint-deep));
+  box-shadow: 0 8px 22px rgba(25, 195, 154, 0.42);
+  flex: 0 0 auto;
+}
+
+.k-brand__mark svg {
+  width: 30px;
+  height: 30px;
+}
+
+.k-brand__text {
+  display: grid;
+  gap: 2px;
+  line-height: 1;
+}
+
+.k-brand__name {
+  font-size: 21px;
+  font-weight: 820;
+  letter-spacing: -0.028em;
+}
+
+.k-brand__name em {
+  font-style: normal;
+  color: var(--mint-text);
+}
+
+.k-brand__tag {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.k-brand--lg .k-brand__mark {
+  width: 86px;
+  height: 86px;
+  border-radius: 26px;
+}
+
+.k-brand--lg .k-brand__mark svg {
+  width: 50px;
+  height: 50px;
+}
+
+.k-brand--lg .k-brand__name {
+  font-size: 38px;
+}
+
+.k-brand--lg .k-brand__tag {
+  font-size: 13px;
+  letter-spacing: 0.2em;
+}
+
+.k-powered {
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: 0.1em;
+  color: var(--fg-3);
+  text-transform: uppercase;
+}
+
+/* ============================================================== controls */
+
+.k-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 0 36px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--fg);
+  font-size: 19px;
+  font-weight: 660;
+  letter-spacing: -0.012em;
+  cursor: pointer;
+  transition: transform 150ms var(--ease), background 150ms var(--ease),
+    box-shadow 150ms var(--ease), opacity 150ms var(--ease);
+}
+
+.k-btn:active {
+  transform: scale(0.966);
+}
+
+.k-btn--primary {
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: var(--mint-ink);
+  box-shadow: var(--sh-mint);
+  font-weight: 740;
+}
+
+.k-btn--primary:disabled {
+  background: var(--surface-2);
+  color: var(--fg-3);
+  box-shadow: none;
+}
+
+.k-btn--ghost {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.k-btn--quiet {
+  background: transparent;
+  color: var(--fg-3);
+  min-height: 58px;
+  padding: 0 20px;
+  font-weight: 600;
+}
+
+.k-btn--lg {
+  min-height: 88px;
+  font-size: 24px;
+  padding: 0 52px;
+  border-radius: var(--r-pill);
+}
+
+.k-btn:disabled {
+  opacity: 0.36;
+  cursor: default;
+  box-shadow: none;
+}
+
+.k-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+
+.k-stepper button {
+  width: 54px;
+  height: 54px;
+  border: none;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--fg);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 130ms var(--ease), transform 130ms var(--ease);
+}
+
+.k-stepper button:active {
+  transform: scale(0.9);
+  background: var(--line-strong);
+}
+
+.k-stepper button:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.k-stepper span {
+  min-width: 48px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 740;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ================================================================ chrome */
+
+.k-header {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 46px 16px;
+  flex: 0 0 auto;
+}
+
+.k-header__spacer {
+  flex: 1;
+}
+
+.k-header__title {
+  font-size: clamp(22px, 2vw, 30px);
+  font-weight: 760;
+  letter-spacing: -0.026em;
+}
+
+.k-cart-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 70px;
+  padding: 0 12px 0 28px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: var(--mint-ink);
+  font-size: 20px;
+  font-weight: 760;
+  cursor: pointer;
+  box-shadow: var(--sh-mint);
+  transition: transform 150ms var(--ease);
+}
+
+.k-cart-pill:active {
+  transform: scale(0.966);
+}
+
+.k-cart-pill__count {
+  display: grid;
+  place-items: center;
+  min-width: 46px;
+  height: 46px;
+  padding: 0 13px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.42);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 46px 44px;
+  scrollbar-width: none;
+}
+
+.k-main::-webkit-scrollbar {
+  display: none;
+}
+
+.k-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 46px 30px;
+  background: linear-gradient(to top, var(--bg) 46%, rgba(246, 248, 248, 0));
+}
+
+.k-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.k-steps i {
+  width: 34px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+
+.k-steps i.on {
+  background: linear-gradient(90deg, var(--mint-2), var(--mint));
+  width: 52px;
+}
+
+/* =============================================================== attract */
+
+.k-attract {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.k-attract__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.92;
+  animation: k-ken 22s ease-in-out infinite alternate;
+}
+
+@keyframes k-ken {
+  from {
+    transform: scale(1.08) translate3d(2%, 1%, 0);
+  }
+  to {
+    transform: scale(1.2) translate3d(-2%, -2%, 0);
+  }
+}
+
+.k-attract__scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(100deg, rgba(10, 24, 20, 0.82) 22%, rgba(10, 24, 20, 0.18) 62%,
+      rgba(10, 24, 20, 0.42) 100%),
+    linear-gradient(to top, rgba(246, 248, 248, 0.9) 0%, transparent 26%);
+}
+
+.k-attract__inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 54px 66px 48px;
+}
+
+.k-attract__body {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  gap: 24px;
+  max-width: 60%;
+}
+
+.k-attract__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  align-self: start;
+  margin-top: 18px;
+  padding: 28px 58px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--mint-2), var(--mint-deep));
+  font-size: 27px;
+  font-weight: 760;
+  letter-spacing: -0.015em;
+  box-shadow: var(--sh-mint);
+  animation: k-float 2.9s var(--ease) infinite;
+}
+
+@keyframes k-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    box-shadow: 0 14px 38px rgba(25, 195, 154, 0.4);
+  }
+  50% {
+    transform: translateY(-9px);
+    box-shadow: 0 32px 66px rgba(25, 195, 154, 0.5);
+  }
+}
+
+.k-attract__foot {
+  display: flex;
+  align-items: center;
+  gap: 42px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.k-perk {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--fg-2);
+}
+
+.k-perk span {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 21px;
+}
+
+/* =========================================================== big choices */
+
+.k-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 30px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.k-choice {
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  padding: 70px 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: linear-gradient(170deg, var(--surface), var(--surface-2));
+  color: var(--fg);
+  cursor: pointer;
+  box-shadow: var(--sh-1);
+  transition: transform 170ms var(--ease), border-color 170ms var(--ease),
+    box-shadow 170ms var(--ease);
+}
+
+.k-choice:active {
+  transform: scale(0.98);
+  border-color: rgba(25, 195, 154, 0.6);
+  box-shadow: var(--sh-mint);
+}
+
+.k-choice__glyph {
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 40px;
+  background: linear-gradient(145deg, rgba(25, 195, 154, 0.26), rgba(169, 110, 18, 0.1));
+  border: 1px solid var(--line);
+  font-size: 62px;
+}
+
+/* ================================================================== menu */
+
+.k-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 236px;
+  margin-bottom: 30px;
+  padding: 36px 42px;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-1);
+}
+
+.k-hero img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 72% 50%;
+  opacity: 0.72;
+}
+
+.k-hero__scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(96deg, rgba(10, 24, 20, 0.84) 22%, rgba(10, 24, 20, 0.06) 76%);
+}
+
+.k-hero__body {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  max-width: 56%;
+}
+
+.k-promos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.k-promo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: var(--r-pill);
+  background: rgba(169, 110, 18, 0.13);
+  border: 1px solid rgba(169, 110, 18, 0.34);
+  color: var(--gold);
+  font-size: 16px;
+  font-weight: 680;
+}
+
+.k-rail {
+  display: flex;
+  gap: 13px;
+  margin-bottom: 30px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  scrollbar-width: none;
+}
+
+.k-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.k-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 78px;
+  padding: 0 28px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--fg-2);
+  font-size: 19px;
+  font-weight: 680;
+  cursor: pointer;
+  transition: all 150ms var(--ease);
+}
+
+.k-tab img {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #fff;
+  border: 2px solid var(--line-strong);
+}
+
+.k-tab--on img {
+  border-color: rgba(43, 18, 5, 0.22);
+}
+
+.k-tab--plain {
+  padding: 0 30px;
+}
+
+.k-tab--on {
+  color: var(--mint-ink);
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  border-color: transparent;
+  box-shadow: 0 12px 30px rgba(255, 150, 60, 0.42);
+  transform: translateY(-2px);
+}
+
+.k-section {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin: 4px 0 18px;
+}
+
+.k-section__count {
+  font-size: 15px;
+  font-weight: 620;
+  color: var(--fg-3);
+}
+
+.k-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 22px;
+  margin-bottom: 38px;
+}
+
+/* A card is a photograph on paper. The food fills it; the type sits under it
+   on a light surface so a white studio shot blends instead of floating. */
+.k-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--paper-ink);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--sh-card);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease);
+}
+
+.k-card:active {
+  transform: scale(0.982);
+  border-color: var(--line-strong);
+  box-shadow: var(--sh-2);
+}
+
+.k-card__art {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: #fff;
+  overflow: hidden;
+}
+
+.k-card__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 400ms var(--ease);
+}
+
+.k-card:active .k-card__art img {
+  transform: scale(1.04);
+}
+
+/* Just enough shade at the foot of the photo for a badge to sit on. */
+.k-card__fade {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 34%;
+  background: linear-gradient(to top, rgba(255, 253, 251, 0.9), rgba(255, 253, 251, 0));
+}
+
+.k-card__badge {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  padding: 9px 15px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  font-size: 12.5px;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mint-ink);
+  box-shadow: 0 6px 16px rgba(25, 195, 154, 0.4);
+}
+
+.k-card__over {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px 20px;
+}
+
+.k-card__name {
+  font-size: 22px;
+  font-weight: 770;
+  letter-spacing: -0.024em;
+  line-height: 1.16;
+  color: var(--paper-ink);
+}
+
+.k-card__desc {
+  font-size: 14.5px;
+  line-height: 1.4;
+  color: var(--paper-ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.k-card__buy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.k-card__price {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.026em;
+  color: var(--paper-ink);
+}
+
+.k-card__from {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-ink-2);
+}
+
+.k-card__plus {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: var(--mint-ink);
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+  box-shadow: 0 8px 20px rgba(25, 195, 154, 0.4);
+}
+
+/* ======================================================== product detail */
+
+.k-detail {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.92fr) minmax(0, 1fr);
+  gap: 44px;
+  align-items: start;
+  padding-bottom: 10px;
+}
+
+.k-detail__art {
+  position: sticky;
+  top: 0;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: #fff;
+  aspect-ratio: 1 / 1;
+  box-shadow: var(--sh-2);
+}
+
+.k-detail__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.k-detail__head {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 30px;
+}
+
+.k-group {
+  margin-bottom: 20px;
+  padding: 24px 26px 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.k-group__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.k-pill {
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.k-pill--req {
+  background: rgba(210, 64, 77, 0.16);
+  color: var(--red);
+}
+
+.k-pill--opt {
+  background: var(--surface-2);
+  color: var(--fg-3);
+}
+
+.k-pill--done {
+  background: rgba(14, 156, 122, 0.15);
+  color: var(--mint-text);
+}
+
+.k-options {
+  display: grid;
+  gap: 11px;
+}
+
+.k-option {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  min-height: 84px;
+  padding: 12px 20px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 19px;
+  font-weight: 620;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms var(--ease), background 150ms var(--ease);
+}
+
+.k-option:active {
+  background: var(--surface-2);
+}
+
+.k-option--on {
+  border-color: var(--mint);
+  background: linear-gradient(110deg, rgba(25, 195, 154, 0.17), rgba(25, 195, 154, 0.05));
+}
+
+.k-option:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.k-option__box {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  border: 2px solid var(--line-strong);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--fg);
+  transition: background 150ms var(--ease), border-color 150ms var(--ease);
+}
+
+.k-option--on .k-option__box {
+  background: var(--mint);
+  border-color: var(--mint);
+}
+
+.k-option--round .k-option__box {
+  border-radius: 50%;
+}
+
+.k-option__name {
+  flex: 1;
+}
+
+.k-option__price {
+  color: var(--gold);
+  font-weight: 740;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-option__incl {
+  font-size: 15px;
+  color: var(--fg-3);
+  font-weight: 620;
+}
+
+
+
+/* ================================================================== cart */
+
+.k-cart {
+  display: grid;
+  gap: 14px;
+  max-width: 1020px;
+  margin: 0 auto;
+}
+
+.k-line {
+  display: grid;
+  grid-template-columns: 104px 1fr auto;
+  gap: 22px;
+  align-items: start;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+}
+
+.k-line__art {
+  width: 104px;
+  height: 104px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.k-line__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.k-line__name {
+  font-size: 21px;
+  font-weight: 740;
+  letter-spacing: -0.02em;
+}
+
+.k-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.k-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-2);
+}
+
+.k-chip--paid {
+  color: var(--gold);
+  border-color: rgba(169, 110, 18, 0.28);
+  background: rgba(169, 110, 18, 0.09);
+}
+
+.k-chip--note {
+  color: var(--mint-text);
+  border-color: rgba(25, 195, 154, 0.3);
+  background: rgba(25, 195, 154, 0.08);
+}
+
+.k-line__right {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+}
+
+.k-line__total {
+  font-size: 23px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-line__was {
+  font-size: 15px;
+  color: var(--fg-3);
+  text-decoration: line-through;
+}
+
+.k-totals {
+  display: grid;
+  gap: 13px;
+  margin-top: 8px;
+  padding: 26px 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: linear-gradient(170deg, var(--surface), var(--surface-2));
+}
+
+.k-tr {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 18px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-tr--save {
+  color: var(--mint-text);
+  font-weight: 680;
+}
+
+.k-tr--grand {
+  align-items: baseline;
+  padding-top: 15px;
+  margin-top: 3px;
+  border-top: 1px solid var(--line);
+  font-size: 33px;
+  font-weight: 820;
+  letter-spacing: -0.032em;
+  color: var(--fg);
+}
+
+.k-empty {
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  padding: 96px 20px;
+  text-align: center;
+}
+
+.k-empty__glyph {
+  display: grid;
+  place-items: center;
+  width: 140px;
+  height: 140px;
+  border-radius: 44px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 62px;
+}
+
+/* =============================================================== payment */
+
+.k-pay {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 30px;
+  min-height: 72vh;
+  text-align: center;
+}
+
+.k-pay__amount {
+  font-size: clamp(54px, 7.4vw, 96px);
+  font-weight: 840;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.k-reader {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 300px;
+  height: 300px;
+  margin: 8px 0;
+}
+
+.k-reader__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(25, 195, 154, 0.45);
+  animation: k-ping 2.1s var(--ease) infinite;
+}
+
+.k-reader__ring:nth-child(2) {
+  animation-delay: 0.7s;
+}
+
+.k-reader__ring:nth-child(3) {
+  animation-delay: 1.4s;
+}
+
+@keyframes k-ping {
+  0% {
+    transform: scale(0.62);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+.k-reader__card {
+  position: relative;
+  width: 196px;
+  height: 126px;
+  border-radius: 20px;
+  background: linear-gradient(140deg, #2b3a36, #16201d);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--sh-2);
+  transform: rotate(-9deg);
+  animation: k-tapcard 2.4s var(--ease) infinite;
+}
+
+@keyframes k-tapcard {
+  0%,
+  100% {
+    transform: rotate(-9deg) translateY(0);
+  }
+  50% {
+    transform: rotate(-9deg) translateY(-14px);
+  }
+}
+
+.k-reader__chip {
+  position: absolute;
+  top: 34px;
+  left: 24px;
+  width: 42px;
+  height: 32px;
+  border-radius: 7px;
+  background: linear-gradient(140deg, #e8c37a, #c8a053);
+}
+
+.k-reader__stripe {
+  position: absolute;
+  bottom: 22px;
+  left: 24px;
+  right: 24px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--line-strong);
+}
+
+.k-reader--busy .k-reader__card {
+  animation: none;
+  transform: rotate(0deg) scale(0.9);
+  opacity: 0.4;
+}
+
+.k-spin {
+  position: absolute;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  border: 5px solid var(--line);
+  border-top-color: var(--mint-2);
+  animation: k-rot 900ms linear infinite;
+}
+
+@keyframes k-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ========================================================== confirmation */
+
+.k-done {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 18px;
+  min-height: 76vh;
+  text-align: center;
+}
+
+.k-done__tick {
+  display: grid;
+  place-items: center;
+  width: 128px;
+  height: 128px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--mint-2), var(--mint-deep));
+  color: var(--mint-ink);
+  font-size: 64px;
+  font-weight: 900;
+  box-shadow: 0 22px 56px rgba(14, 156, 122, 0.34);
+  animation: k-pop 520ms cubic-bezier(0.2, 1.35, 0.4, 1);
+}
+
+@keyframes k-pop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.k-order {
+  display: grid;
+  gap: 8px;
+  padding: 26px 64px;
+  margin: 10px 0 4px;
+  border-radius: var(--r-xl);
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(150deg, var(--surface-2), var(--surface));
+  box-shadow: var(--sh-2);
+}
+
+.k-order__label {
+  font-size: 13px;
+  font-weight: 740;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--on-surface-muted);
+}
+
+.k-order__code {
+  font-size: clamp(58px, 8.4vw, 104px);
+  font-weight: 860;
+  letter-spacing: 0.012em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(135deg, var(--mint-deep), var(--fg));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.k-done__meta {
+  display: flex;
+  gap: 34px;
+  margin-top: 6px;
+  font-size: 17px;
+  color: var(--fg-2);
+}
+
+.k-done__meta b {
+  color: var(--fg);
+  font-weight: 740;
+}
+
+.k-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 22px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 15px;
+  color: var(--fg-3);
+}
+
+.k-countdown i {
+  display: block;
+  width: 120px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.k-countdown i b {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--mint-2), var(--gold));
+  transition: width 1s linear;
+}
+
+/* ================================================================= misc */
+
+.k-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 76vw;
+  padding: 18px 30px;
+  border-radius: var(--r-pill);
+  background: var(--red-soft);
+  border: 1px solid rgba(210, 64, 77, 0.34);
+  color: #8e2730;
+  box-shadow: var(--sh-2);
+  font-size: 17px;
+  font-weight: 620;
+  box-shadow: var(--sh-2);
+  z-index: 60;
+  animation: k-rise 220ms var(--ease);
+}
+
+@keyframes k-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 14px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.k-splash {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 22px;
+  min-height: 100vh;
+  text-align: center;
+}
+
+.k-fade {
+  animation: k-in 300ms var(--ease) both;
+}
+
+@keyframes k-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.k-crash {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 20px;
+  min-height: 100vh;
+  padding: 60px;
+  text-align: center;
+}
+
+.k-crash code {
+  padding: 14px 20px;
+  border-radius: var(--r-md);
+  background: var(--red-soft);
+  border: 1px solid rgba(210, 64, 77, 0.3);
+  font-size: 15px;
+  color: #8e2730;
+  max-width: 70vw;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1180px) {
+  .k-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .k-detail__art {
+    position: static;
+    max-width: 420px;
+  }
+
+  .k-attract__body {
+    max-width: 78%;
+  }
+}
+
+/* ========================================================= upsell in cart */
+
+.k-upsell {
+  margin: 30px 0 6px;
+}
+
+.k-upsell__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.k-upsell__rail {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-width: none;
+}
+
+.k-upsell__rail::-webkit-scrollbar {
+  display: none;
+}
+
+.k-suggest {
+  flex: 0 0 auto;
+  width: 212px;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--paper-ink);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--sh-card);
+  transition: transform 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+
+.k-suggest:active {
+  transform: scale(0.975);
+  box-shadow: var(--sh-2);
+}
+
+.k-suggest__art {
+  aspect-ratio: 1 / 1;
+  background: #fff;
+}
+
+.k-suggest__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.k-suggest__body {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.k-suggest__name {
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -0.018em;
+  line-height: 1.2;
+  min-height: 2.4em;
+}
+
+.k-suggest__buy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.k-suggest__price {
+  font-size: 19px;
+  font-weight: 790;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-suggest__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: var(--mint-ink);
+  font-size: 15px;
+  font-weight: 740;
+  box-shadow: 0 6px 16px rgba(25, 195, 154, 0.36);
+}
+
+/* ======================================================== payment method */
+
+.k-method {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 30px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.k-method__card {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  padding: 62px 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: linear-gradient(170deg, var(--surface), var(--surface-2));
+  color: var(--fg);
+  cursor: pointer;
+  box-shadow: var(--sh-1);
+  transition: transform 170ms var(--ease), border-color 170ms var(--ease),
+    box-shadow 170ms var(--ease);
+}
+
+.k-method__card:active {
+  transform: scale(0.98);
+  border-color: rgba(25, 195, 154, 0.6);
+  box-shadow: var(--sh-mint);
+}
+
+.k-method__glyph {
+  display: grid;
+  place-items: center;
+  width: 136px;
+  height: 136px;
+  border-radius: 42px;
+  background: linear-gradient(145deg, rgba(25, 195, 154, 0.24), rgba(169, 110, 18, 0.09));
+  border: 1px solid var(--line);
+  font-size: 64px;
+}
+
+/* cash: a short, legible animation of notes going in */
+.k-cash {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 300px;
+  height: 300px;
+}
+
+.k-cash__slot {
+  position: absolute;
+  bottom: 58px;
+  width: 232px;
+  height: 22px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #16121d, #241d30);
+  border: 1px solid var(--line-strong);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.7);
+}
+
+.k-cash__note {
+  position: absolute;
+  width: 196px;
+  height: 104px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #a9ddc3, #5f9e80);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--sh-2);
+  animation: k-feed 2.1s var(--ease) infinite;
+}
+
+.k-cash__note:nth-child(3) {
+  animation-delay: 0.7s;
+}
+
+.k-cash__note::after {
+  content: "$";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 40px;
+  font-weight: 860;
+  color: rgba(4, 40, 26, 0.5);
+}
+
+@keyframes k-feed {
+  0% {
+    transform: translateY(-120px) scale(1);
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+  72% {
+    transform: translateY(44px) scale(0.98);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(78px) scale(0.9);
+    opacity: 0;
+  }
+}
+
+.k-cash--busy .k-cash__note {
+  animation: none;
+  opacity: 0;
+}
+
+/* ======================================================================
+   Dark grounds.
+   ----------------------------------------------------------------------
+   A photograph under a scrim, or a dark panel. Everything inside flips to
+   light ink in one place, so a screen that sits on an image never has to
+   restate it and a new one gets it by adding the class.
+   ====================================================================== */
+.k-on-dark,
+.k-on-dark .k-h1,
+.k-on-dark .k-h2,
+.k-on-dark .k-display {
+  color: var(--on-dark);
+}
+
+.k-on-dark .k-body,
+.k-on-dark .k-muted {
+  color: var(--on-dark-muted);
+}
+
+.k-on-dark .k-brand__name {
+  color: var(--on-dark);
+}
+
+.k-on-dark .k-brand__name em {
+  color: var(--mint-2);
+}
+
+.k-on-dark .k-brand__tag {
+  color: var(--on-dark-muted);
+}
+
+.k-on-dark .k-eyebrow {
+  /* The bright mint is legible here, and it is the one place it is. */
+  color: var(--mint-2);
+}
+
+.k-on-dark .k-section__count,
+.k-on-dark .k-field__hint {
+  color: var(--on-dark-faint);
+}
+
+/* The supporting row under the attract headline, and the promotion chips on
+   the menu banner. Both are tinted glass over a photograph, so their type is
+   light; on a light panel the same classes stay dark. */
+.k-on-dark .k-perk {
+  color: var(--on-dark-muted);
+}
+
+.k-on-dark .k-promo {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--on-dark);
+}
+
+/* A control inside a dark block keeps its own contract: a mint button still
+   carries dark ink, because its ground is mint and not the photograph. */
+.k-on-dark .k-btn--primary,
+.k-on-dark .k-attract__cta {
+  color: var(--on-accent);
+}
+
+/* ======================================================================
+   Merchandising surfaces: the offer after a dish, the rule under a group,
+   the option that is a photograph, and the call to action that follows the
+   customer down a long configurator.
+   ====================================================================== */
+
+/* --- the featured rail reads as a shop window, not another grid row --- */
+.k-grid--feature {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
+}
+
+/* --- what a group is asking for, in words, under its title ------------ */
+.k-group__rule {
+  margin: -8px 0 16px;
+  color: var(--fg-3);
+  font-size: 15px;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+}
+
+/* --- options with a photograph lay out as cards, not as a list -------- */
+.k-options--visual {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+.k-options--visual .k-option {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--paper-ink);
+}
+
+.k-option__art {
+  display: block;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+.k-option__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The tick floats over the photograph; in a list it keeps its column. */
+.k-options--visual .k-option__box {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+}
+
+.k-options--visual .k-option__name {
+  padding: 12px 14px 0;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.k-options--visual .k-option__price,
+.k-options--visual .k-option__incl {
+  padding: 4px 14px 14px;
+}
+
+.k-options--visual .k-option__incl {
+  color: var(--paper-ink-2);
+}
+
+.k-options--visual .k-option--on {
+  border-color: var(--mint);
+  background: var(--paper);
+  box-shadow: inset 0 0 0 2px var(--mint);
+}
+
+/* --- the add button stays on screen ----------------------------------- */
+.k-sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin: 26px -4px -4px;
+  padding: 16px 4px 4px;
+  background: linear-gradient(180deg, transparent, var(--bg) 34%);
+}
+
+.k-sticky__need {
+  margin: 0 0 10px;
+  color: var(--gold);
+  font-size: 15px;
+  font-weight: 640;
+}
+
+.k-sticky__row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.k-btn--cta {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 74px;
+  padding: 0 28px;
+  font-size: 22px;
+}
+
+.k-btn__amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+/* --- "Completa tu pedido", between the dish and the basket ------------ */
+.k-postadd {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.k-postadd__head {
+  text-align: center;
+}
+
+.k-postadd__added {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 9px 18px;
+  border-radius: var(--r-pill);
+  background: rgba(14, 156, 122, 0.14);
+  color: var(--mint-text);
+  font-size: 16px;
+  font-weight: 680;
+}
+
+.k-postadd__tick {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--green);
+  color: #06281a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.k-postadd__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px;
+}
+
+.k-offer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--paper);
+  color: var(--paper-ink);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--sh-card);
+  transition: transform 140ms var(--ease);
+}
+
+.k-offer:active {
+  transform: scale(0.985);
+}
+
+.k-offer:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.k-offer__art {
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+.k-offer__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.k-offer__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 16px;
+}
+
+.k-offer__name {
+  font-size: 19px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+.k-offer__note {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--paper-ink-2);
+  font-size: 14px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.k-offer__buy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.k-offer__price {
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-offer__add {
+  padding: 8px 14px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: var(--mint-ink);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.k-postadd__foot {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.k-postadd__foot .k-btn {
+  min-width: 240px;
+  justify-content: center;
+}
+
+/* ======================================================================
+   Admin. The same light surfaces as the kiosko, with the controls sized
+   for somebody standing at the machine rather than sitting at a desk.
+   ====================================================================== */
+
+/* The way in: present, not hidden behind a gesture, and quiet enough that a
+   customer's eye goes to the food instead. */
+.k-admin-key {
+  position: absolute;
+  right: 22px;
+  bottom: 20px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 640;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.k-admin-key:active {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.k-admin {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.k-admin__bar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 34px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.k-admin__body {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 40px 34px 56px;
+}
+
+.k-admin__head {
+  margin-bottom: 26px;
+}
+
+.k-admin__warn {
+  margin-bottom: 22px;
+  padding: 16px 20px;
+  border: 1px solid var(--mint-line);
+  border-radius: var(--r-md);
+  background: var(--mint-soft);
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.k-panel {
+  padding: 30px 32px 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--sh-card);
+}
+
+.k-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.k-state {
+  margin-left: auto;
+  padding: 8px 15px;
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.k-state--ok {
+  background: var(--mint-soft);
+  color: var(--mint-text);
+}
+
+.k-state--idle {
+  background: var(--surface-2);
+  color: var(--fg-2);
+}
+
+.k-state--bad {
+  background: var(--red-soft);
+  color: #8e2730;
+}
+
+.k-field {
+  display: block;
+  margin-bottom: 24px;
+}
+
+.k-field__label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 17px;
+  font-weight: 680;
+  color: var(--fg);
+}
+
+.k-field__hint {
+  display: block;
+  margin-top: 7px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--fg-2);
+}
+
+/* A checkbox with its label as one target, because fingers are not mice. */
+.k-field--switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.k-field--switch input {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--mint-deep);
+  cursor: pointer;
+}
+
+.k-field--switch .k-field__label {
+  margin-bottom: 2px;
+}
+
+.k-select {
+  width: 100%;
+  min-height: 62px;
+  padding: 0 46px 0 18px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background-color: var(--surface);
+  /* A caret drawn in the token colour, so no icon font is needed. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-2) 50%),
+    linear-gradient(135deg, var(--fg-2) 50%, transparent 50%);
+  background-position: calc(100% - 25px) 27px, calc(100% - 18px) 27px;
+  background-size: 7px 7px, 7px 7px;
+  background-repeat: no-repeat;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 620;
+  appearance: none;
+  cursor: pointer;
+}
+
+.k-select:focus-visible {
+  outline: 3px solid var(--mint);
+  outline-offset: 2px;
+}
+
+.k-select:disabled {
+  background-color: var(--surface-2);
+  color: var(--fg-3);
+  cursor: default;
+}
+
+.k-panel__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 30px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.k-admin__note {
+  margin: 20px 0 0;
+  padding: 14px 18px;
+  border-radius: var(--r-md);
+  background: var(--mint-soft);
+  color: var(--mint-text);
+  font-size: 16px;
+  font-weight: 620;
+}
+
+.k-admin__note--bad {
+  background: var(--red-soft);
+  color: #8e2730;
+}
+
+.k-admin__driver {
+  margin: 22px 0 0;
+  color: var(--fg-3);
+  font-size: 14px;
+}
+
+.k-admin__driver code {
+  font-size: 13.5px;
+  color: var(--fg-2);
+}

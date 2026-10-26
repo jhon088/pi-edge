@@ -7,6 +7,7 @@
 //! Every mutating use case runs inside a single store transaction, so the
 //! aggregate, its journal event and its outbox event commit atomically.
 
+pub mod asset_service;
 pub mod cash_service;
 pub mod catalog_service;
 pub mod commands;
@@ -16,6 +17,7 @@ pub(crate) mod context;
 pub mod error;
 pub mod hardware_service;
 pub mod inventory_service;
+pub mod kiosk_service;
 pub mod payment_service;
 pub mod ports;
 pub mod queries;
@@ -28,6 +30,7 @@ pub mod sync_service;
 pub mod testing;
 
 pub use error::AppError;
+pub use kiosk_service::order_code;
 pub use payment_service::PaymentOutcome;
 pub use ports::{
     CashUnitOfWork, Clock, DeviceProfile, EdgeStore, IdFactory, InventoryUnitOfWork,

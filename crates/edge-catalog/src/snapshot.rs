@@ -74,6 +74,21 @@ pub struct SnapshotCounts {
     pub price_entries: i64,
     pub barcodes: i64,
     pub promotions: i64,
+    /// Universal catalog extensions (ADR 044). A Retail catalog declares zero
+    /// of each, which is why they default to zero and why an old producer that
+    /// does not know about them still commits.
+    #[serde(default)]
+    pub channels: i64,
+    #[serde(default)]
+    pub categories: i64,
+    #[serde(default)]
+    pub presentation: i64,
+    #[serde(default)]
+    pub selection_groups: i64,
+    #[serde(default)]
+    pub selection_options: i64,
+    #[serde(default)]
+    pub availability: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +253,20 @@ impl CatalogSnapshot {
             ),
             ("barcodes", expected.barcodes, stored.barcodes),
             ("promotions", expected.promotions, stored.promotions),
+            ("channels", expected.channels, stored.channels),
+            ("categories", expected.categories, stored.categories),
+            ("presentation", expected.presentation, stored.presentation),
+            (
+                "selection groups",
+                expected.selection_groups,
+                stored.selection_groups,
+            ),
+            (
+                "selection options",
+                expected.selection_options,
+                stored.selection_options,
+            ),
+            ("availability", expected.availability, stored.availability),
         ] {
             if expected != stored {
                 return Err(CatalogError::CountMismatch {
@@ -333,6 +362,7 @@ mod tests {
                 price_entries: 2,
                 barcodes: 3,
                 promotions: 1,
+                ..SnapshotCounts::default()
             },
             imported_at: ts(1),
         })
@@ -390,6 +420,7 @@ mod tests {
             price_entries: 2,
             barcodes: 3,
             promotions: 1,
+            ..SnapshotCounts::default()
         };
         assert!(snapshot.verify_counts(stored).is_ok());
         assert!(matches!(

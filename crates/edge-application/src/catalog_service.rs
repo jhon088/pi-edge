@@ -17,8 +17,9 @@
 
 use edge_catalog::promotions::PromotionRule;
 use edge_catalog::{
-    resolve_price, CatalogError, CatalogSnapshot, CatalogSnapshotStatus, NewCatalogSnapshot,
-    PricingContext, ProductSelector,
+    resolve_price, validate_availability_targets, validate_channels, validate_selection_structure,
+    CatalogError, CatalogSnapshot, CatalogSnapshotStatus, NewCatalogSnapshot, PricingContext,
+    ProductSelector, SnapshotCounts,
 };
 use edge_domain::prelude::*;
 use serde_json::json;
@@ -131,6 +132,29 @@ where
                     }
                     .into());
                 }
+                // The header's own extensions are declared and counted here;
+                // the bulk ones are counted per chunk and verified at commit.
+                if i64::try_from(cmd.channels.len()).unwrap_or(i64::MAX) != cmd.expected.channels {
+                    return Err(CatalogError::CountMismatch {
+                        what: "channels",
+                        expected: cmd.expected.channels,
+                        stored: i64::try_from(cmd.channels.len()).unwrap_or(i64::MAX),
+                    }
+                    .into());
+                }
+                if i64::try_from(cmd.categories.len()).unwrap_or(i64::MAX)
+                    != cmd.expected.categories
+                {
+                    return Err(CatalogError::CountMismatch {
+                        what: "categories",
+                        expected: cmd.expected.categories,
+                        stored: i64::try_from(cmd.categories.len()).unwrap_or(i64::MAX),
+                    }
+                    .into());
+                }
+                // Duplicate channels are refused before anything is written,
+                // so the header is never half stored.
+                validate_channels(&cmd.channels, &[])?;
 
                 let snapshot = CatalogSnapshot::begin_import(NewCatalogSnapshot {
                     snapshot_id,
@@ -146,6 +170,8 @@ where
                 uow.insert_catalog_snapshot(&snapshot, now)?;
                 uow.insert_catalog_tax_profiles(snapshot.id(), &cmd.tax_profiles)?;
                 uow.insert_catalog_price_books(snapshot.id(), &cmd.price_books)?;
+                uow.insert_catalog_channels(snapshot.id(), &cmd.channels)?;
+                uow.insert_catalog_categories(snapshot.id(), &cmd.categories)?;
                 let progress = uow.catalog_import_progress(&snapshot)?;
                 Ok(CatalogImportStatus { snapshot, progress })
             })
@@ -268,6 +294,15 @@ where
             uow.insert_catalog_price_entries(cmd.snapshot_id, &cmd.price_entries)?;
             uow.insert_catalog_barcodes(cmd.snapshot_id, &cmd.barcodes)?;
             uow.insert_catalog_promotions(cmd.snapshot_id, &cmd.promotions)?;
+            // Order matters: presentation and selection content reference the
+            // products this chunk just stored, and an option references its
+            // group. A group owned by an option is the one reference that may
+            // point outside the chunk, which is why the owner chain is
+            // validated at commit instead.
+            uow.insert_catalog_presentation(cmd.snapshot_id, &cmd.presentation)?;
+            uow.insert_catalog_selection_groups(cmd.snapshot_id, &cmd.selection_groups)?;
+            uow.insert_catalog_selection_options(cmd.snapshot_id, &cmd.selection_options)?;
+            uow.insert_catalog_availability(cmd.snapshot_id, &cmd.availability)?;
             uow.record_catalog_chunk(
                 cmd.snapshot_id,
                 &StoredChunk {
@@ -277,6 +312,12 @@ where
                     price_entry_count: i64::try_from(cmd.price_entries.len()).unwrap_or(i64::MAX),
                     barcode_count: i64::try_from(cmd.barcodes.len()).unwrap_or(i64::MAX),
                     promotion_count: i64::try_from(cmd.promotions.len()).unwrap_or(i64::MAX),
+                    presentation_count: i64::try_from(cmd.presentation.len()).unwrap_or(i64::MAX),
+                    selection_group_count: i64::try_from(cmd.selection_groups.len())
+                        .unwrap_or(i64::MAX),
+                    selection_option_count: i64::try_from(cmd.selection_options.len())
+                        .unwrap_or(i64::MAX),
+                    availability_count: i64::try_from(cmd.availability.len()).unwrap_or(i64::MAX),
                 },
                 now,
             )?;
@@ -312,6 +353,7 @@ where
                     return Err(CatalogError::MissingChunk { index: received }.into());
                 }
                 snapshot.verify_counts(progress.stored)?;
+                verify_catalog_structure(uow, cmd.snapshot_id, progress.stored)?;
 
                 // The hash the core trusts is the one it computes from its own
                 // rows, in canonical order.
@@ -385,7 +427,7 @@ where
         let now = self.clock.now();
         let event_id = EventId::from_uuid(self.ids.new_uuid());
 
-        let view = self.store().transact(move |uow| {
+        let view = self.store().transact(|uow| {
             idempotent(uow, cmd.request_id, "ActivateCatalogSnapshot", now, |uow| {
                 let device = require_device(uow)?;
                 let mut snapshot = load_snapshot(uow, cmd.snapshot_id)?;
@@ -395,6 +437,15 @@ where
                     let stored = uow.catalog_stored_counts(cmd.snapshot_id)?;
                     return Ok(CatalogSnapshotView { snapshot, stored });
                 }
+
+                // **Before anything is dismounted.** A snapshot that
+                // references bytes this installation does not have, or has
+                // wrong, never becomes the catalog that draws a menu — and the
+                // one already in force keeps selling (ADR 045).
+                //
+                // Inside the transaction on purpose: there is then no instant
+                // between "the assets are there" and "this is the catalog".
+                self.require_assets_ready(uow, cmd.snapshot_id)?;
 
                 let superseded = match uow.find_active_catalog_snapshot(&device.store_id)? {
                     Some(mut current) => {
@@ -562,6 +613,69 @@ fn load_snapshot(
             snapshot_id: snapshot_id.to_string(),
         })
     })
+}
+
+/// Structural checks that only a complete snapshot can answer (ADR 044).
+///
+/// A chunk cannot decide these on its own: a selection group may hang from an
+/// option delivered in another chunk, an availability row may name a product
+/// that arrives later, and a cycle can be closed by the last chunk of all.
+/// Foreign keys catch what is local; this catches the rest, and it runs before
+/// the snapshot is marked `PENDING`, so an invalid structure never becomes
+/// usable.
+///
+/// Costs nothing for a Retail catalog: with no extensions stored there is
+/// nothing to load and the function returns immediately.
+fn verify_catalog_structure(
+    uow: &mut dyn UnitOfWork,
+    snapshot_id: CatalogSnapshotId,
+    stored: SnapshotCounts,
+) -> Result<(), AppError> {
+    if stored.channels == 0
+        && stored.categories == 0
+        && stored.presentation == 0
+        && stored.selection_groups == 0
+        && stored.selection_options == 0
+        && stored.availability == 0
+    {
+        return Ok(());
+    }
+
+    let channels = uow.list_catalog_channels(snapshot_id)?;
+    let availability = uow.list_catalog_availability(snapshot_id)?;
+    validate_channels(&channels, &availability)?;
+
+    let groups = uow.list_catalog_selection_groups(snapshot_id)?;
+    let options = uow.list_catalog_selection_options(snapshot_id)?;
+    // Only the product references the extensions actually name: validating a
+    // menu must not load a catalog.
+    let products = uow.list_catalog_extension_product_refs(snapshot_id)?;
+    validate_selection_structure(&groups, &options, &products)?;
+
+    // One hash is one set of bytes, so one size and one media type. A
+    // snapshot that says otherwise has no answer to "how big is this asset?",
+    // and its manifest would be ambiguous (ADR 045).
+    let assets = uow.list_catalog_required_assets(snapshot_id)?;
+    for pair in assets.windows(2) {
+        if pair[0].content_hash == pair[1].content_hash {
+            return Err(CatalogError::ConflictingAssetDeclaration {
+                content_hash: pair[0].content_hash.clone(),
+            }
+            .into());
+        }
+    }
+
+    let categories: Vec<CategoryRef> = uow
+        .list_catalog_categories(snapshot_id)?
+        .into_iter()
+        .map(|category| category.category_ref)
+        .collect();
+    let option_ids: Vec<SelectionOptionId> = options
+        .iter()
+        .map(|option| option.option_id.clone())
+        .collect();
+    validate_availability_targets(&availability, &products, &categories, &option_ids)?;
+    Ok(())
 }
 
 /// The money a rule carries, so the import can check it against the snapshot's

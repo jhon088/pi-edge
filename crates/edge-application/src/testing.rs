@@ -70,9 +70,10 @@ impl IdFactory for SequentialIdFactory {
 use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::product::NewCatalogProduct;
 use edge_catalog::{
-    hash_chunk, hash_snapshot, Barcode, CatalogBarcode, CatalogProduct, Currency, Money, PriceBook,
-    PriceEntry, PriceMode, ProductRef, Promotion, SnapshotContent, StoreId, TaxProfile,
-    TaxProfileCode, TaxRate,
+    hash_chunk, hash_snapshot, Barcode, CatalogBarcode, CatalogProduct, Category, Channel,
+    ChannelAvailability, ChunkContent, Currency, Money, PriceBook, PriceEntry, PriceMode,
+    ProductPresentation, ProductRef, Promotion, SelectionGroup, SelectionOption, SnapshotContent,
+    StoreId, TaxProfile, TaxProfileCode, TaxRate,
 };
 use edge_domain::prelude::{CatalogSnapshotId, PriceBookId};
 
@@ -215,6 +216,14 @@ pub struct CatalogFixture {
     pub books: Vec<PriceBook>,
     pub products: Vec<FixtureProduct>,
     pub promotions: Vec<Promotion>,
+    /// Universal catalog extensions (ADR 044). Empty by default, which is the
+    /// Retail catalog every earlier milestone's tests build.
+    pub channels: Vec<Channel>,
+    pub categories: Vec<Category>,
+    pub presentation: Vec<ProductPresentation>,
+    pub selection_groups: Vec<SelectionGroup>,
+    pub selection_options: Vec<SelectionOption>,
+    pub availability: Vec<ChannelAvailability>,
 }
 
 #[allow(clippy::expect_used)]
@@ -259,6 +268,12 @@ impl CatalogFixture {
             books: vec![book(BASE_BOOK, PriceBookScope::Tenant, 0)],
             products: Vec::new(),
             promotions: Vec::new(),
+            channels: Vec::new(),
+            categories: Vec::new(),
+            presentation: Vec::new(),
+            selection_groups: Vec::new(),
+            selection_options: Vec::new(),
+            availability: Vec::new(),
         }
     }
 
@@ -280,6 +295,35 @@ impl CatalogFixture {
     /// Add a promotion, built the way the snapshot would carry it.
     pub fn promoting(mut self, promotion: Promotion) -> Self {
         self.promotions.push(promotion);
+        self
+    }
+
+    /// Declare a way of selling (ADR 044).
+    pub fn with_channel(mut self, channel: Channel) -> Self {
+        self.channels.push(channel);
+        self
+    }
+
+    pub fn with_category(mut self, category: Category) -> Self {
+        self.categories.push(category);
+        self
+    }
+
+    pub fn with_presentation(mut self, presentation: ProductPresentation) -> Self {
+        self.presentation.push(presentation);
+        self
+    }
+
+    /// Add one question and its answers in one call: in a real menu a group
+    /// never travels without its options.
+    pub fn with_selection(mut self, group: SelectionGroup, options: Vec<SelectionOption>) -> Self {
+        self.selection_groups.push(group);
+        self.selection_options.extend(options);
+        self
+    }
+
+    pub fn with_availability(mut self, row: ChannelAvailability) -> Self {
+        self.availability.push(row);
         self
     }
 
@@ -356,13 +400,62 @@ impl CatalogFixture {
         prices: usize,
         barcodes: usize,
     ) -> edge_catalog::SnapshotCounts {
+        let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
         edge_catalog::SnapshotCounts {
-            promotions: i64::try_from(self.promotions.len()).unwrap_or(i64::MAX),
-            tax_profiles: i64::try_from(self.profiles.len()).unwrap_or(i64::MAX),
-            price_books: i64::try_from(self.books.len()).unwrap_or(i64::MAX),
-            products: i64::try_from(products).unwrap_or(i64::MAX),
-            price_entries: i64::try_from(prices).unwrap_or(i64::MAX),
-            barcodes: i64::try_from(barcodes).unwrap_or(i64::MAX),
+            promotions: count(self.promotions.len()),
+            tax_profiles: count(self.profiles.len()),
+            price_books: count(self.books.len()),
+            products: count(products),
+            price_entries: count(prices),
+            barcodes: count(barcodes),
+            channels: count(self.channels.len()),
+            categories: count(self.categories.len()),
+            presentation: count(self.presentation.len()),
+            selection_groups: count(self.selection_groups.len()),
+            selection_options: count(self.selection_options.len()),
+            availability: count(self.availability.len()),
+        }
+    }
+
+    /// Everything one chunk carries, for the chunk hash.
+    fn chunk<'a>(
+        &'a self,
+        products: &'a [CatalogProduct],
+        price_entries: &'a [PriceEntry],
+        barcodes: &'a [CatalogBarcode],
+    ) -> ChunkContent<'a> {
+        ChunkContent {
+            products,
+            price_entries,
+            barcodes,
+            promotions: &self.promotions,
+            presentation: &self.presentation,
+            selection_groups: &self.selection_groups,
+            selection_options: &self.selection_options,
+            availability: &self.availability,
+        }
+    }
+
+    /// Everything the snapshot contains, for the declared content hash.
+    fn content<'a>(
+        &'a self,
+        products: &'a [CatalogProduct],
+        price_entries: &'a [PriceEntry],
+        barcodes: &'a [CatalogBarcode],
+    ) -> SnapshotContent<'a> {
+        SnapshotContent {
+            tax_profiles: &self.profiles,
+            price_books: &self.books,
+            products,
+            price_entries,
+            barcodes,
+            promotions: &self.promotions,
+            channels: &self.channels,
+            categories: &self.categories,
+            presentation: &self.presentation,
+            selection_groups: &self.selection_groups,
+            selection_options: &self.selection_options,
+            availability: &self.availability,
         }
     }
 
@@ -381,19 +474,18 @@ impl CatalogFixture {
             request_id: None,
             version: self.version,
             currency: self.currency,
-            declared_content_hash: hash_snapshot(SnapshotContent {
-                tax_profiles: &self.profiles,
-                price_books: &self.books,
-                products: &products,
-                price_entries: &price_entries,
-                barcodes: &barcodes,
-                promotions: &self.promotions,
-            }),
+            declared_content_hash: hash_snapshot(self.content(
+                &products,
+                &price_entries,
+                &barcodes,
+            )),
             generated_at: self.generated_at,
             effective_at: None,
             expected: self.counts(products.len(), price_entries.len(), barcodes.len()),
             tax_profiles: self.profiles.clone(),
             price_books: self.books.clone(),
+            channels: self.channels.clone(),
+            categories: self.categories.clone(),
         })?;
         let snapshot_id = opened.snapshot.id();
         // Identical content that is already committed needs no chunks.
@@ -401,11 +493,15 @@ impl CatalogFixture {
             app.put_catalog_chunk(PutCatalogChunkCommand {
                 snapshot_id,
                 chunk_index: 0,
-                chunk_hash: hash_chunk(&products, &price_entries, &barcodes, &self.promotions),
+                chunk_hash: hash_chunk(self.chunk(&products, &price_entries, &barcodes)),
                 products,
                 price_entries,
                 barcodes,
                 promotions: self.promotions.clone(),
+                presentation: self.presentation.clone(),
+                selection_groups: self.selection_groups.clone(),
+                selection_options: self.selection_options.clone(),
+                availability: self.availability.clone(),
             })?;
         }
         app.commit_catalog_import(CommitCatalogImportCommand {
@@ -432,28 +528,31 @@ impl CatalogFixture {
         let begin = InboundCatalogBegin {
             version: self.version,
             currency: self.currency,
-            declared_content_hash: hash_snapshot(SnapshotContent {
-                tax_profiles: &self.profiles,
-                price_books: &self.books,
-                products: &products,
-                price_entries: &price_entries,
-                barcodes: &barcodes,
-                promotions: &self.promotions,
-            }),
+            declared_content_hash: hash_snapshot(self.content(
+                &products,
+                &price_entries,
+                &barcodes,
+            )),
             generated_at: self.generated_at,
             effective_at: None,
             expected: self.counts(products.len(), price_entries.len(), barcodes.len()),
             tax_profiles: self.profiles.clone(),
             price_books: self.books.clone(),
+            channels: self.channels.clone(),
+            categories: self.categories.clone(),
         };
         let chunk = InboundCatalogChunk {
             version: self.version,
             chunk_index: 0,
-            chunk_hash: hash_chunk(&products, &price_entries, &barcodes, &self.promotions),
+            chunk_hash: hash_chunk(self.chunk(&products, &price_entries, &barcodes)),
             products,
             price_entries,
             barcodes,
             promotions: self.promotions.clone(),
+            presentation: self.presentation.clone(),
+            selection_groups: self.selection_groups.clone(),
+            selection_options: self.selection_options.clone(),
+            availability: self.availability.clone(),
         };
         let commit = InboundCatalogCommit {
             version: self.version,

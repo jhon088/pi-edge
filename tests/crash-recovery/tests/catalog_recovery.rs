@@ -33,6 +33,8 @@ fn snapshot_product_resolution_and_totals_survive_a_restart() {
                 edge_catalog::Barcode::new(BARCODE).unwrap(),
             ),
             quantity: edge_domain::prelude::Quantity::from_units(2).unwrap(),
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .unwrap();
         core.totalize_transaction(TotalizeTransactionCommand::default())
@@ -82,6 +84,8 @@ fn snapshot_product_resolution_and_totals_survive_a_restart() {
             request_id: None,
             selector: edge_catalog::ProductSelector::Sku("SKU-X".to_owned()),
             quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .unwrap();
     assert_eq!(continued.state().lines[1].unit_price.minor(), 12_345);
@@ -105,6 +109,8 @@ fn a_sale_keeps_its_snapshot_even_if_a_newer_one_is_activated_after_the_restart(
                 edge_catalog::Barcode::new(BARCODE).unwrap(),
             ),
             quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .unwrap();
         sale.pricing().unwrap()
@@ -123,6 +129,8 @@ fn a_sale_keeps_its_snapshot_even_if_a_newer_one_is_activated_after_the_restart(
                 edge_catalog::Barcode::new(BARCODE).unwrap(),
             ),
             quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .unwrap();
     assert!(continued
@@ -165,6 +173,8 @@ fn a_scheduled_price_change_cannot_move_an_open_sale() {
                     edge_catalog::Barcode::new(BARCODE).unwrap(),
                 ),
                 quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+                selections: Vec::new(),
+                preparation_note: None,
             })
             .unwrap();
         assert_eq!(transaction.state().lines[0].unit_price.minor(), 10_000);
@@ -186,6 +196,8 @@ fn a_scheduled_price_change_cannot_move_an_open_sale() {
                 edge_catalog::Barcode::new(BARCODE).unwrap(),
             ),
             quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .unwrap();
     assert!(
@@ -217,6 +229,8 @@ fn a_scheduled_price_change_cannot_move_an_open_sale() {
                 edge_catalog::Barcode::new(BARCODE).unwrap(),
             ),
             quantity: edge_domain::prelude::Quantity::from_units(1).unwrap(),
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .unwrap();
     assert_eq!(priced.state().lines[0].unit_price.minor(), 12_000);
@@ -310,5 +324,7 @@ fn scan_x(units: i64) -> AddItemCommand {
             edge_catalog::Barcode::new(BARCODE).unwrap(),
         ),
         quantity: edge_domain::prelude::Quantity::from_units(units).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     }
 }

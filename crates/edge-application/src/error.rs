@@ -3,6 +3,7 @@
 //! Cross-aggregate invariants get their own variant so that clients (CLI, UI,
 //! future daemon) can react programmatically instead of matching on strings.
 
+use edge_assets::AssetError;
 use edge_cash::CashError;
 use edge_catalog::CatalogError;
 use edge_domain::prelude::DomainError;
@@ -36,6 +37,12 @@ pub enum AppError {
     #[error(transparent)]
     Hardware(#[from] HardwareError),
 
+    /// The local asset store refused, or has nothing. Never a commercial
+    /// failure either — but it **does** stop a snapshot that needs the missing
+    /// bytes from being activated, which is the whole point (ADR 045).
+    #[error(transparent)]
+    Asset(#[from] AssetError),
+
     /// Sync could not happen. **Never a commercial failure**: an absent,
     /// unreachable or unreadable server changes nothing about what this
     /// installation may sell (ADR 040).
@@ -52,6 +59,20 @@ pub enum AppError {
 
     #[error("the business day cannot close yet: {}", blockers.join(", "))]
     BusinessDayCloseBlocked { blockers: Vec<String> },
+
+    /// A snapshot cannot be put in force because the bytes it references are
+    /// not here, or are not what it says they are.
+    ///
+    /// **One code for the whole condition**, so a client reacts by fetching
+    /// the snapshot's asset manifest rather than by parsing a message. The
+    /// previously active catalog is untouched: nothing is ever dismounted
+    /// before the replacement is known to be complete (ADR 045).
+    #[error("snapshot `{snapshot_id}` still needs {pending} asset(s): {detail}")]
+    CatalogAssetsNotReady {
+        snapshot_id: String,
+        pending: usize,
+        detail: String,
+    },
 
     #[error("storage failure: {0}")]
     Storage(String),
@@ -157,10 +178,13 @@ impl AppError {
             AppError::Refund(error) => error.code(),
             // The hardware context publishes its own codes.
             AppError::Hardware(error) => error.code(),
+            // The asset runtime publishes its own codes.
+            AppError::Asset(error) => error.code(),
             AppError::Sync(error) => error.code(),
             AppError::ScanWithoutTransaction => "SCAN_NO_ACTIVE_TRANSACTION",
             AppError::SessionCloseBlocked { .. } => "SESSION_CLOSE_BLOCKED",
             AppError::BusinessDayCloseBlocked { .. } => "BUSINESS_DAY_CLOSE_BLOCKED",
+            AppError::CatalogAssetsNotReady { .. } => "CATALOG_ASSET_NOT_READY",
             AppError::Storage(_) => "STORAGE_FAILURE",
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
             AppError::Serialization(_) => "SERIALIZATION_FAILURE",

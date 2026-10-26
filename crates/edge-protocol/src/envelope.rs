@@ -123,6 +123,11 @@ pub enum OperationV1 {
     GetHardwareStatus,
     SubmitScan(SubmitScanRequestV1),
     PrintTestPage,
+    /// What receipt printer this installation is configured to drive, and
+    /// what models and host queues it could be pointed at.
+    GetPrinterSettings,
+    /// Point it at a different one. Device configuration, never a sale.
+    SetPrinterSettings(PrinterSettingsV1),
     PrintTransaction(PrintTransactionRequestV1),
     OpenDrawerDiagnostic,
     GetRefundEligibility(TransactionRequestV1),
@@ -154,11 +159,33 @@ pub enum OperationV1 {
     RunSyncCycle,
 
     // catalog import: open, stream, close, put in force
-    BeginCatalogImport(BeginCatalogImportRequestV1),
-    PutCatalogChunk(PutCatalogChunkRequestV1),
+    /// Boxed, like the chunk below: an import header carries the tax
+    /// profiles, price books, channels and categories of a whole snapshot.
+    BeginCatalogImport(Box<BeginCatalogImportRequestV1>),
+    /// Boxed: a chunk carries bulk catalog content and is by far the largest
+    /// thing a client sends, so every other operation would otherwise pay for
+    /// its size. `Box<T>` serializes exactly as `T`, so the wire is unchanged.
+    PutCatalogChunk(Box<PutCatalogChunkRequestV1>),
     CommitCatalogImport(CommitCatalogImportRequestV1),
     AbortCatalogImport(CatalogSnapshotRequestV1),
     ActivateCatalogSnapshot(CatalogSnapshotRequestV1),
+
+    // local asset runtime: what a snapshot needs, and the bytes for it
+    /// What one snapshot references and what of it is here. A client calls
+    /// this to learn what to send, and after a refused activation to learn
+    /// why (ADR 045).
+    GetSnapshotAssets(SnapshotAssetsRequestV1),
+    GetAssetStatus(AssetRequestV1),
+    /// Stream part of an asset's bytes. The read half of the asset runtime,
+    /// so a kiosk draws a photo with no network and no path (ADR 045).
+    ReadAsset(AssetReadRequestV1),
+    /// The menu in force, for one way of selling.
+    GetMenu(MenuRequestV1),
+    /// The questions one product asks, each answer with its own price.
+    GetProductConfiguration(ProductConfigurationRequestV1),
+    /// Boxed: a chunk is bulk bytes, like a catalog chunk.
+    PutAssetChunk(Box<AssetChunkRequestV1>),
+    CommitAsset(AssetRequestV1),
 }
 
 impl OperationV1 {
@@ -196,6 +223,8 @@ impl OperationV1 {
             OperationV1::GetHardwareStatus => "GET_HARDWARE_STATUS",
             OperationV1::SubmitScan(_) => "SUBMIT_SCAN",
             OperationV1::PrintTestPage => "PRINT_TEST_PAGE",
+            OperationV1::GetPrinterSettings => "GET_PRINTER_SETTINGS",
+            OperationV1::SetPrinterSettings(_) => "SET_PRINTER_SETTINGS",
             OperationV1::PrintTransaction(_) => "PRINT_TRANSACTION",
             OperationV1::OpenDrawerDiagnostic => "OPEN_DRAWER_DIAGNOSTIC",
             OperationV1::GetRefundEligibility(_) => "GET_REFUND_ELIGIBILITY",
@@ -225,6 +254,13 @@ impl OperationV1 {
             OperationV1::CommitCatalogImport(_) => "COMMIT_CATALOG_IMPORT",
             OperationV1::AbortCatalogImport(_) => "ABORT_CATALOG_IMPORT",
             OperationV1::ActivateCatalogSnapshot(_) => "ACTIVATE_CATALOG_SNAPSHOT",
+            OperationV1::GetSnapshotAssets(_) => "GET_SNAPSHOT_ASSETS",
+            OperationV1::GetAssetStatus(_) => "GET_ASSET_STATUS",
+            OperationV1::ReadAsset(_) => "READ_ASSET",
+            OperationV1::GetMenu(_) => "GET_MENU",
+            OperationV1::GetProductConfiguration(_) => "GET_PRODUCT_CONFIGURATION",
+            OperationV1::PutAssetChunk(_) => "PUT_ASSET_CHUNK",
+            OperationV1::CommitAsset(_) => "COMMIT_ASSET",
         }
     }
 
@@ -248,6 +284,7 @@ impl OperationV1 {
                 | OperationV1::FinalizeTransaction
                 | OperationV1::SubmitScan(_)
                 | OperationV1::PrintTestPage
+                | OperationV1::SetPrinterSettings(_)
                 | OperationV1::PrintTransaction(_)
                 | OperationV1::OpenDrawerDiagnostic
                 | OperationV1::CreateRefund(_)
@@ -272,6 +309,8 @@ impl OperationV1 {
                 | OperationV1::CommitCatalogImport(_)
                 | OperationV1::AbortCatalogImport(_)
                 | OperationV1::ActivateCatalogSnapshot(_)
+                | OperationV1::PutAssetChunk(_)
+                | OperationV1::CommitAsset(_)
         )
     }
 }
@@ -364,6 +403,8 @@ pub enum ResultV1 {
     Payment(PaymentResultV1),
     TransactionPayments(TransactionPaymentsV1),
     CashPosition(CashPositionV1),
+    /// What receipt printer this installation drives, and what it could.
+    PrinterConfiguration(PrinterConfigurationV1),
     SafeDrop(SafeDropV1),
     SessionCloseRequirements(SessionCloseRequirementsV1),
     SessionCloseResult(SessionCloseResultV1),
@@ -374,6 +415,11 @@ pub enum ResultV1 {
     Refund(RefundV1),
     Refunds(Vec<RefundV1>),
     HardwareStatus(HardwareStatusV1),
+    AssetStatus(AssetStatusV1),
+    SnapshotAssets(SnapshotAssetsV1),
+    AssetChunk(AssetChunkV1),
+    Menu(MenuV1),
+    ProductConfiguration(ProductConfigurationV1),
 }
 
 impl ResultV1 {
@@ -401,6 +447,7 @@ impl ResultV1 {
             ResultV1::Payment(_) => "PAYMENT",
             ResultV1::TransactionPayments(_) => "TRANSACTION_PAYMENTS",
             ResultV1::CashPosition(_) => "CASH_POSITION",
+            ResultV1::PrinterConfiguration(_) => "PRINTER_CONFIGURATION",
             ResultV1::SafeDrop(_) => "SAFE_DROP",
             ResultV1::SessionCloseRequirements(_) => "SESSION_CLOSE_REQUIREMENTS",
             ResultV1::SessionCloseResult(_) => "SESSION_CLOSE_RESULT",
@@ -411,6 +458,11 @@ impl ResultV1 {
             ResultV1::Refund(_) => "REFUND",
             ResultV1::Refunds(_) => "REFUNDS",
             ResultV1::HardwareStatus(_) => "HARDWARE_STATUS",
+            ResultV1::AssetStatus(_) => "ASSET_STATUS",
+            ResultV1::SnapshotAssets(_) => "SNAPSHOT_ASSETS",
+            ResultV1::AssetChunk(_) => "ASSET_CHUNK",
+            ResultV1::Menu(_) => "MENU",
+            ResultV1::ProductConfiguration(_) => "PRODUCT_CONFIGURATION",
         }
     }
 }
@@ -564,6 +616,8 @@ mod tests {
             OperationV1::AddItem(AddItemRequestV1 {
                 product: ProductSelectorV1::Barcode("750\n123".to_owned()),
                 quantity_thousandths: 1_000,
+                selections: Vec::new(),
+                preparation_note: None,
             }),
         );
         let json = serde_json::to_string(&envelope).unwrap();
@@ -576,16 +630,24 @@ mod tests {
         assert!(OperationV1::AddItem(AddItemRequestV1 {
             product: ProductSelectorV1::Sku("SKU-1".to_owned()),
             quantity_thousandths: 1,
+            selections: Vec::new(),
+            preparation_note: None,
         })
         .is_command());
-        assert!(OperationV1::PutCatalogChunk(PutCatalogChunkRequestV1 {
-            promotions: Vec::new(),
-            snapshot_id: "s".to_owned(),
-            chunk_index: 0,
-            chunk_hash: "h".to_owned(),
-            products: Vec::new(),
-        })
-        .is_command());
+        assert!(
+            OperationV1::PutCatalogChunk(Box::new(PutCatalogChunkRequestV1 {
+                promotions: Vec::new(),
+                snapshot_id: "s".to_owned(),
+                chunk_index: 0,
+                chunk_hash: "h".to_owned(),
+                products: Vec::new(),
+                presentation: Vec::new(),
+                selection_groups: Vec::new(),
+                selection_options: Vec::new(),
+                availability: Vec::new(),
+            }))
+            .is_command()
+        );
         assert!(!OperationV1::GetCatalogStatus.is_command());
         assert!(!OperationV1::GetEdgeState.is_command());
         assert!(!OperationV1::Subscribe.is_command());

@@ -16,6 +16,8 @@ license = "UNLICENSED"
 [workspace.dependencies]
 # Internal crates (strict dependency direction, see docs/ADR/001-headless-core.md)
 edge-cash = { path = "crates/edge-cash" }
+edge-assets = { path = "crates/edge-assets" }
+edge-winspool = { path = "crates/edge-winspool" }
 edge-catalog = { path = "crates/edge-catalog" }
 edge-domain = { path = "crates/edge-domain" }
 edge-hardware = { path = "crates/edge-hardware" }
@@ -32,6 +34,15 @@ edge-sync = { path = "crates/edge-sync" }
 # External
 getrandom = "0.4.3"
 interprocess = "2.4.4"
+# Windows printing only: the spooler API behind `edge-winspool`.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Printing",
+    # PRINTER_INFO_2W carries the queue status, and it is declared behind
+    # these two. Type definitions only; nothing is linked for them.
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+] }
 signal-hook = "0.4.5"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }

@@ -15,6 +15,11 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
+# The Windows spooler API, behind a safe wrapper. Windows-only, and the only
+# reason the workspace contains any FFI at all.
+[target.'cfg(windows)'.dependencies]
+edge-winspool = { workspace = true }
+
 [dev-dependencies]
 # Only the tests build a timeline; the parser itself takes time as a parameter.
 chrono = { workspace = true }

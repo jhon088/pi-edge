@@ -12,14 +12,16 @@
 use std::path::Path;
 
 use edge_catalog::{
-    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceBook, PriceEntry,
-    Promotion, SnapshotContent, TaxProfile,
+    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Category, Channel,
+    ChannelAvailability, ChunkContent, Currency, PriceBook, PriceEntry, ProductPresentation,
+    Promotion, SelectionGroup, SelectionOption, SnapshotContent, TaxProfile,
 };
 use edge_client::{EdgeClient, IpcEdgeClient};
 use edge_protocol::{
-    BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
-    CommitCatalogImportRequestV1, PriceBookV1, PromotionRecordV1, PutCatalogChunkRequestV1,
-    SnapshotCountsV1, TaxProfileV1,
+    BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1, CategoryV1,
+    ChannelAvailabilityV1, ChannelV1, CommitCatalogImportRequestV1, PriceBookV1,
+    ProductPresentationV1, PromotionRecordV1, PutCatalogChunkRequestV1, SelectionGroupV1,
+    SelectionOptionV1, SnapshotCountsV1, TaxProfileV1,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -50,6 +52,20 @@ pub struct CatalogFixture {
     /// Promotions the snapshot carries. PI.Edge never creates one.
     #[serde(default)]
     pub promotions: Vec<PromotionRecordV1>,
+    /// Universal catalog extensions (ADR 044). Absent in a retail snapshot
+    /// file, which is why every one of them defaults.
+    #[serde(default)]
+    pub channels: Vec<ChannelV1>,
+    #[serde(default)]
+    pub categories: Vec<CategoryV1>,
+    #[serde(default)]
+    pub presentation: Vec<ProductPresentationV1>,
+    #[serde(default)]
+    pub selection_groups: Vec<SelectionGroupV1>,
+    #[serde(default)]
+    pub selection_options: Vec<SelectionOptionV1>,
+    #[serde(default)]
+    pub availability: Vec<ChannelAvailabilityV1>,
 }
 
 /// One record with its validated domain form, so hashes and payloads agree.
@@ -128,6 +144,56 @@ pub fn import_catalog(
         .collect::<Result<_, _>>()
         .map_err(|error| CliError::Input(format!("invalid promotion: {error}")))?;
 
+    // The extensions, validated once into their domain form so the hash the
+    // CLI declares is computed from exactly what the core will persist.
+    let convert = |label: &'static str| {
+        move |error: edge_catalog::CatalogError| {
+            CliError::Input(format!("invalid {label}: {error}"))
+        }
+    };
+    let all_channels: Vec<Channel> = fixture
+        .channels
+        .iter()
+        .cloned()
+        .map(ChannelV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(convert("channel"))?;
+    let all_categories: Vec<Category> = fixture
+        .categories
+        .iter()
+        .cloned()
+        .map(CategoryV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(convert("category"))?;
+    let all_presentation: Vec<ProductPresentation> = fixture
+        .presentation
+        .iter()
+        .cloned()
+        .map(ProductPresentationV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(convert("presentation"))?;
+    let all_groups: Vec<SelectionGroup> = fixture
+        .selection_groups
+        .iter()
+        .cloned()
+        .map(SelectionGroupV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(convert("selection group"))?;
+    let all_options: Vec<SelectionOption> = fixture
+        .selection_options
+        .iter()
+        .cloned()
+        .map(SelectionOptionV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(convert("selection option"))?;
+    let all_availability: Vec<ChannelAvailability> = fixture
+        .availability
+        .iter()
+        .cloned()
+        .map(ChannelAvailabilityV1::into_domain)
+        .collect::<Result<_, _>>()
+        .map_err(convert("availability"))?;
+
     let declared_hash = hash_snapshot(SnapshotContent {
         tax_profiles: &profiles,
         price_books: &books,
@@ -135,6 +201,12 @@ pub fn import_catalog(
         price_entries: &all_prices,
         barcodes: &all_barcodes,
         promotions: &all_promotions,
+        channels: &all_channels,
+        categories: &all_categories,
+        presentation: &all_presentation,
+        selection_groups: &all_groups,
+        selection_options: &all_options,
+        availability: &all_availability,
     });
 
     let expected = SnapshotCountsV1 {
@@ -144,6 +216,12 @@ pub fn import_catalog(
         price_entries: i64::try_from(all_prices.len()).unwrap_or(i64::MAX),
         barcodes: i64::try_from(all_barcodes.len()).unwrap_or(i64::MAX),
         promotions: i64::try_from(all_promotions.len()).unwrap_or(i64::MAX),
+        channels: i64::try_from(all_channels.len()).unwrap_or(i64::MAX),
+        categories: i64::try_from(all_categories.len()).unwrap_or(i64::MAX),
+        presentation: i64::try_from(all_presentation.len()).unwrap_or(i64::MAX),
+        selection_groups: i64::try_from(all_groups.len()).unwrap_or(i64::MAX),
+        selection_options: i64::try_from(all_options.len()).unwrap_or(i64::MAX),
+        availability: i64::try_from(all_availability.len()).unwrap_or(i64::MAX),
     };
 
     // Opening an import for content that is already open returns its progress,
@@ -158,6 +236,8 @@ pub fn import_catalog(
             expected,
             tax_profiles: fixture.tax_profiles.clone(),
             price_books: fixture.price_books.clone(),
+            channels: fixture.channels.clone(),
+            categories: fixture.categories.clone(),
         },
         None,
     )?;
@@ -172,6 +252,11 @@ pub fn import_catalog(
     let promotion_chunk = assign_promotions(&chunks, &fixture.promotions, &all_promotions);
     let mut chunks_sent = 0;
     let mut chunks_skipped = 0;
+    // Presentation, selections and availability reference products, so they
+    // ride in the last chunk: by then every product is stored and no reference
+    // can dangle. Scheduling them per product would buy nothing — the core
+    // validates the whole structure at commit either way.
+    let last_chunk = chunks.len().saturating_sub(1);
     for (index, chunk) in chunks.iter().enumerate() {
         if !import_is_open {
             chunks_skipped += 1;
@@ -197,16 +282,58 @@ pub fn import_catalog(
             .filter(|(assigned, _, _)| *assigned == index)
             .map(|(_, promotion, _)| promotion.clone())
             .collect();
+        let tail = index == last_chunk;
+        let empty_presentation: Vec<ProductPresentation> = Vec::new();
+        let empty_groups: Vec<SelectionGroup> = Vec::new();
+        let empty_options: Vec<SelectionOption> = Vec::new();
+        let empty_availability: Vec<ChannelAvailability> = Vec::new();
         client.put_catalog_chunk(PutCatalogChunkRequestV1 {
             snapshot_id: snapshot_id.clone(),
             chunk_index,
-            chunk_hash: hash_chunk(&products, &prices, &barcodes, &promotions),
+            chunk_hash: hash_chunk(ChunkContent {
+                products: &products,
+                price_entries: &prices,
+                barcodes: &barcodes,
+                promotions: &promotions,
+                presentation: if tail {
+                    &all_presentation
+                } else {
+                    &empty_presentation
+                },
+                selection_groups: if tail { &all_groups } else { &empty_groups },
+                selection_options: if tail { &all_options } else { &empty_options },
+                availability: if tail {
+                    &all_availability
+                } else {
+                    &empty_availability
+                },
+            }),
             products: chunk.iter().map(|record| record.wire.clone()).collect(),
             promotions: promotion_chunk
                 .iter()
                 .filter(|(assigned, _, _)| *assigned == index)
                 .map(|(_, _, wire)| wire.clone())
                 .collect(),
+            presentation: if tail {
+                fixture.presentation.clone()
+            } else {
+                Vec::new()
+            },
+            selection_groups: if tail {
+                fixture.selection_groups.clone()
+            } else {
+                Vec::new()
+            },
+            selection_options: if tail {
+                fixture.selection_options.clone()
+            } else {
+                Vec::new()
+            },
+            availability: if tail {
+                fixture.availability.clone()
+            } else {
+                Vec::new()
+            },
         })?;
         chunks_sent += 1;
     }

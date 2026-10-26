@@ -26,8 +26,11 @@ use std::sync::Arc;
 use edge_application::hardware_service::Hardware;
 use edge_hardware::{
     CashDrawerPort, EscPosConfig, EscPosKickDrawer, EscPosTcpPrinter, IminDrawer, PrinterPort,
-    SimulatedHardware, SimulatorDrawer, SimulatorPrinter, UnconfiguredDrawer, UnconfiguredPrinter,
+    SimulatedHardware, SimulatorDrawer, SimulatorPrinter, SwappablePrinter, UnconfiguredDrawer,
+    UnconfiguredPrinter,
 };
+
+use crate::printer_settings::PrinterControl;
 
 pub const PRINTER_ENV: &str = "PI_EDGE_PRINTER";
 pub const DRAWER_ENV: &str = "PI_EDGE_DRAWER";
@@ -43,6 +46,45 @@ const NONE: &str = "none";
 /// `HARDWARE_NOT_CONFIGURED`. It never substitutes a simulator for a missing
 /// driver, and never one real driver for another (ADR 038).
 pub fn from_env() -> Result<Hardware, String> {
+    from_env_inner().map(|(hardware, _)| hardware)
+}
+
+/// The same, plus the handle that lets an operator change the receipt printer
+/// without restarting the runtime holding the day open.
+///
+/// The stored settings win over the environment when they configure a
+/// printer: a kiosk configured from its own admin screen must come back up
+/// pointing at the same box. With nothing stored, this behaves exactly as it
+/// always did.
+pub fn from_env_with_control(
+    runtime_dir: &std::path::Path,
+) -> Result<(Hardware, PrinterControl), String> {
+    let (hardware, _) = from_env_inner()?;
+    // One indirection, installed once. Everything downstream keeps calling a
+    // `PrinterPort` and never learns the adapter behind it can change.
+    let port = Arc::new(SwappablePrinter::new(Arc::clone(&hardware.printer)));
+    let hardware = Hardware::new(
+        Arc::clone(&port) as Arc<dyn PrinterPort>,
+        Arc::clone(&hardware.drawer),
+        hardware.paper_width(),
+    );
+    let control = PrinterControl::new(
+        runtime_dir.to_path_buf(),
+        port,
+        hardware.paper_width_handle(),
+    );
+    let stored = crate::printer_settings::load(runtime_dir);
+    if stored.is_configured() {
+        tracing::info!(
+            model = %stored.model,
+            "receipt printer configured from the admin screen"
+        );
+        control.install(&stored);
+    }
+    Ok((hardware, control))
+}
+
+fn from_env_inner() -> Result<(Hardware, ()), String> {
     let paper_width = match std::env::var(PAPER_WIDTH_ENV) {
         Ok(raw) => raw
             .trim()
@@ -73,7 +115,7 @@ pub fn from_env() -> Result<Hardware, String> {
         }
     }
     tracing::info!(paper_width, "paper width configured");
-    Ok(Hardware::new(printer, drawer, paper_width))
+    Ok((Hardware::new(printer, drawer, paper_width), ()))
 }
 
 fn printer(spec: &str, paper_width: usize) -> Result<Arc<dyn PrinterPort>, String> {

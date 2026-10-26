@@ -170,6 +170,8 @@ pub fn scan(core: &GoldenCore, barcode: &str, quantity_thousandths: i64) {
         request_id: None,
         selector: ProductSelector::Barcode(Barcode::new(barcode).unwrap()),
         quantity: Quantity::from_thousandths(quantity_thousandths).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
 }
@@ -456,6 +458,8 @@ pub fn scripted_scan(core: &ScriptedGoldenCore, barcode: &str, quantity_thousand
         request_id: None,
         selector: ProductSelector::Barcode(Barcode::new(barcode).unwrap()),
         quantity: Quantity::from_thousandths(quantity_thousandths).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
 }

@@ -8,13 +8,20 @@
 //! order through the catalog's hasher, so it describes what was persisted
 //! rather than what was received.
 
+use std::collections::BTreeMap;
+
 use edge_application::ports::{CatalogUnitOfWork, StoredChunk};
 use edge_application::AppError;
+use edge_catalog::channel::{
+    AvailabilityDefault, AvailabilityState, AvailabilityTarget, Channel, ChannelAvailability,
+};
 use edge_catalog::content::ContentHasher;
+use edge_catalog::presentation::{AssetRef, Category, Locale, LocalizedText, ProductPresentation};
 use edge_catalog::pricing::{NewPriceBook, NewPriceEntry, PriceBookScope};
 use edge_catalog::promotions::{
     NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability,
 };
+use edge_catalog::selection::{SelectionGroup, SelectionOption, SelectionOwner};
 use edge_catalog::snapshot::CatalogSnapshotState;
 use edge_catalog::{
     Barcode, CatalogBarcode, CatalogError, CatalogProduct, CatalogSnapshot, CatalogSnapshotStatus,
@@ -30,7 +37,9 @@ use crate::sqlite::{money, parse_currency, parse_id, parse_opt_ts, parse_ts, Sql
 const SNAPSHOT_COLUMNS: &str = "snapshot_id, tenant_id, store_id, version, status, \
      declared_content_hash, content_hash, generated_at, effective_at, expected_tax_profiles, \
      expected_price_books, expected_products, expected_price_entries, expected_barcodes, \
-     expected_promotions, imported_at, committed_at, activated_at, superseded_at";
+     expected_promotions, imported_at, committed_at, activated_at, superseded_at, \
+     expected_channels, expected_categories, expected_presentation, \
+     expected_selection_groups, expected_selection_options, expected_availability";
 
 const PRODUCT_COLUMNS: &str = "product_ref, external_ref, sku, name, active, sellable, \
      tax_profile_code";
@@ -136,9 +145,11 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                       content_hash, generated_at, effective_at, expected_tax_profiles,
                       expected_price_books, expected_products, expected_price_entries,
                       expected_barcodes, expected_promotions, imported_at, committed_at,
-                      activated_at, superseded_at, created_at, updated_at)
+                      activated_at, superseded_at, expected_channels, expected_categories,
+                      expected_presentation, expected_selection_groups,
+                      expected_selection_options, expected_availability, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?18, ?19, ?20, ?20)",
+                         ?17, ?18, ?19, ?21, ?22, ?23, ?24, ?25, ?26, ?20, ?20)",
                 params![
                     state.snapshot_id.to_string(),
                     state.tenant_id.as_str(),
@@ -160,6 +171,12 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                     state.activated_at.map(|ts| ts.to_rfc3339()),
                     state.superseded_at.map(|ts| ts.to_rfc3339()),
                     now.to_rfc3339(),
+                    state.expected.channels,
+                    state.expected.categories,
+                    state.expected.presentation,
+                    state.expected.selection_groups,
+                    state.expected.selection_options,
+                    state.expected.availability,
                 ],
             )
             .map_err(|error| {
@@ -295,7 +312,8 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         self.tx
             .query_row(
                 "SELECT chunk_index, chunk_hash, product_count, price_entry_count,
-                        barcode_count, promotion_count
+                        barcode_count, promotion_count, presentation_count,
+                        selection_group_count, selection_option_count, availability_count
                  FROM catalog_import_chunks
                  WHERE snapshot_id = ?1 AND chunk_index = ?2",
                 params![snapshot_id.to_string(), chunk_index],
@@ -307,6 +325,10 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                         price_entry_count: row.get(3)?,
                         barcode_count: row.get(4)?,
                         promotion_count: row.get(5)?,
+                        presentation_count: row.get(6)?,
+                        selection_group_count: row.get(7)?,
+                        selection_option_count: row.get(8)?,
+                        availability_count: row.get(9)?,
                     })
                 },
             )
@@ -324,8 +346,9 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             .execute(
                 "INSERT INTO catalog_import_chunks
                      (snapshot_id, chunk_index, chunk_hash, product_count, price_entry_count,
-                      barcode_count, promotion_count, received_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                      barcode_count, promotion_count, presentation_count, selection_group_count,
+                      selection_option_count, availability_count, received_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     snapshot_id.to_string(),
                     chunk.chunk_index,
@@ -334,6 +357,10 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
                     chunk.price_entry_count,
                     chunk.barcode_count,
                     chunk.promotion_count,
+                    chunk.presentation_count,
+                    chunk.selection_group_count,
+                    chunk.selection_option_count,
+                    chunk.availability_count,
                     now.to_rfc3339(),
                 ],
             )
@@ -692,6 +719,12 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             price_entries: self.count("price_entries", &id)?,
             barcodes: self.count("catalog_barcodes", &id)?,
             promotions: self.count("promotions", &id)?,
+            channels: self.count("catalog_channels", &id)?,
+            categories: self.count("catalog_categories", &id)?,
+            presentation: self.count("catalog_product_presentation", &id)?,
+            selection_groups: self.count("catalog_selection_groups", &id)?,
+            selection_options: self.count("catalog_selection_options", &id)?,
+            availability: self.count("catalog_channel_availability", &id)?,
         })
     }
 
@@ -782,6 +815,724 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         raw.map(RawProduct::into_domain).transpose()
     }
 
+    // ---- universal catalog extensions (ADR 044) ----
+
+    fn insert_catalog_channels(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        channels: &[Channel],
+    ) -> Result<(), AppError> {
+        let id = snapshot_id.to_string();
+        for channel in channels {
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_channels
+                         (snapshot_id, channel_ref, name_default, default_availability)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        id,
+                        channel.channel_ref.as_str(),
+                        channel.name.default,
+                        channel.default_availability.as_str(),
+                    ],
+                )
+                .map_err(|error| {
+                    if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicateChannel {
+                            channel_ref: channel.channel_ref.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+            self.insert_translations(
+                &id,
+                TextOwner::Channel,
+                channel.channel_ref.as_str(),
+                TextField::Name,
+                &channel.name,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_channels(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<Channel>, AppError> {
+        let id = snapshot_id.to_string();
+        let mut translations = self.load_translations(&id, TextOwner::Channel)?;
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT channel_ref, name_default, default_availability FROM catalog_channels
+                 WHERE snapshot_id = ?1
+                 ORDER BY channel_ref ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(|(channel_ref, name, default_availability)| {
+                Ok(Channel {
+                    channel_ref: parse_id(&channel_ref)?,
+                    name: localized(&mut translations, &channel_ref, TextField::Name, name)?,
+                    default_availability: AvailabilityDefault::parse(&default_availability)
+                        .map_err(AppError::Catalog)?,
+                })
+            })
+            .collect()
+    }
+
+    fn insert_catalog_categories(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        categories: &[Category],
+    ) -> Result<(), AppError> {
+        let id = snapshot_id.to_string();
+        for category in categories {
+            let image = AssetColumns::from(category.image.as_ref());
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_categories
+                         (snapshot_id, category_ref, name_default, display_order,
+                          image_content_hash, image_media_type, image_byte_size)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        id,
+                        category.category_ref.as_str(),
+                        category.name.default,
+                        category.display_order,
+                        image.content_hash,
+                        image.media_type,
+                        image.byte_size,
+                    ],
+                )
+                .map_err(|error| {
+                    if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicateCategory {
+                            category_ref: category.category_ref.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+            self.insert_translations(
+                &id,
+                TextOwner::Category,
+                category.category_ref.as_str(),
+                TextField::Name,
+                &category.name,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_categories(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<Category>, AppError> {
+        let id = snapshot_id.to_string();
+        let mut translations = self.load_translations(&id, TextOwner::Category)?;
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT category_ref, name_default, display_order, image_content_hash,
+                        image_media_type, image_byte_size
+                 FROM catalog_categories
+                 WHERE snapshot_id = ?1
+                 ORDER BY category_ref ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(2)?,
+                    AssetColumns::from_row(row, 3)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(|(category_ref, name, display_order, image)| {
+                Ok(Category::import(
+                    parse_id(&category_ref)?,
+                    localized(&mut translations, &category_ref, TextField::Name, name)?,
+                    display_order,
+                    image.into_domain()?,
+                ))
+            })
+            .collect()
+    }
+
+    fn insert_catalog_presentation(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        presentation: &[ProductPresentation],
+    ) -> Result<(), AppError> {
+        let id = snapshot_id.to_string();
+        for row in presentation {
+            let image = AssetColumns::from(row.image.as_ref());
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_product_presentation
+                         (snapshot_id, product_ref, category_ref, display_name_default,
+                          description_default, display_order, image_content_hash,
+                          image_media_type, image_byte_size)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        id,
+                        row.product_ref.as_str(),
+                        row.category_ref.as_ref().map(CategoryRef::as_str),
+                        row.display_name.as_ref().map(|text| text.default.clone()),
+                        row.description.as_ref().map(|text| text.default.clone()),
+                        row.display_order,
+                        image.content_hash,
+                        image.media_type,
+                        image.byte_size,
+                    ],
+                )
+                .map_err(|error| {
+                    if is_foreign_key_violation(&error) {
+                        // Either the product or the category is absent. The
+                        // producer is told which row to fix; which of its two
+                        // references is wrong is in the row itself.
+                        AppError::Catalog(CatalogError::PresentationWithoutProduct {
+                            product_ref: row.product_ref.to_string(),
+                        })
+                    } else if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicatePresentation {
+                            product_ref: row.product_ref.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+            if let Some(text) = &row.display_name {
+                self.insert_translations(
+                    &id,
+                    TextOwner::Product,
+                    row.product_ref.as_str(),
+                    TextField::DisplayName,
+                    text,
+                )?;
+            }
+            if let Some(text) = &row.description {
+                self.insert_translations(
+                    &id,
+                    TextOwner::Product,
+                    row.product_ref.as_str(),
+                    TextField::Description,
+                    text,
+                )?;
+            }
+            self.insert_catalog_recommendations(&id, row)?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_presentation(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<ProductPresentation>, AppError> {
+        let id = snapshot_id.to_string();
+        let mut translations = self.load_translations(&id, TextOwner::Product)?;
+        let mut recommendations = self.load_recommendations(&id)?;
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT product_ref, category_ref, display_name_default, description_default,
+                        display_order, image_content_hash, image_media_type, image_byte_size
+                 FROM catalog_product_presentation
+                 WHERE snapshot_id = ?1
+                 ORDER BY product_ref ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i32>(4)?,
+                    AssetColumns::from_row(row, 5)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(
+                |(product_ref, category_ref, display_name, description, display_order, image)| {
+                    Ok(ProductPresentation {
+                        product_ref: parse_id(&product_ref)?,
+                        category_ref: category_ref.as_deref().map(parse_id).transpose()?,
+                        display_name: display_name
+                            .map(|value| {
+                                localized(
+                                    &mut translations,
+                                    &product_ref,
+                                    TextField::DisplayName,
+                                    value,
+                                )
+                            })
+                            .transpose()?,
+                        description: description
+                            .map(|value| {
+                                localized(
+                                    &mut translations,
+                                    &product_ref,
+                                    TextField::Description,
+                                    value,
+                                )
+                            })
+                            .transpose()?,
+                        display_order,
+                        image: image.into_domain()?,
+                        recommended_product_refs: recommendations
+                            .remove(&product_ref)
+                            .unwrap_or_default(),
+                    })
+                },
+            )
+            .collect()
+    }
+
+    fn insert_catalog_selection_groups(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        groups: &[SelectionGroup],
+    ) -> Result<(), AppError> {
+        let id = snapshot_id.to_string();
+        for group in groups {
+            let (owner_kind, owner_product, owner_option) = match &group.owner {
+                SelectionOwner::Product { product_ref } => {
+                    ("PRODUCT", Some(product_ref.as_str()), None)
+                }
+                SelectionOwner::Option { option_id } => ("OPTION", None, Some(option_id.as_str())),
+            };
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_selection_groups
+                         (snapshot_id, group_id, owner_kind, owner_product_ref, owner_option_id,
+                          name_default, min_quantity, max_quantity, display_order)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        id,
+                        group.group_id.as_str(),
+                        owner_kind,
+                        owner_product,
+                        owner_option,
+                        group.name.default,
+                        group.min_quantity,
+                        group.max_quantity,
+                        group.display_order,
+                    ],
+                )
+                .map_err(|error| {
+                    if is_foreign_key_violation(&error) {
+                        AppError::Catalog(CatalogError::UnknownSelectionOwner {
+                            group_id: group.group_id.to_string(),
+                            owner: owner_product.unwrap_or_default().to_owned(),
+                        })
+                    } else if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicateSelectionGroup {
+                            group_id: group.group_id.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+            self.insert_translations(
+                &id,
+                TextOwner::SelectionGroup,
+                group.group_id.as_str(),
+                TextField::Name,
+                &group.name,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn insert_catalog_selection_options(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        options: &[SelectionOption],
+    ) -> Result<(), AppError> {
+        let id = snapshot_id.to_string();
+        for option in options {
+            let image = AssetColumns::from(option.image.as_ref());
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_selection_options
+                         (snapshot_id, option_id, group_id, name_default, component_product_ref,
+                          max_quantity, default_quantity, display_order, image_content_hash,
+                          image_media_type, image_byte_size)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        id,
+                        option.option_id.as_str(),
+                        option.group_id.as_str(),
+                        option.name.default,
+                        option.component_ref.as_ref().map(ProductRef::as_str),
+                        option.max_quantity,
+                        option.default_quantity,
+                        option.display_order,
+                        image.content_hash,
+                        image.media_type,
+                        image.byte_size,
+                    ],
+                )
+                .map_err(|error| {
+                    if is_foreign_key_violation(&error) {
+                        // The group, or the product a chargeable option bills
+                        // through. Both are refusals of the same kind: an
+                        // option cannot reference what the snapshot lacks.
+                        AppError::Catalog(CatalogError::UnknownSelectionComponent {
+                            option_id: option.option_id.to_string(),
+                            product_ref: option
+                                .component_ref
+                                .as_ref()
+                                .map(ProductRef::to_string)
+                                .unwrap_or_else(|| option.group_id.to_string()),
+                        })
+                    } else if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicateSelectionOption {
+                            option_id: option.option_id.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+            self.insert_translations(
+                &id,
+                TextOwner::SelectionOption,
+                option.option_id.as_str(),
+                TextField::Name,
+                &option.name,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_selection_groups(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<SelectionGroup>, AppError> {
+        let id = snapshot_id.to_string();
+        let mut translations = self.load_translations(&id, TextOwner::SelectionGroup)?;
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT group_id, owner_kind, owner_product_ref, owner_option_id, name_default,
+                        min_quantity, max_quantity, display_order
+                 FROM catalog_selection_groups
+                 WHERE snapshot_id = ?1
+                 ORDER BY group_id ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i32>(7)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(
+                |(group_id, owner_kind, owner_product, owner_option, name, min, max, order)| {
+                    let owner = match (owner_kind.as_str(), owner_product, owner_option) {
+                        ("PRODUCT", Some(product_ref), _) => SelectionOwner::Product {
+                            product_ref: parse_id(&product_ref)?,
+                        },
+                        ("OPTION", _, Some(option_id)) => SelectionOwner::Option {
+                            option_id: parse_id(&option_id)?,
+                        },
+                        _ => {
+                            return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                                field: "selection_group.owner",
+                                reason: format!("`{owner_kind}` has no owner reference"),
+                            }))
+                        }
+                    };
+                    SelectionGroup::import(
+                        parse_id(&group_id)?,
+                        owner,
+                        localized(&mut translations, &group_id, TextField::Name, name)?,
+                        min,
+                        max,
+                        order,
+                    )
+                    .map_err(AppError::Catalog)
+                },
+            )
+            .collect()
+    }
+
+    fn list_catalog_selection_options(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<SelectionOption>, AppError> {
+        let id = snapshot_id.to_string();
+        let mut translations = self.load_translations(&id, TextOwner::SelectionOption)?;
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT option_id, group_id, name_default, component_product_ref, max_quantity,
+                        default_quantity, display_order, image_content_hash, image_media_type,
+                        image_byte_size
+                 FROM catalog_selection_options
+                 WHERE snapshot_id = ?1
+                 ORDER BY group_id ASC, option_id ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i32>(6)?,
+                    AssetColumns::from_row(row, 7)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(
+                |(option_id, group_id, name, component, max, default, order, image)| {
+                    SelectionOption::import(
+                        parse_id(&option_id)?,
+                        parse_id(&group_id)?,
+                        localized(&mut translations, &option_id, TextField::Name, name)?,
+                        component.as_deref().map(parse_id).transpose()?,
+                        max,
+                        default,
+                        order,
+                        image.into_domain()?,
+                    )
+                    .map_err(AppError::Catalog)
+                },
+            )
+            .collect()
+    }
+
+    fn insert_catalog_availability(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        rows: &[ChannelAvailability],
+    ) -> Result<(), AppError> {
+        let id = snapshot_id.to_string();
+        for row in rows {
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_channel_availability
+                         (snapshot_id, channel_ref, target_kind, target_ref, state, snoozed_until)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        id,
+                        row.channel_ref.as_str(),
+                        row.target.as_str(),
+                        row.target.reference(),
+                        row.state.as_str(),
+                        row.state.snoozed_until().map(|until| until.to_rfc3339()),
+                    ],
+                )
+                .map_err(|error| {
+                    if is_foreign_key_violation(&error) {
+                        AppError::Catalog(CatalogError::UnknownChannel {
+                            channel_ref: row.channel_ref.to_string(),
+                        })
+                    } else if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicateAvailability {
+                            channel_ref: row.channel_ref.to_string(),
+                            target: format!("{}:{}", row.target.as_str(), row.target.reference()),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    fn list_catalog_availability(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<ChannelAvailability>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT channel_ref, target_kind, target_ref, state, snoozed_until
+                 FROM catalog_channel_availability
+                 WHERE snapshot_id = ?1
+                 ORDER BY channel_ref ASC, target_kind ASC, target_ref ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(|(channel_ref, kind, reference, state, until)| {
+                let target = match kind.as_str() {
+                    "PRODUCT" => AvailabilityTarget::Product {
+                        product_ref: parse_id(&reference)?,
+                    },
+                    "CATEGORY" => AvailabilityTarget::Category {
+                        category_ref: parse_id(&reference)?,
+                    },
+                    "SELECTION_OPTION" => AvailabilityTarget::SelectionOption {
+                        option_id: parse_id(&reference)?,
+                    },
+                    other => {
+                        return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                            field: "availability.target_kind",
+                            reason: format!("`{other}` is not an availability target"),
+                        }))
+                    }
+                };
+                let state = match state.as_str() {
+                    "OFFERED" => AvailabilityState::Offered,
+                    "WITHHELD" => AvailabilityState::Withheld,
+                    "SNOOZED" => AvailabilityState::Snoozed {
+                        until: parse_opt_ts(until)?.ok_or(AppError::Catalog(
+                            CatalogError::InvalidRecord {
+                                field: "availability.snoozed_until",
+                                reason: "a snooze must say when it ends".to_owned(),
+                            },
+                        ))?,
+                    },
+                    other => {
+                        return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                            field: "availability.state",
+                            reason: format!("`{other}` is not an availability state"),
+                        }))
+                    }
+                };
+                Ok(ChannelAvailability {
+                    channel_ref: parse_id(&channel_ref)?,
+                    target,
+                    state,
+                })
+            })
+            .collect()
+    }
+
+    fn list_catalog_extension_product_refs(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<ProductRef>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT product_ref FROM catalog_products
+                 WHERE snapshot_id = ?1
+                   AND (product_ref IN (SELECT owner_product_ref FROM catalog_selection_groups
+                                        WHERE snapshot_id = ?1)
+                     OR product_ref IN (SELECT component_product_ref
+                                        FROM catalog_selection_options
+                                        WHERE snapshot_id = ?1)
+                     OR product_ref IN (SELECT target_ref FROM catalog_channel_availability
+                                        WHERE snapshot_id = ?1 AND target_kind = 'PRODUCT'))
+                 ORDER BY product_ref ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id.to_string()], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        rows.iter().map(|value| parse_id(value)).collect()
+    }
+
+    fn list_catalog_required_assets(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<AssetRef>, AppError> {
+        // Derived from the content rows themselves, so the manifest cannot
+        // disagree with the snapshot it describes (ADR 045). `DISTINCT` is
+        // what makes one photo shared by ten products one entry.
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT DISTINCT image_content_hash, image_media_type, image_byte_size
+                 FROM (
+                     SELECT image_content_hash, image_media_type, image_byte_size
+                     FROM catalog_categories WHERE snapshot_id = ?1
+                     UNION ALL
+                     SELECT image_content_hash, image_media_type, image_byte_size
+                     FROM catalog_product_presentation WHERE snapshot_id = ?1
+                     UNION ALL
+                     SELECT image_content_hash, image_media_type, image_byte_size
+                     FROM catalog_selection_options WHERE snapshot_id = ?1
+                 )
+                 WHERE image_content_hash IS NOT NULL
+                 ORDER BY image_content_hash ASC, image_media_type ASC, image_byte_size ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(|(content_hash, media_type, byte_size)| {
+                AssetRef::import(content_hash, media_type, byte_size).map_err(AppError::Catalog)
+            })
+            .collect()
+    }
+
     fn compute_catalog_content_hash(
         &mut self,
         snapshot_id: CatalogSnapshotId,
@@ -863,11 +1614,331 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
             hasher.promotion(&promotion);
         }
 
+        // Sections 7 to 12 are skipped when empty, exactly as
+        // `hash_snapshot` skips them, so a Retail snapshot still hashes to
+        // what it hashed before the extensions existed (ADR 044).
+        let channels = self.list_catalog_channels(snapshot_id)?;
+        if !channels.is_empty() {
+            hasher.begin_channels();
+            for channel in &channels {
+                hasher.channel(channel);
+            }
+        }
+        let categories = self.list_catalog_categories(snapshot_id)?;
+        if !categories.is_empty() {
+            hasher.begin_categories();
+            for category in &categories {
+                hasher.category(category);
+            }
+        }
+        let presentation = self.list_catalog_presentation(snapshot_id)?;
+        if !presentation.is_empty() {
+            hasher.begin_presentation();
+            for row in &presentation {
+                hasher.presentation(row);
+            }
+        }
+        let groups = self.list_catalog_selection_groups(snapshot_id)?;
+        if !groups.is_empty() {
+            hasher.begin_selection_groups();
+            for group in &groups {
+                hasher.selection_group(group);
+            }
+        }
+        let options = self.list_catalog_selection_options(snapshot_id)?;
+        if !options.is_empty() {
+            hasher.begin_selection_options();
+            for option in &options {
+                hasher.selection_option(option);
+            }
+        }
+        let availability = self.list_catalog_availability(snapshot_id)?;
+        if !availability.is_empty() {
+            hasher.begin_availability();
+            for row in &availability {
+                hasher.availability(row);
+            }
+        }
+        // Recommendations ride on the presentation rows already read, and
+        // contribute nothing when nobody recommends anything — so a snapshot
+        // that predates them keeps the hash it was activated with.
+        let recommending: Vec<&ProductPresentation> = presentation
+            .iter()
+            .filter(|row| !row.recommended_product_refs.is_empty())
+            .collect();
+        if !recommending.is_empty() {
+            hasher.begin_recommendations();
+            for row in recommending {
+                hasher.recommendations(row);
+            }
+        }
+
         Ok(hasher.finish())
     }
 }
 
+/// Which kind of row a localized string belongs to.
+///
+/// The translations table is shared by every localizable field, so the owner
+/// kind is what keeps a category called `BURGERS` and a channel called
+/// `BURGERS` from reading each other's translations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextOwner {
+    Channel,
+    Category,
+    Product,
+    SelectionGroup,
+    SelectionOption,
+}
+
+impl TextOwner {
+    const fn as_str(self) -> &'static str {
+        match self {
+            TextOwner::Channel => "CHANNEL",
+            TextOwner::Category => "CATEGORY",
+            TextOwner::Product => "PRODUCT",
+            TextOwner::SelectionGroup => "SELECTION_GROUP",
+            TextOwner::SelectionOption => "SELECTION_OPTION",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TextField {
+    Name,
+    DisplayName,
+    Description,
+}
+
+impl TextField {
+    const fn as_str(self) -> &'static str {
+        match self {
+            TextField::Name => "NAME",
+            TextField::DisplayName => "DISPLAY_NAME",
+            TextField::Description => "DESCRIPTION",
+        }
+    }
+}
+
+/// Translations of one owner kind, keyed by `(owner_ref, field)`.
+type Translations = BTreeMap<(String, TextField), BTreeMap<Locale, String>>;
+
+/// Rebuild one localized string from its default and the translations loaded
+/// for its owner kind. Takes the translations out of the map: each is consumed
+/// by exactly one field of one row.
+fn localized(
+    translations: &mut Translations,
+    owner_ref: &str,
+    field: TextField,
+    default: String,
+) -> Result<LocalizedText, AppError> {
+    let found = translations
+        .remove(&(owner_ref.to_owned(), field))
+        .unwrap_or_default();
+    LocalizedText::with_translations(default, found).map_err(AppError::Catalog)
+}
+
+/// The three columns an optional image reference occupies. Nothing stores
+/// bytes: PI.Edge holds the content hash and the Asset Runtime holds the file.
+struct AssetColumns {
+    content_hash: Option<String>,
+    media_type: Option<String>,
+    byte_size: Option<i64>,
+}
+
+impl AssetColumns {
+    fn from(asset: Option<&AssetRef>) -> Self {
+        match asset {
+            Some(asset) => Self {
+                content_hash: Some(asset.content_hash.clone()),
+                media_type: Some(asset.media_type.clone()),
+                byte_size: Some(asset.byte_size),
+            },
+            None => Self {
+                content_hash: None,
+                media_type: None,
+                byte_size: None,
+            },
+        }
+    }
+
+    fn from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            content_hash: row.get(offset)?,
+            media_type: row.get(offset + 1)?,
+            byte_size: row.get(offset + 2)?,
+        })
+    }
+
+    fn into_domain(self) -> Result<Option<AssetRef>, AppError> {
+        match (self.content_hash, self.media_type, self.byte_size) {
+            (Some(content_hash), Some(media_type), Some(byte_size)) => {
+                AssetRef::import(content_hash, media_type, byte_size)
+                    .map(Some)
+                    .map_err(AppError::Catalog)
+            }
+            // The table's CHECKs keep the three columns in step, so a partial
+            // asset can only mean the row was written by something else.
+            (None, None, None) => Ok(None),
+            _ => Err(AppError::Catalog(CatalogError::InvalidRecord {
+                field: "image",
+                reason: "an asset reference is incomplete".to_owned(),
+            })),
+        }
+    }
+}
+
 impl SqliteUnitOfWork<'_, '_> {
+    /// One product's merchandising list. Declared order is persisted, because
+    /// what a screen offers first is content.
+    fn insert_catalog_recommendations(
+        &mut self,
+        snapshot_id: &str,
+        row: &ProductPresentation,
+    ) -> Result<(), AppError> {
+        row.validate_recommendations().map_err(AppError::Catalog)?;
+        for (position, recommended) in row.recommended_product_refs.iter().enumerate() {
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_product_recommendations
+                         (snapshot_id, product_ref, recommended_product_ref, display_order)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        snapshot_id,
+                        row.product_ref.as_str(),
+                        recommended.as_str(),
+                        i64::try_from(position).unwrap_or(i64::MAX),
+                    ],
+                )
+                .map_err(|error| {
+                    if is_foreign_key_violation(&error) {
+                        // The suggestion names a product this snapshot does
+                        // not sell. Refuse the snapshot rather than activate a
+                        // menu that offers something nobody can add.
+                        AppError::Catalog(CatalogError::PresentationWithoutProduct {
+                            product_ref: recommended.to_string(),
+                        })
+                    } else if is_constraint_violation(&error) {
+                        AppError::Catalog(CatalogError::DuplicatePresentation {
+                            product_ref: recommended.to_string(),
+                        })
+                    } else {
+                        sqlite_err(error)
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Every snapshot's recommendation lists at once, keyed by the product
+    /// being shown. One query, so rendering a menu is not N+1.
+    fn load_recommendations(
+        &mut self,
+        snapshot_id: &str,
+    ) -> Result<BTreeMap<String, Vec<ProductRef>>, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT product_ref, recommended_product_ref
+                 FROM catalog_product_recommendations
+                 WHERE snapshot_id = ?1
+                 ORDER BY product_ref ASC, display_order ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+        let mut grouped: BTreeMap<String, Vec<ProductRef>> = BTreeMap::new();
+        for (product_ref, recommended) in rows {
+            grouped
+                .entry(product_ref)
+                .or_default()
+                .push(parse_id(&recommended)?);
+        }
+        Ok(grouped)
+    }
+
+    fn insert_translations(
+        &mut self,
+        snapshot_id: &str,
+        owner: TextOwner,
+        owner_ref: &str,
+        field: TextField,
+        text: &LocalizedText,
+    ) -> Result<(), AppError> {
+        for (locale, translation) in &text.translations {
+            self.tx
+                .execute(
+                    "INSERT INTO catalog_text_translations
+                         (snapshot_id, owner_kind, owner_ref, field, locale, text)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        snapshot_id,
+                        owner.as_str(),
+                        owner_ref,
+                        field.as_str(),
+                        locale.as_str(),
+                        translation,
+                    ],
+                )
+                .map_err(sqlite_err)?;
+        }
+        Ok(())
+    }
+
+    /// Every translation of one owner kind, in one query, so listing rows is
+    /// never one query per row.
+    fn load_translations(
+        &mut self,
+        snapshot_id: &str,
+        owner: TextOwner,
+    ) -> Result<Translations, AppError> {
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT owner_ref, field, locale, text FROM catalog_text_translations
+                 WHERE snapshot_id = ?1 AND owner_kind = ?2
+                 ORDER BY owner_ref ASC, field ASC, locale ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = statement
+            .query_map(params![snapshot_id, owner.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        let mut translations = Translations::new();
+        for (owner_ref, field, locale, text) in rows {
+            let field = match field.as_str() {
+                "NAME" => TextField::Name,
+                "DISPLAY_NAME" => TextField::DisplayName,
+                "DESCRIPTION" => TextField::Description,
+                other => {
+                    return Err(AppError::Catalog(CatalogError::InvalidRecord {
+                        field: "translation.field",
+                        reason: format!("`{other}` is not a localizable field"),
+                    }))
+                }
+            };
+            translations
+                .entry((owner_ref, field))
+                .or_default()
+                .insert(Locale::new(locale).map_err(AppError::Catalog)?, text);
+        }
+        Ok(translations)
+    }
+
     fn count(&self, table: &'static str, snapshot_id: &str) -> Result<i64, AppError> {
         self.tx
             .query_row(
@@ -919,6 +1990,12 @@ struct RawSnapshot {
     committed_at: Option<String>,
     activated_at: Option<String>,
     superseded_at: Option<String>,
+    expected_channels: i64,
+    expected_categories: i64,
+    expected_presentation: i64,
+    expected_selection_groups: i64,
+    expected_selection_options: i64,
+    expected_availability: i64,
 }
 
 impl RawSnapshot {
@@ -943,6 +2020,12 @@ impl RawSnapshot {
             committed_at: row.get(16)?,
             activated_at: row.get(17)?,
             superseded_at: row.get(18)?,
+            expected_channels: row.get(19)?,
+            expected_categories: row.get(20)?,
+            expected_presentation: row.get(21)?,
+            expected_selection_groups: row.get(22)?,
+            expected_selection_options: row.get(23)?,
+            expected_availability: row.get(24)?,
         })
     }
 
@@ -964,6 +2047,12 @@ impl RawSnapshot {
                 price_entries: self.expected_price_entries,
                 barcodes: self.expected_barcodes,
                 promotions: self.expected_promotions,
+                channels: self.expected_channels,
+                categories: self.expected_categories,
+                presentation: self.expected_presentation,
+                selection_groups: self.expected_selection_groups,
+                selection_options: self.expected_selection_options,
+                availability: self.expected_availability,
             },
             imported_at: parse_ts(&self.imported_at)?,
             committed_at: parse_opt_ts(self.committed_at)?,

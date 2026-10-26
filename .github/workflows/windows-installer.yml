@@ -1,0 +1,139 @@
+# Build PX Kiosk as a Windows installer.
+#
+# A Windows runner, because the installer links MSVC and packages a Windows
+# WebView2 runtime. Cross-compiling either from macOS is a worse answer than
+# using the machine that does it natively, so this is where the artifact is
+# produced.
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "crates/**"
+      - "apps/**"
+      - "demo/**"
+      - "scripts/build-windows-installer.ps1"
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Honours rust-toolchain.toml; only the target has to be added.
+      - name: Rust
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            apps/tauri-pos/src-tauri -> apps/tauri-pos/src-tauri/target
+
+      # Matching the machine the lockfile was written on. `--frozen-lockfile`
+      # is only a guarantee if the resolver is the same one.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/tauri-pos/pnpm-lock.yaml
+
+      # The same gates the repository runs everywhere else, on the platform
+      # the installer is actually for. A Windows-only `cfg` that does not
+      # compile is a broken installer, and this is where that shows up.
+      - name: Gate — fmt
+        run: cargo fmt --all --check
+
+      - name: Gate — clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Gate — tests
+        run: cargo test --workspace
+
+      - name: Frontend dependencies
+        working-directory: apps/tauri-pos
+        run: pnpm install --frozen-lockfile
+
+      - name: Gate — lint, typecheck, build
+        working-directory: apps/tauri-pos
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm build
+
+      - name: Gate — tauri crate
+        working-directory: apps/tauri-pos/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Build the installer
+        shell: pwsh
+        run: ./scripts/build-windows-installer.ps1 -SkipFrontend
+
+      # Proof the demo actually travelled, checked before anyone downloads it.
+      # Proof the demo actually travelled, and that no build step flattened
+      # an animation into a still. Checked before anyone downloads it.
+      - name: Verify the bundle carries the demo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $staged = Get-ChildItem -Path "target/$env:TARGET/release" -Recurse `
+            -Filter 'menu.json' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]demo[\\/]' } |
+            Select-Object -First 1
+          if (-not $staged) { throw 'the demo catalog was not staged into the bundle' }
+          $assets = Join-Path $staged.Directory.FullName 'assets'
+          if (-not (Test-Path $assets)) { throw "no assets beside $($staged.FullName)" }
+
+          $gifs = @(Get-ChildItem $assets -Filter *.gif)
+          if ($gifs.Count -lt 2) { throw "expected 2 animations, found $($gifs.Count)" }
+          foreach ($gif in $gifs) {
+            $bytes = [System.IO.File]::ReadAllBytes($gif.FullName)
+            $magic = -join ($bytes[0..5] | ForEach-Object { [char]$_ })
+            if ($magic -ne 'GIF89a') { throw "$($gif.Name) is no longer a GIF: $magic" }
+            # More than one Graphic Control Extension means it still moves.
+            $frames = 0
+            for ($i = 0; $i -lt $bytes.Length - 3; $i++) {
+              if ($bytes[$i] -eq 0x00 -and $bytes[$i+1] -eq 0x21 -and
+                  $bytes[$i+2] -eq 0xF9 -and $bytes[$i+3] -eq 0x04) { $frames++ }
+            }
+            if ($frames -le 1) { throw "$($gif.Name) was flattened to a still" }
+            Write-Host "  $($gif.Name): $frames frames"
+          }
+          $jpegs = @(Get-ChildItem $assets -Filter *.jpg).Count
+          Write-Host "demo shipped: $jpegs photographs, $($gifs.Count) animations"
+
+      # The runtime has to be inside the installer, not merely built.
+      - name: Verify the sidecars were staged
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in 'edge-daemon', 'edge-cli') {
+            $staged = "apps/tauri-pos/src-tauri/binaries/$name-$env:TARGET.exe"
+            if (-not (Test-Path $staged)) { throw "$staged was never staged" }
+            $mb = [math]::Round((Get-Item $staged).Length / 1MB, 1)
+            Write-Host "  $name-$env:TARGET.exe  $mb MB"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PX-Kiosk-Setup-x64
+          path: target/${{ env.TARGET }}/release/bundle/nsis/PX-Kiosk-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 30

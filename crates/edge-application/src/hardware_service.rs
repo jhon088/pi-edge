@@ -11,6 +11,7 @@
 //! process that dies mid-action leaves evidence that it may already have
 //! happened — and the safe answer to "did the drawer open?" is yes.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use edge_domain::prelude::*;
@@ -42,7 +43,11 @@ pub struct Hardware {
     pub drawer: Arc<dyn CashDrawerPort>,
     /// Characters per line of the configured paper, so the document the core
     /// composes matches the paper it will come out on.
-    pub paper_width: usize,
+    ///
+    /// Shared and atomic because an operator can change the paper from the
+    /// admin screen without restarting the runtime that is holding the day
+    /// open. Only the composition root holds the handle that writes it.
+    paper_width: Arc<AtomicUsize>,
     /// When this process last saw a scan become an item.
     ///
     /// A scanner cannot be probed — it is input — so the only evidence it works
@@ -58,7 +63,7 @@ impl std::fmt::Debug for Hardware {
             .debug_struct("Hardware")
             .field("printer", &self.printer.driver())
             .field("drawer", &self.drawer.driver())
-            .field("paper_width", &self.paper_width)
+            .field("paper_width", &self.paper_width())
             .finish()
     }
 }
@@ -75,7 +80,7 @@ impl Hardware {
         Self {
             printer: Arc::new(UnconfiguredPrinter),
             drawer: Arc::new(UnconfiguredDrawer),
-            paper_width: 48,
+            paper_width: Arc::new(AtomicUsize::new(48)),
             scanner_seen: Arc::new(Mutex::new(None)),
         }
     }
@@ -87,7 +92,7 @@ impl Hardware {
         Self {
             printer: Arc::new(SimulatorPrinter::working()),
             drawer: Arc::new(SimulatorDrawer::working()),
-            paper_width: 48,
+            paper_width: Arc::new(AtomicUsize::new(48)),
             scanner_seen: Arc::new(Mutex::new(None)),
         }
     }
@@ -100,9 +105,20 @@ impl Hardware {
         Self {
             printer,
             drawer,
-            paper_width,
+            paper_width: Arc::new(AtomicUsize::new(paper_width)),
             scanner_seen: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Characters per line of the paper currently configured.
+    pub fn paper_width(&self) -> usize {
+        self.paper_width.load(Ordering::Relaxed)
+    }
+
+    /// The handle the composition root keeps so it can follow a configuration
+    /// change. Nothing downstream is given one.
+    pub fn paper_width_handle(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.paper_width)
     }
 
     /// Record that a scan arrived and became an item.
@@ -287,6 +303,8 @@ where
             request_id: Some(scan.event_id),
             selector: edge_catalog::ProductSelector::Barcode(barcode),
             quantity: Quantity::from_units(1).map_err(DomainError::from)?,
+            selections: Vec::new(),
+            preparation_note: None,
         });
 
         // A scan with nothing to add to is refused: PI.Edge does not open a
@@ -407,7 +425,7 @@ where
     }
 
     fn test_page(&self, job_id: Uuid, device: &DeviceProfile, now: Timestamp) -> PrintDocument {
-        let width = self.hardware.paper_width;
+        let width = self.hardware.paper_width();
         PrintDocument::new(job_id, PrintKind::TestPage, width)
             .line(PrintLine::centered("PI.EDGE").bold().large())
             .line(PrintLine::centered("PRUEBA DE IMPRESION"))
@@ -450,7 +468,7 @@ where
         device: &DeviceProfile,
         transaction: &RetailTransaction,
     ) -> PrintDocument {
-        let width = self.hardware.paper_width;
+        let width = self.hardware.paper_width();
         let state = transaction.state();
         let mut document = PrintDocument::new(job_id, kind, width)
             .line(PrintLine::centered("PI.EDGE").bold().large())
@@ -460,6 +478,15 @@ where
             document = document.line(PrintLine::centered("** COPIA **").bold());
         }
         document = document
+            .line(
+                PrintLine::centered(crate::order_code(
+                    &state.register_id,
+                    state.register_sequence,
+                ))
+                .bold()
+                .large(),
+            )
+            .blank()
             .line(PrintLine::columns(
                 "Ticket",
                 &state.register_sequence.to_string(),
@@ -485,6 +512,24 @@ where
                     &line.line_total.format_amount(),
                     width,
                 ));
+            // The choices, under the line that carries them, from the
+            // amounts materialised on the sale — never recomputed, and never
+            // read back out of a catalog that may be gone (ADR 046).
+            for selection in &line.selections {
+                let label = if selection.quantity > 1 {
+                    format!("  + {} x{}", selection.name, selection.quantity)
+                } else {
+                    format!("  + {}", selection.name)
+                };
+                document = document.line(if selection.amount.is_positive() {
+                    PrintLine::columns(&label, &selection.amount.format_amount(), width)
+                } else {
+                    PrintLine::plain(label)
+                });
+            }
+            if let Some(note) = &line.preparation_note {
+                document = document.line(PrintLine::plain(format!("  * {note}")));
+            }
             if line.discount_amount.is_positive() {
                 document = document.line(PrintLine::columns(
                     "  descuento",

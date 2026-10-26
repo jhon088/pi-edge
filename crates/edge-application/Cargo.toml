@@ -12,6 +12,7 @@ license.workspace = true
 testing = []
 
 [dependencies]
+edge-assets = { workspace = true }
 edge-cash = { workspace = true }
 edge-catalog = { workspace = true }
 edge-hardware = { workspace = true }

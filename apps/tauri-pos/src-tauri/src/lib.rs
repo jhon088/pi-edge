@@ -28,13 +28,44 @@ use tauri::{Emitter, Manager};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod bootstrap;
+mod kiosk;
 mod scanner;
 
 /// Event name the webview listens on.
 const STATE_CHANGED_EVENT: &str = "edge://state-changed";
 
-/// Default installation when `PI_EDGE_DB` is not set.
-const DEFAULT_DATABASE: &str = "./data/pi-edge.db";
+/// Where the installation is when `PI_EDGE_DB` says nothing.
+///
+/// Deliberately **not** `"./data/pi-edge.db"`. A relative default is resolved
+/// against the process working directory, and `pnpm tauri dev` runs this
+/// binary from `apps/tauri-pos/src-tauri` — so the window came up pointed at
+/// `apps/tauri-pos/src-tauri/data/.pi-edge/d.sock` while the daemon listened
+/// on `<repo>/data/.pi-edge/d.sock`. Every command then failed against a
+/// socket nothing had ever created, and the fix people reached for was a
+/// symlink. The working directory is not an input here; anchor the path.
+fn default_database() -> PathBuf {
+    if cfg!(debug_assertions) {
+        // Development: the checkout this binary was compiled from. That is
+        // where `cargo run -p edge-daemon -- --db ./data/pi-edge.db` puts the
+        // database, and it is known at compile time, so no working directory
+        // and no symlink takes part in the answer.
+        return PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("data")
+            .join("pi-edge.db");
+    }
+    // Installed: beside the executable. One layout, no second convention.
+    match std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("data").join("pi-edge.db")))
+    {
+        Some(path) => path,
+        None => PathBuf::from("data").join("pi-edge.db"),
+    }
+}
 
 /// Failure shape handed to the webview. `code` is a stable contract; `message`
 /// is for humans and must not be parsed.
@@ -316,28 +347,71 @@ fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDt
 pub fn run() {
     init_tracing();
 
-    let database = std::env::var_os("PI_EDGE_DB")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_DATABASE));
-
-    let bridge = match EdgeBridge::connect(database) {
-        Ok(bridge) => bridge,
-        Err(error) => {
-            tracing::error!(%error, "could not prepare the edge client");
-            return;
-        }
-    };
-    tracing::info!(
-        database = %bridge.database().display(),
-        endpoint = %bridge.client.connection().endpoint,
-        "diagnostic client starting"
-    );
+    // Two ways in. A development run points at a database somebody already
+    // started a daemon on. An installed kiosk has no terminal and nobody to
+    // use one, so the window brings the runtime up itself.
+    let configured = std::env::var_os("PI_EDGE_DB").map(PathBuf::from);
+    let installed = configured.is_none() && !cfg!(debug_assertions);
 
     let result = tauri::Builder::default()
-        .manage(bridge)
-        .setup(|app| {
+        .manage(kiosk::AssetCache::default())
+        .manage(bootstrap::CoreProcess::default())
+        .setup(move |app| {
+            // The database is only known here, because on an installed kiosk
+            // it lives in a directory Tauri resolves for the platform. The
+            // bridge is therefore built here too, once, against the path
+            // actually in use — never rebuilt, because `manage` keeps the
+            // first value of a type and silently drops a second.
+            let database = match (&configured, installed) {
+                (Some(path), _) => path.clone(),
+                (None, true) => {
+                    let data = bootstrap::data_dir(app.handle())?;
+                    log_to_data_dir(&data);
+                    data.join("pi-edge.db")
+                }
+                (None, false) => default_database(),
+            };
+
+            if installed {
+                // Everything a person would otherwise do at a prompt: start
+                // PI.Edge, and install the demo the first time only.
+                let owned = app.state::<bootstrap::CoreProcess>();
+                bootstrap::ensure_core(&database, &owned)?;
+                bootstrap::seed_once(&database, &bootstrap::bundled_demo(app.handle()))?;
+            }
+
+            let bridge = EdgeBridge::connect(database.clone()).map_err(|error| {
+                // A kiosk that opens onto nothing is worse than one that says
+                // why, so this is fatal and the reason is logged.
+                tracing::error!(
+                    database = %database.display(),
+                    %error,
+                    "PX Kiosk could not reach PI.Edge"
+                );
+                error
+            })?;
+            // The resolved endpoint, not the path as written. If this line and
+            // the daemon's "edge daemon ready" line disagree, they are talking
+            // past each other and nothing else in the window will work.
+            tracing::info!(
+                database = %bridge.database().display(),
+                endpoint = %bridge.client.connection().endpoint,
+                "PX Kiosk starting"
+            );
+            app.manage(bridge);
             forward_core_events(app.handle());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                // Never leave the core running without a window: the daemon
+                // this process started goes with it. One it adopted does not.
+                use tauri::Manager;
+                window
+                    .app_handle()
+                    .state::<bootstrap::CoreProcess>()
+                    .shutdown();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             core_info,
@@ -355,7 +429,24 @@ pub fn run() {
             print_test_page,
             open_drawer,
             scanner_key,
-            connection_status
+            connection_status,
+            kiosk::kiosk_menu,
+            kiosk::kiosk_product_configuration,
+            kiosk::kiosk_active_transaction,
+            kiosk::kiosk_start_transaction,
+            kiosk::kiosk_add_item,
+            kiosk::kiosk_remove_item,
+            kiosk::kiosk_change_quantity,
+            kiosk::kiosk_cancel_transaction,
+            kiosk::kiosk_totalize,
+            kiosk::kiosk_pay,
+            kiosk::kiosk_receipt,
+            kiosk::kiosk_asset,
+            kiosk::admin_printer_settings,
+            kiosk::admin_save_printer_settings,
+            kiosk::admin_test_print,
+            kiosk::admin_print_receipt,
+            kiosk::admin_reset_demo
         ])
         .run(tauri::generate_context!());
 
@@ -392,4 +483,36 @@ fn init_tracing() {
         .with_writer(std::io::stderr)
         .with_target(false)
         .try_init();
+}
+
+/// Also write the log to app-data once the data directory is known.
+///
+/// An installed kiosk has no terminal, so a startup that fails has nowhere to
+/// have said so. Appends; never rotates by itself, because a kiosk that
+/// cannot start is the only thing that writes much here.
+fn log_to_data_dir(data: &std::path::Path) {
+    let dir = data.join("logs");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("px-kiosk.log");
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(file) => {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_env("PI_EDGE_LOG")
+                        .unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .with_writer(std::sync::Mutex::new(file))
+                .with_ansi(false)
+                .with_target(false)
+                .try_init();
+            tracing::info!(log = %path.display(), "writing a startup log");
+        }
+        Err(error) => tracing::warn!(%error, path = %path.display(), "no startup log"),
+    }
 }

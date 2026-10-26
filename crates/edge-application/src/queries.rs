@@ -3,9 +3,11 @@
 //! These are plain application-level views. Wire formatting lives in
 //! `edge-protocol`.
 
+use edge_assets::AssetState;
 use edge_cash::{CashMovement, CashPosition, SafeDrop};
 use edge_catalog::{
-    CatalogProduct, CatalogSnapshot, ImportProgress, ResolvedPrice, SnapshotCounts, TaxProfile,
+    AssetRef, CatalogProduct, CatalogSnapshot, ImportProgress, PromotionId, ResolvedPrice,
+    SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
 use edge_hardware::HardwareDeviceStatus;
@@ -273,4 +275,127 @@ pub struct ReceiptRecovery {
     pub marked_unknown: i64,
     /// Obligations settled from a device answer the crash had not applied.
     pub resolved_from_evidence: i64,
+}
+
+/// What this installation has of one asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetStatusView {
+    /// The declaration this state answers. A state means nothing without it:
+    /// "a file of 4096 bytes exists" is only `READY` for an asset that
+    /// declared 4096 bytes.
+    pub asset: AssetRef,
+    pub state: AssetState,
+}
+
+/// What one snapshot needs locally before it can be put in force.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotAssetsView {
+    pub snapshot_id: CatalogSnapshotId,
+    /// Derived from the snapshot's own content rows, in canonical order.
+    pub assets: Vec<AssetStatusView>,
+    /// What the whole content store holds, for an operator watching disk.
+    pub stored_bytes: i64,
+}
+
+impl SnapshotAssetsView {
+    /// Whether every asset this snapshot needs is present and of the declared
+    /// length. Activation goes further and re-reads the bytes.
+    pub fn is_ready(&self) -> bool {
+        self.assets.iter().all(|entry| entry.state.is_ready())
+    }
+
+    pub fn pending(&self) -> usize {
+        self.assets
+            .iter()
+            .filter(|entry| !entry.state.is_ready())
+            .count()
+    }
+}
+
+// ------------------------------------------------------------------ the menu
+
+/// Everything a kiosk screen needs to draw the menu in force (ADR 046).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuView {
+    pub snapshot_id: CatalogSnapshotId,
+    pub currency: Currency,
+    pub categories: Vec<MenuCategoryView>,
+    pub items: Vec<MenuItemView>,
+    /// What a basket can earn, so a screen can advertise it. The amounts stay
+    /// the promotion engine's.
+    pub promotions: Vec<MenuPromotionView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuCategoryView {
+    pub category_ref: CategoryRef,
+    pub name: String,
+    pub display_order: i32,
+    pub image: Option<AssetRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuItemView {
+    pub product_ref: ProductRef,
+    pub category_ref: Option<CategoryRef>,
+    pub name: String,
+    pub description: Option<String>,
+    pub display_order: i32,
+    pub image: Option<AssetRef>,
+    /// What it costs before any choice is made.
+    pub from_price: Money,
+    /// Whether tapping it opens a configuration screen or adds it straight
+    /// away.
+    pub configurable: bool,
+    /// What the catalog says to offer alongside this one, in declared order.
+    ///
+    /// Already filtered to products this same menu shows: a suggestion a
+    /// screen cannot render is not a suggestion, and the filtering belongs
+    /// here rather than in each client.
+    pub recommended_product_refs: Vec<ProductRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuPromotionView {
+    pub promotion_id: PromotionId,
+    pub code: String,
+    pub name: String,
+}
+
+/// The questions one product asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductConfigurationView {
+    pub product_ref: ProductRef,
+    pub name: String,
+    pub base_price: Money,
+    /// Flat, each group carrying the option it hangs from, so a client renders
+    /// the nesting it is told about rather than inferring one.
+    pub groups: Vec<SelectionGroupView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionGroupView {
+    pub group_id: SelectionGroupId,
+    /// `Some` for a nested question: it is only asked once that option is
+    /// chosen.
+    pub owner_option_id: Option<SelectionOptionId>,
+    pub name: String,
+    pub min_quantity: i64,
+    pub max_quantity: i64,
+    pub display_order: i32,
+    pub options: Vec<SelectionOptionView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionOptionView {
+    pub option_id: SelectionOptionId,
+    pub name: String,
+    pub component_ref: Option<ProductRef>,
+    /// Resolved by the core from the price books. Zero for a semantic choice,
+    /// which has no product and therefore no price.
+    pub unit_price: Money,
+    pub max_quantity: i64,
+    pub default_quantity: i64,
+    pub display_order: i32,
+    pub image: Option<AssetRef>,
 }

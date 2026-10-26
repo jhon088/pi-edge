@@ -6,8 +6,10 @@
 use chrono::Utc;
 use edge_cash::{Approval, CashMovement, CloseDeclaration, SafeDrop};
 use edge_catalog::{
-    CatalogBarcode, CatalogProduct, CatalogSnapshot, ImportProgress, PriceBook, PriceCandidate,
-    PriceEntry, ProductSelector, Promotion, SnapshotCounts, TaxProfile, TaxProfileCode,
+    AssetRef, CatalogBarcode, CatalogProduct, CatalogSnapshot, Category, Channel,
+    ChannelAvailability, ImportProgress, PriceBook, PriceCandidate, PriceEntry,
+    ProductPresentation, ProductSelector, Promotion, SelectionGroup, SelectionOption,
+    SnapshotCounts, TaxProfile, TaxProfileCode,
 };
 use edge_domain::prelude::*;
 use edge_hardware::{HardwareDeviceKind, HardwareError};
@@ -51,7 +53,7 @@ pub struct DeviceProfile {
 ///
 /// `chunk_hash` is what makes a replay decidable: the same index with the same
 /// hash is a no-op, the same index with a different hash is a conflict.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StoredChunk {
     pub chunk_index: i64,
     pub chunk_hash: String,
@@ -59,6 +61,12 @@ pub struct StoredChunk {
     pub price_entry_count: i64,
     pub barcode_count: i64,
     pub promotion_count: i64,
+    /// Universal catalog extensions a chunk may carry (ADR 044). Zero for
+    /// every Retail chunk, which is why `Default` is meaningful here.
+    pub presentation_count: i64,
+    pub selection_group_count: i64,
+    pub selection_option_count: i64,
+    pub availability_count: i64,
 }
 
 /// Catalog persistence.
@@ -196,6 +204,98 @@ pub trait CatalogUnitOfWork {
         snapshot_id: CatalogSnapshotId,
         selector: &ProductSelector,
     ) -> Result<Option<CatalogProduct>, AppError>;
+
+    // ---- universal catalog extensions (ADR 044) ----
+    //
+    // Channels and categories arrive in the import header, like tax profiles
+    // and price books: few of them, and every chunk is validated against them.
+    // Presentation, selection groups, selection options and availability are
+    // bulk content and travel in the chunks.
+
+    fn insert_catalog_channels(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        channels: &[Channel],
+    ) -> Result<(), AppError>;
+    fn list_catalog_channels(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<Channel>, AppError>;
+    fn insert_catalog_categories(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        categories: &[Category],
+    ) -> Result<(), AppError>;
+    fn list_catalog_categories(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<Category>, AppError>;
+
+    fn insert_catalog_presentation(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        presentation: &[ProductPresentation],
+    ) -> Result<(), AppError>;
+    fn list_catalog_presentation(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<ProductPresentation>, AppError>;
+
+    fn insert_catalog_selection_groups(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        groups: &[SelectionGroup],
+    ) -> Result<(), AppError>;
+    fn insert_catalog_selection_options(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        options: &[SelectionOption],
+    ) -> Result<(), AppError>;
+    /// Every selection group of the snapshot.
+    ///
+    /// Bounded by the configurable part of the catalog, not by the catalog:
+    /// a retail snapshot has none, and a menu has hundreds. Used once, at
+    /// commit, to refuse cycles and dangling owners that no single chunk and
+    /// no foreign key can see.
+    fn list_catalog_selection_groups(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<SelectionGroup>, AppError>;
+    fn list_catalog_selection_options(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<SelectionOption>, AppError>;
+
+    fn insert_catalog_availability(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+        rows: &[ChannelAvailability],
+    ) -> Result<(), AppError>;
+    fn list_catalog_availability(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<ChannelAvailability>, AppError>;
+
+    /// Only the product references the extensions actually name, and only
+    /// those that exist. Never the whole product set: a commit must not load
+    /// a catalog into memory to validate a menu.
+    fn list_catalog_extension_product_refs(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<ProductRef>, AppError>;
+
+    /// Every asset this snapshot's own content references, derived from the
+    /// rows and never from a second list that could drift from them
+    /// (ADR 045).
+    ///
+    /// Distinct `(content_hash, media_type, byte_size)` triples in canonical
+    /// order. A hash appearing twice means the snapshot declared the same
+    /// bytes with two different sizes or types, which the commit refuses:
+    /// content-addressed identity allows exactly one answer per hash.
+    fn list_catalog_required_assets(
+        &mut self,
+        snapshot_id: CatalogSnapshotId,
+    ) -> Result<Vec<AssetRef>, AppError>;
 
     /// Hash the stored rows in canonical order. Computed by the core, over
     /// what it actually persisted — never taken from the client.

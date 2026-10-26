@@ -112,6 +112,8 @@ fn every_operation_has_a_stable_name() {
             OperationV1::AddItem(AddItemRequestV1 {
                 product: ProductSelectorV1::Sku("S".to_owned()),
                 quantity_thousandths: 1_000,
+                selections: Vec::new(),
+                preparation_note: None,
             }),
             "ADD_ITEM",
         ),

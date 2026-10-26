@@ -19,13 +19,16 @@
 //! ```
 
 pub mod basket;
+pub mod channel;
 pub mod content;
 pub mod error;
+pub mod presentation;
 pub mod pricing;
 pub mod product;
 pub mod promotions;
 pub mod resolution;
 pub mod scope;
+pub mod selection;
 pub mod snapshot;
 pub mod tax;
 
@@ -33,8 +36,13 @@ pub use basket::{
     evaluate, AdjustmentTarget, BasketLine, NewBasketLine, PricedBasket, PromotionAdjustment,
     PromotionContext, PromotionResult,
 };
-pub use content::{hash_chunk, hash_snapshot, ContentHasher, SnapshotContent};
+pub use channel::{
+    validate_availability_targets, validate_channels, AvailabilityDefault, AvailabilityIndex,
+    AvailabilityState, AvailabilityTarget, Channel, ChannelAvailability,
+};
+pub use content::{hash_chunk, hash_snapshot, ChunkContent, ContentHasher, SnapshotContent};
 pub use error::CatalogError;
+pub use presentation::{AssetRef, Category, Locale, LocalizedText, ProductPresentation};
 pub use pricing::{
     resolve_price, NewPriceBook, NewPriceEntry, PriceBook, PriceBookScope, PriceCandidate,
     PriceEntry, PricingContext, ResolvedPrice,
@@ -43,6 +51,11 @@ pub use product::{Barcode, CatalogBarcode, CatalogProduct, ProductSelector};
 pub use promotions::{NewPromotion, ProductApplicability, Promotion, PromotionRule, Stackability};
 pub use resolution::{resolve_sale_line, ResolvedSaleLine};
 pub use scope::CatalogScope;
+pub use selection::{
+    configuration_for, validate_selection_request, validate_selection_structure,
+    ConfigurationGroup, RequestedOption, SelectedOption, SelectionGroup, SelectionOption,
+    SelectionOwner,
+};
 pub use snapshot::{
     CatalogSnapshot, CatalogSnapshotStatus, ImportProgress, NewCatalogSnapshot, SnapshotCounts,
 };
@@ -51,8 +64,8 @@ pub use tax::{TaxProfile, TaxProfileCode};
 /// Re-exported so a producer of snapshots (the server, the CLI importer) can
 /// speak the content model without depending on the sale domain directly.
 pub use edge_domain::prelude::{
-    Currency, Money, Percentage, PriceBookId, PriceMode, ProductRef, PromotionId, Quantity,
-    StoreId, TaxRate, Timestamp,
+    CategoryRef, ChannelRef, Currency, Money, Percentage, PriceBookId, PriceMode, ProductRef,
+    PromotionId, Quantity, SelectionGroupId, SelectionOptionId, StoreId, TaxRate, Timestamp,
 };
 
 /// Version of the catalog model, reported in diagnostics.

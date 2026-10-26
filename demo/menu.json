@@ -1,0 +1,1324 @@
+{
+  "version": 1,
+  "currency": "MXN",
+  "generated_at": "2026-10-01T00:00:00Z",
+  "tax_profiles": [
+    {
+      "code": "IVA16",
+      "name": "IVA 16%",
+      "rate_bps": 1600
+    }
+  ],
+  "price_books": [
+    {
+      "price_book_id": "BASE",
+      "code": "BASE",
+      "name": "Precios PX Kiosk",
+      "currency": "MXN",
+      "scope": "TENANT",
+      "priority": 0,
+      "active": true
+    }
+  ],
+  "products": [
+    {
+      "product_ref": "SMASH-CLASSIC",
+      "sku": "SMASH-CLASSIC",
+      "name": "Smash Suprema",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 12900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "SMASH-CHEESE",
+      "sku": "SMASH-CHEESE",
+      "name": "Italian Burger",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 13900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "SMASH-DOUBLE",
+      "sku": "SMASH-DOUBLE",
+      "name": "Pulled Pork",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 16900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "COMBO-SMASH",
+      "sku": "COMBO-SMASH",
+      "name": "Combo del Chef",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 18900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "FRIES",
+      "sku": "FRIES",
+      "name": "Papas Fritas",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 5900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "NUGGETS",
+      "sku": "NUGGETS",
+      "name": "Nuggets x6",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 7900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "ONION-RINGS",
+      "sku": "ONION-RINGS",
+      "name": "Aros de Cebolla",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 6500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "SODA",
+      "sku": "SODA",
+      "name": "Coca-Cola Clásica",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "SODA-CITRUS",
+      "sku": "SODA-CITRUS",
+      "name": "Limonada",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "SHAKE-CHOCO",
+      "sku": "SHAKE-CHOCO",
+      "name": "Helado de Chocolate",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 8900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "EXTRA-CHEESE",
+      "sku": "EXTRA-CHEESE",
+      "name": "Queso extra",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "EXTRA-BACON",
+      "sku": "EXTRA-BACON",
+      "name": "Salsa mayo hierbas",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "EXTRA-PATTY",
+      "sku": "EXTRA-PATTY",
+      "name": "Carne extra",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "SIZE-LARGE",
+      "sku": "SIZE-LARGE",
+      "name": "Tamaño grande",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "UP-RINGS",
+      "sku": "UP-RINGS",
+      "name": "Cambio a aros",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "UP-SHAKE",
+      "sku": "UP-SHAKE",
+      "name": "Cambio a helado",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "MOZZA-STICKS",
+      "sku": "MOZZA-STICKS",
+      "name": "Sticks de Mozzarella",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 8900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "CERVEZA",
+      "sku": "CERVEZA",
+      "name": "Cerveza Artesanal",
+      "tax_profile": "IVA16",
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 6900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "channel_ref": "KIOSK",
+      "name": {
+        "default": "Kiosko",
+        "translations": {
+          "en": "Kiosk"
+        }
+      },
+      "default_availability": "OFFERED"
+    },
+    {
+      "channel_ref": "COUNTER",
+      "name": {
+        "default": "Mostrador",
+        "translations": {
+          "en": "Counter"
+        }
+      },
+      "default_availability": "OFFERED"
+    }
+  ],
+  "categories": [
+    {
+      "category_ref": "C-BURGERS",
+      "name": {
+        "default": "Hamburguesas",
+        "translations": {
+          "en": "Burgers"
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:burger-supreme",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "C-COMBOS",
+      "name": {
+        "default": "Combos",
+        "translations": {
+          "en": "Combos"
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:combo-chef",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "C-SIDES",
+      "name": {
+        "default": "Para acompañar",
+        "translations": {
+          "en": "Sides"
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:fries",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "C-DRINKS",
+      "name": {
+        "default": "Bebidas y Postres",
+        "translations": {
+          "en": "Drinks & Desserts"
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:limonada",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    }
+  ],
+  "presentation": [
+    {
+      "product_ref": "SMASH-CLASSIC",
+      "category_ref": "C-BURGERS",
+      "display_name": {
+        "default": "Smash Suprema",
+        "translations": {
+          "en": "Supreme Smash"
+        }
+      },
+      "description": {
+        "default": "Carne a la parrilla, queso americano fundido, lechuga y tomate en pan brioche.",
+        "translations": {
+          "en": "Grilled patty, melted American cheese, lettuce and tomato on a brioche bun."
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:burger-supreme",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "SODA",
+        "SHAKE-CHOCO",
+        "NUGGETS",
+        "MOZZA-STICKS",
+        "CERVEZA"
+      ]
+    },
+    {
+      "product_ref": "SMASH-CHEESE",
+      "category_ref": "C-BURGERS",
+      "display_name": {
+        "default": "Italian Burger",
+        "translations": {
+          "en": "Italian Burger"
+        }
+      },
+      "description": {
+        "default": "Pesto genovés, mozzarella, tomate fresco y albahaca sobre pan de sésamo.",
+        "translations": {
+          "en": "Genovese pesto, mozzarella, fresh tomato and basil on a sesame bun."
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:burger-italian",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "ONION-RINGS",
+        "SODA",
+        "SHAKE-CHOCO",
+        "MOZZA-STICKS",
+        "CERVEZA"
+      ]
+    },
+    {
+      "product_ref": "SMASH-DOUBLE",
+      "category_ref": "C-BURGERS",
+      "display_name": {
+        "default": "Pulled Pork",
+        "translations": {
+          "en": "Pulled Pork"
+        }
+      },
+      "description": {
+        "default": "Cerdo deshebrado en salsa BBQ, pepinillos encurtidos y lechuga.",
+        "translations": {
+          "en": "Slow-cooked pulled pork in BBQ sauce, pickles and lettuce."
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:pulled-pork",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "SODA",
+        "SHAKE-CHOCO",
+        "NUGGETS",
+        "CERVEZA",
+        "MOZZA-STICKS"
+      ]
+    },
+    {
+      "product_ref": "COMBO-SMASH",
+      "category_ref": "C-COMBOS",
+      "display_name": {
+        "default": "Combo del Chef",
+        "translations": {
+          "en": "Chef's Combo"
+        }
+      },
+      "description": {
+        "default": "Hamburguesa del chef con champiñones y queso azul, más acompañamiento y bebida.",
+        "translations": {
+          "en": "The chef's burger with mushrooms and blue cheese, plus a side and a drink."
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:combo-chef",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "SHAKE-CHOCO",
+        "NUGGETS",
+        "ONION-RINGS",
+        "MOZZA-STICKS"
+      ]
+    },
+    {
+      "product_ref": "FRIES",
+      "category_ref": "C-SIDES",
+      "display_name": {
+        "default": "Papas Fritas",
+        "translations": {
+          "en": "French Fries"
+        }
+      },
+      "description": {
+        "default": "Doradas, crujientes y con sal de mar. Van con todo.",
+        "translations": {
+          "en": "Golden, crisp and sea-salted. They go with everything."
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:fries",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "SODA",
+        "SHAKE-CHOCO",
+        "SMASH-CLASSIC",
+        "CERVEZA"
+      ]
+    },
+    {
+      "product_ref": "NUGGETS",
+      "category_ref": "C-SIDES",
+      "display_name": {
+        "default": "Nuggets x6",
+        "translations": {
+          "en": "Nuggets x6"
+        }
+      },
+      "description": {
+        "default": "Seis piezas de pollo empanizado, servidas con dos salsas.",
+        "translations": {
+          "en": "Six breaded chicken pieces, served with two dips."
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:nuggets",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "SODA",
+        "SMASH-CLASSIC",
+        "MOZZA-STICKS"
+      ]
+    },
+    {
+      "product_ref": "ONION-RINGS",
+      "category_ref": "C-SIDES",
+      "display_name": {
+        "default": "Aros de Cebolla",
+        "translations": {
+          "en": "Onion Rings"
+        }
+      },
+      "description": {
+        "default": "Cebolla en aros con capa crujiente y alioli de la casa.",
+        "translations": {
+          "en": "Battered onion rings with house aioli."
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:onion-rings",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "SODA",
+        "SMASH-CHEESE",
+        "SHAKE-CHOCO",
+        "CERVEZA"
+      ]
+    },
+    {
+      "product_ref": "SODA",
+      "category_ref": "C-DRINKS",
+      "display_name": {
+        "default": "Coca-Cola Clásica",
+        "translations": {
+          "en": "Coca-Cola Clásica"
+        }
+      },
+      "description": {
+        "default": "Coca-Cola Clásica bien fría, servida con hielo.",
+        "translations": {
+          "en": "Ice-cold Coca-Cola Clásica, served over ice."
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:coca-clasica",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "NUGGETS",
+        "SMASH-CLASSIC"
+      ]
+    },
+    {
+      "product_ref": "SODA-CITRUS",
+      "category_ref": "C-DRINKS",
+      "display_name": {
+        "default": "Limonada",
+        "translations": {
+          "en": "Lemonade"
+        }
+      },
+      "description": {
+        "default": "Limonada natural con menta fresca y mucho hielo.",
+        "translations": {
+          "en": "Fresh lemonade with mint and plenty of ice."
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:limonada",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "ONION-RINGS",
+        "SMASH-CLASSIC"
+      ]
+    },
+    {
+      "product_ref": "SHAKE-CHOCO",
+      "category_ref": "C-DRINKS",
+      "display_name": {
+        "default": "Helado de Chocolate",
+        "translations": {
+          "en": "Chocolate Ice Cream"
+        }
+      },
+      "description": {
+        "default": "Tres bolas de chocolate belga con trozos de chocolate amargo.",
+        "translations": {
+          "en": "Three scoops of Belgian chocolate with dark chocolate chunks."
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:helado-chocolate",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "FRIES",
+        "NUGGETS",
+        "SMASH-CHEESE"
+      ]
+    },
+    {
+      "product_ref": "MOZZA-STICKS",
+      "category_ref": "C-SIDES",
+      "display_name": {
+        "default": "Sticks de Mozzarella",
+        "translations": {
+          "en": "Mozzarella Sticks"
+        }
+      },
+      "description": {
+        "default": "Mozzarella empanizada y fundida, con salsa marinara.",
+        "translations": {
+          "en": "Breaded mozzarella, melted through, with marinara."
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:mozzarella",
+        "media_type": "image/gif",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "CERVEZA",
+        "SMASH-CLASSIC",
+        "SODA"
+      ]
+    },
+    {
+      "product_ref": "CERVEZA",
+      "category_ref": "C-DRINKS",
+      "display_name": {
+        "default": "Cerveza Artesanal",
+        "translations": {
+          "en": "Craft Beer"
+        }
+      },
+      "description": {
+        "default": "Tirada fría, espuma densa, para acompañar la parrilla.",
+        "translations": {
+          "en": "Poured cold with a thick head, made for the grill."
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:cerveza",
+        "media_type": "image/gif",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "MOZZA-STICKS",
+        "SMASH-DOUBLE",
+        "FRIES"
+      ]
+    }
+  ],
+  "selection_groups": [
+    {
+      "group_id": "G-CL-SIZE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-CLASSIC",
+      "name": {
+        "default": "¿Cómo la quieres?",
+        "translations": {
+          "en": "How do you want it?"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-CL-EXTRAS",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-CLASSIC",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 1
+    },
+    {
+      "group_id": "G-CL-REMOVE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-CLASSIC",
+      "name": {
+        "default": "Quitar ingredientes",
+        "translations": {
+          "en": "Remove"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 2
+    },
+    {
+      "group_id": "G-CH-EXTRAS",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-CHEESE",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-CH-REMOVE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-CHEESE",
+      "name": {
+        "default": "Quitar ingredientes",
+        "translations": {
+          "en": "Remove"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 1
+    },
+    {
+      "group_id": "G-DB-EXTRAS",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-DOUBLE",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-DB-REMOVE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SMASH-DOUBLE",
+      "name": {
+        "default": "Quitar ingredientes",
+        "translations": {
+          "en": "Remove"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 1
+    },
+    {
+      "group_id": "G-SO-SIZE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SODA",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Size"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-SC-SIZE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "SODA-CITRUS",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Size"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-CO-SIDE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "COMBO-SMASH",
+      "name": {
+        "default": "Elige tu acompañamiento",
+        "translations": {
+          "en": "Pick a side"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-CO-DRINK",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "COMBO-SMASH",
+      "name": {
+        "default": "Elige tu bebida",
+        "translations": {
+          "en": "Pick a drink"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 1
+    },
+    {
+      "group_id": "G-CO-DRINK-SIZE",
+      "owner_kind": "OPTION",
+      "owner_ref": "O-CO-SODA",
+      "name": {
+        "default": "Tamaño de la bebida",
+        "translations": {
+          "en": "Drink size"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-CO-EXTRAS",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "COMBO-SMASH",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 2
+    }
+  ],
+  "selection_options": [
+    {
+      "option_id": "O-CL-SINGLE",
+      "group_id": "G-CL-SIZE",
+      "name": {
+        "default": "Sencilla",
+        "translations": {
+          "en": "Single"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-CL-DOUBLE",
+      "group_id": "G-CL-SIZE",
+      "name": {
+        "default": "Doble carne",
+        "translations": {
+          "en": "Double patty"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "EXTRA-PATTY"
+    },
+    {
+      "option_id": "O-CL-CHEESE",
+      "group_id": "G-CL-EXTRAS",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Extra cheese"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "EXTRA-CHEESE",
+      "image": {
+        "content_hash": "file:extra-cheese",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CL-BACON",
+      "group_id": "G-CL-EXTRAS",
+      "name": {
+        "default": "Salsa mayo hierbas",
+        "translations": {
+          "en": "Herb mayo sauce"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "EXTRA-BACON",
+      "image": {
+        "content_hash": "file:salsa-mayo",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CL-NOONION",
+      "group_id": "G-CL-REMOVE",
+      "name": {
+        "default": "Sin cebolla",
+        "translations": {
+          "en": "No onion"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-CL-NOPICKLE",
+      "group_id": "G-CL-REMOVE",
+      "name": {
+        "default": "Sin pepinillo",
+        "translations": {
+          "en": "No pickles"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-CL-NOSAUCE",
+      "group_id": "G-CL-REMOVE",
+      "name": {
+        "default": "Sin salsa",
+        "translations": {
+          "en": "No sauce"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2
+    },
+    {
+      "option_id": "O-CH-CHEESE",
+      "group_id": "G-CH-EXTRAS",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Extra cheese"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "EXTRA-CHEESE",
+      "image": {
+        "content_hash": "file:extra-cheese",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CH-BACON",
+      "group_id": "G-CH-EXTRAS",
+      "name": {
+        "default": "Salsa mayo hierbas",
+        "translations": {
+          "en": "Herb mayo sauce"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "EXTRA-BACON",
+      "image": {
+        "content_hash": "file:salsa-mayo",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CH-NOONION",
+      "group_id": "G-CH-REMOVE",
+      "name": {
+        "default": "Sin cebolla",
+        "translations": {
+          "en": "No onion"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-CH-NOSAUCE",
+      "group_id": "G-CH-REMOVE",
+      "name": {
+        "default": "Sin salsa",
+        "translations": {
+          "en": "No sauce"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-DB-CHEESE",
+      "group_id": "G-DB-EXTRAS",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Extra cheese"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "EXTRA-CHEESE",
+      "image": {
+        "content_hash": "file:extra-cheese",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-DB-BACON",
+      "group_id": "G-DB-EXTRAS",
+      "name": {
+        "default": "Salsa mayo hierbas",
+        "translations": {
+          "en": "Herb mayo sauce"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "EXTRA-BACON",
+      "image": {
+        "content_hash": "file:salsa-mayo",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-DB-NOONION",
+      "group_id": "G-DB-REMOVE",
+      "name": {
+        "default": "Sin cebolla",
+        "translations": {
+          "en": "No onion"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-DB-NOSAUCE",
+      "group_id": "G-DB-REMOVE",
+      "name": {
+        "default": "Sin salsa",
+        "translations": {
+          "en": "No sauce"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-SO-REG",
+      "group_id": "G-SO-SIZE",
+      "name": {
+        "default": "Regular",
+        "translations": {
+          "en": "Regular"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-SO-LARGE",
+      "group_id": "G-SO-SIZE",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Large"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "SIZE-LARGE"
+    },
+    {
+      "option_id": "O-SC-REG",
+      "group_id": "G-SC-SIZE",
+      "name": {
+        "default": "Regular",
+        "translations": {
+          "en": "Regular"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-SC-LARGE",
+      "group_id": "G-SC-SIZE",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Large"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "SIZE-LARGE"
+    },
+    {
+      "option_id": "O-CO-FRIES",
+      "group_id": "G-CO-SIDE",
+      "name": {
+        "default": "Papas Rústicas",
+        "translations": {
+          "en": "Rustic Fries"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:fries",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CO-RINGS",
+      "group_id": "G-CO-SIDE",
+      "name": {
+        "default": "Aros de Cebolla",
+        "translations": {
+          "en": "Onion Rings"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "UP-RINGS",
+      "image": {
+        "content_hash": "file:onion-rings",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CO-SODA",
+      "group_id": "G-CO-DRINK",
+      "name": {
+        "default": "Coca-Cola Clásica",
+        "translations": {
+          "en": "Coca-Cola Clásica"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:coca-clasica",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CO-SHAKE",
+      "group_id": "G-CO-DRINK",
+      "name": {
+        "default": "Helado de chocolate",
+        "translations": {
+          "en": "Chocolate ice cream"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "UP-SHAKE",
+      "image": {
+        "content_hash": "file:helado-chocolate",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CO-REG",
+      "group_id": "G-CO-DRINK-SIZE",
+      "name": {
+        "default": "Regular",
+        "translations": {
+          "en": "Regular"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-CO-LARGE",
+      "group_id": "G-CO-DRINK-SIZE",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Large"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "SIZE-LARGE"
+    },
+    {
+      "option_id": "O-CO-BACON",
+      "group_id": "G-CO-EXTRAS",
+      "name": {
+        "default": "Carne extra",
+        "translations": {
+          "en": "Extra patty"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "EXTRA-PATTY",
+      "image": {
+        "content_hash": "file:extra-carne",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "option_id": "O-CO-CHEESE",
+      "group_id": "G-CO-EXTRAS",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Extra cheese"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "EXTRA-CHEESE",
+      "image": {
+        "content_hash": "file:extra-cheese",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    }
+  ],
+  "availability": [],
+  "promotions": [
+    {
+      "promotion_id": "PROMO-SMASH25",
+      "code": "SMASH25",
+      "name": "25% en Smash Suprema",
+      "active": true,
+      "priority": 10,
+      "stackability": "STACKABLE",
+      "scope": "TENANT",
+      "rule": {
+        "kind": "PERCENTAGE_OFF",
+        "product_ref": "SMASH-CLASSIC",
+        "percentage_bps": 2500
+      }
+    },
+    {
+      "promotion_id": "PROMO-BASKET50",
+      "code": "AHORRA50",
+      "name": "Ahorra $50 en pedidos de $250",
+      "active": true,
+      "priority": 5,
+      "stackability": "STACKABLE",
+      "scope": "TENANT",
+      "rule": {
+        "kind": "BASKET_THRESHOLD",
+        "minimum_minor": 25000,
+        "amount_minor": 5000
+      }
+    }
+  ]
+}

@@ -16,7 +16,13 @@
         "products": 10,
         "price_entries": 12,
         "barcodes": 10,
-        "promotions": 0
+        "promotions": 0,
+        "channels": 0,
+        "categories": 0,
+        "presentation": 0,
+        "selection_groups": 0,
+        "selection_options": 0,
+        "availability": 0
       },
       "imported_at": "2026-10-08T15:00:00.000000Z",
       "committed_at": "2026-10-08T15:00:00.000000Z",
@@ -29,7 +35,13 @@
       "products": 10,
       "price_entries": 12,
       "barcodes": 10,
-      "promotions": 0
+      "promotions": 0,
+      "channels": 0,
+      "categories": 0,
+      "presentation": 0,
+      "selection_groups": 0,
+      "selection_options": 0,
+      "availability": 0
     }
   },
   "pending": [],

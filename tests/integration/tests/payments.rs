@@ -53,6 +53,8 @@ fn totalized_scripted(core: &ScriptedCore) -> RetailTransaction {
             edge_catalog::Barcode::new(edge_application::testing::DEMO_BARCODE).unwrap(),
         ),
         quantity: Quantity::from_units(1).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())

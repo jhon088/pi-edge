@@ -719,9 +719,10 @@ impl SqliteUnitOfWork<'_, '_> {
                           description, quantity_thousandths, unit_price_minor, tax_rate_bps,
                           price_mode, price_book_id, extended_amount_minor,
                           discount_amount_minor, taxable_amount_minor, tax_amount_minor,
-                          line_total_minor, currency, created_at)
+                          line_total_minor, currency, created_at, base_unit_price_minor,
+                          preparation_note)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16, ?17, ?18, ?19)
+                             ?16, ?17, ?18, ?19, ?20, ?21)
                      ON CONFLICT(line_id) DO UPDATE SET
                          quantity_thousandths = excluded.quantity_thousandths,
                          extended_amount_minor = excluded.extended_amount_minor,
@@ -749,9 +750,12 @@ impl SqliteUnitOfWork<'_, '_> {
                         line.line_total.minor(),
                         line.unit_price.currency().code(),
                         now.to_rfc3339(),
+                        line.base_unit_price.minor(),
+                        line.preparation_note,
                     ],
                 )
                 .map_err(sqlite_err)?;
+            self.write_line_selections(line, now)?;
         }
         // Payments are not children of the sale: they belong to the payment
         // context and are written by its own adapter (ADR 016). The sale only
@@ -875,6 +879,102 @@ impl SqliteUnitOfWork<'_, '_> {
         Ok(transaction)
     }
 
+    /// The materialised choices of one line.
+    ///
+    /// Written once and never updated: a selection is part of what the line
+    /// *is*, so changing one means a different line. Re-running the insert is
+    /// a no-op so a line rewritten by a promotion re-evaluation stays cheap.
+    fn write_line_selections(
+        &self,
+        line: &TransactionLine,
+        now: Timestamp,
+    ) -> Result<(), AppError> {
+        for (sequence, selection) in line.selections.iter().enumerate() {
+            self.tx
+                .execute(
+                    "INSERT INTO transaction_line_selections
+                         (line_id, sequence, option_id, group_id, group_name, name, quantity,
+                          component_ref, unit_price_minor, amount_minor, currency, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                     ON CONFLICT(line_id, option_id) DO NOTHING",
+                    params![
+                        line.line_id.to_string(),
+                        i64::try_from(sequence).unwrap_or(i64::MAX),
+                        selection.option_id.as_str(),
+                        selection.group_id.as_str(),
+                        selection.group_name,
+                        selection.name,
+                        selection.quantity,
+                        selection.component_ref.as_ref().map(ProductRef::as_str),
+                        selection.unit_price.minor(),
+                        selection.amount.minor(),
+                        selection.amount.currency().code(),
+                        now.to_rfc3339(),
+                    ],
+                )
+                .map_err(sqlite_err)?;
+        }
+        Ok(())
+    }
+
+    fn load_line_selections(&self, line_id: &str) -> Result<Vec<TransactionSelection>, AppError> {
+        let mut stmt = self
+            .tx
+            .prepare(
+                "SELECT option_id, group_id, group_name, name, quantity, component_ref,
+                        unit_price_minor, amount_minor, currency
+                 FROM transaction_line_selections
+                 WHERE line_id = ?1
+                 ORDER BY sequence ASC",
+            )
+            .map_err(sqlite_err)?;
+        let rows = stmt
+            .query_map(params![line_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            })
+            .map_err(sqlite_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_err)?;
+
+        rows.into_iter()
+            .map(
+                |(
+                    option_id,
+                    group_id,
+                    group_name,
+                    name,
+                    quantity,
+                    component_ref,
+                    unit_price_minor,
+                    amount_minor,
+                    currency,
+                )| {
+                    let currency = parse_currency(&currency)?;
+                    Ok(TransactionSelection {
+                        option_id: parse_id(&option_id)?,
+                        group_id: parse_id(&group_id)?,
+                        group_name,
+                        name,
+                        quantity,
+                        component_ref: parse_opt_id(component_ref)?,
+                        unit_price: money(unit_price_minor, currency),
+                        amount: money(amount_minor, currency),
+                    })
+                },
+            )
+            .collect()
+    }
+
     fn load_lines(&self, transaction_id: &str) -> Result<Vec<TransactionLine>, AppError> {
         let mut stmt = self
             .tx
@@ -882,7 +982,8 @@ impl SqliteUnitOfWork<'_, '_> {
                 "SELECT line_id, line_number, product_ref, sku, barcode, description,
                         quantity_thousandths, unit_price_minor, tax_rate_bps, price_mode,
                         price_book_id, extended_amount_minor, discount_amount_minor,
-                        taxable_amount_minor, tax_amount_minor, line_total_minor, currency
+                        taxable_amount_minor, tax_amount_minor, line_total_minor, currency,
+                        base_unit_price_minor, preparation_note
                  FROM transaction_lines
                  WHERE transaction_id = ?1
                  ORDER BY line_number ASC",
@@ -893,7 +994,14 @@ impl SqliteUnitOfWork<'_, '_> {
             .map_err(sqlite_err)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(sqlite_err)?;
-        rows.into_iter().map(RawLine::into_domain).collect()
+        rows.into_iter()
+            .map(|raw| {
+                let line_id = raw.line_id.clone();
+                let mut line = raw.into_domain()?;
+                line.selections = self.load_line_selections(&line_id)?;
+                Ok(line)
+            })
+            .collect()
     }
 }
 
@@ -1243,6 +1351,8 @@ struct RawLine {
     tax_amount_minor: i64,
     line_total_minor: i64,
     currency: String,
+    base_unit_price_minor: i64,
+    preparation_note: Option<String>,
 }
 
 impl RawLine {
@@ -1265,6 +1375,8 @@ impl RawLine {
             tax_amount_minor: row.get(14)?,
             line_total_minor: row.get(15)?,
             currency: row.get(16)?,
+            base_unit_price_minor: row.get(17)?,
+            preparation_note: row.get(18)?,
         })
     }
 
@@ -1293,6 +1405,10 @@ impl RawLine {
             taxable_amount: money(self.taxable_amount_minor, currency),
             tax_amount: money(self.tax_amount_minor, currency),
             line_total: money(self.line_total_minor, currency),
+            base_unit_price: money(self.base_unit_price_minor, currency),
+            // Loaded separately: a line's choices are their own rows.
+            selections: Vec::new(),
+            preparation_note: self.preparation_note,
         })
     }
 }

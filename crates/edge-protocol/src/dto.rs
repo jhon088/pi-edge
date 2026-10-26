@@ -4,6 +4,8 @@
 //! and from the core live in [`crate::mapping`], behind the `core-mapping`
 //! feature.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -70,6 +72,41 @@ pub struct TransactionLineV1 {
     pub taxable_amount: MoneyV1,
     pub tax_amount: MoneyV1,
     pub line_total: MoneyV1,
+    /// What the product costs before any choice. Equal to `unit_price` for an
+    /// ordinary line (ADR 046).
+    pub base_unit_price: MoneyV1,
+    /// Base plus every chargeable choice. The same amount as `unit_price`,
+    /// named for what it is so a client never has to add anything up.
+    pub configured_unit_price: MoneyV1,
+    /// The choices the customer made, materialised onto the line. Empty for
+    /// an ordinary line.
+    ///
+    /// **Always serialized**, empty or not. A field that disappears when it
+    /// has nothing in it is a field every client has to defend against, and
+    /// one that forgets gets `undefined` where the contract promised a list
+    /// (ADR 046).
+    #[serde(default)]
+    pub selections: Vec<TransactionSelectionV1>,
+    /// Always serialized, `null` when there is no note, for the same reason.
+    #[serde(default)]
+    pub preparation_note: Option<String>,
+}
+
+/// One materialised choice on a sale line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionSelectionV1 {
+    pub option_id: String,
+    pub group_id: String,
+    /// What the question was called, as the customer saw it.
+    pub group_name: String,
+    /// What the answer was called, as the customer saw it.
+    pub name: String,
+    pub quantity: i64,
+    /// The product a chargeable choice billed through, if any.
+    pub component_ref: Option<String>,
+    pub chargeable: bool,
+    pub unit_price: MoneyV1,
+    pub amount: MoneyV1,
 }
 
 /// One promotion as applied to one sale.
@@ -227,6 +264,14 @@ pub struct RetailTransactionV1 {
     /// Derived by the core: a payment outcome is still open, so the sale
     /// cannot finalize until it is reconciled.
     pub requires_payment_resolution: bool,
+    /// What the sale would total if it were totalized right now, computed by
+    /// the core. What a cart screen shows while the customer is still
+    /// choosing; `totals` stays the official, totalized figure (ADR 046).
+    pub running_totals: TotalsV1,
+    /// Short, human order number, for a kiosk screen and for calling an order
+    /// out. Derived from the register and this sale's own sequence on it, so
+    /// it is stable and needs no counter of its own (ADR 046).
+    pub order_code: String,
     pub created_at: String,
     pub updated_at: String,
     pub finalized_at: Option<String>,
@@ -411,6 +456,21 @@ pub enum ProductSelectorV1 {
 pub struct AddItemRequestV1 {
     pub product: ProductSelectorV1,
     pub quantity_thousandths: i64,
+    /// The choices the customer made, as **ids and quantities only**. Empty is
+    /// an ordinary scan. There is deliberately no price, delta or total here:
+    /// a client never states what a choice costs (ADR 046).
+    #[serde(default)]
+    pub selections: Vec<RequestedSelectionV1>,
+    /// Free text for whoever prepares it. Never priced, never taxed.
+    #[serde(default)]
+    pub preparation_note: Option<String>,
+}
+
+/// One choice a client says the customer made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestedSelectionV1 {
+    pub option_id: String,
+    pub quantity: i64,
 }
 
 /// The line to remove, by its number. Numbers are never reused.
@@ -436,6 +496,255 @@ pub struct SnapshotCountsV1 {
     pub barcodes: i64,
     #[serde(default)]
     pub promotions: i64,
+    /// Universal catalog extensions (ADR 044). Defaulted so a Retail producer
+    /// that has never heard of them keeps working unchanged.
+    #[serde(default)]
+    pub channels: i64,
+    #[serde(default)]
+    pub categories: i64,
+    #[serde(default)]
+    pub presentation: i64,
+    #[serde(default)]
+    pub selection_groups: i64,
+    #[serde(default)]
+    pub selection_options: i64,
+    #[serde(default)]
+    pub availability: i64,
+}
+
+/// Text in every language the catalog publishes it in.
+///
+/// `default` is what is shown when nothing matches, and the translations are a
+/// map so the wire order of a JSON object cannot change the content hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalizedTextV1 {
+    pub default: String,
+    #[serde(default)]
+    pub translations: BTreeMap<String, String>,
+}
+
+/// A picture, by reference. Never bytes in the catalog: the catalog carries
+/// the content hash and the local asset runtime carries the file (ADR 044,
+/// ADR 045).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetRefV1 {
+    /// `sha256:<64 hex>`.
+    pub content_hash: String,
+    pub media_type: String,
+    pub byte_size: i64,
+}
+
+/// What this installation has of one asset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetStatusV1 {
+    /// The declaration this state answers.
+    pub asset: AssetRefV1,
+    /// `MISSING`, `STAGED`, `READY` or `CORRUPT`.
+    pub state: String,
+    /// Bytes already on disk while a transfer is in progress. The offset a
+    /// resumed import continues from.
+    pub bytes_received: i64,
+}
+
+/// Naming one asset: used to ask for its state and to commit it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetRequestV1 {
+    pub asset: AssetRefV1,
+}
+
+/// One slice of an asset's bytes.
+///
+/// Bytes travel as lowercase hex because the frame is JSON Lines. Hex doubles
+/// the payload and base64 would cost a third less, but it adds no dependency
+/// and the digest the core computes is over the decoded bytes either way — so
+/// the encoding can change later without touching the asset model (ADR 045).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetChunkRequestV1 {
+    /// What the sender claims it is sending, with every chunk, so a retry is
+    /// self-describing and the size limit is checked before a byte is written.
+    pub asset: AssetRefV1,
+    /// Where these bytes belong. Must be exactly what is already staged.
+    pub offset: i64,
+    /// Lowercase hex of this slice. **There is no field by which a client can
+    /// declare the asset valid**: PI.Edge decides, by hashing (ADR 045).
+    pub data_hex: String,
+}
+
+impl AssetChunkRequestV1 {
+    /// Build a chunk from raw bytes.
+    pub fn new(asset: AssetRefV1, offset: i64, bytes: &[u8]) -> Self {
+        let mut data_hex = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            data_hex.push(HEX_DIGITS[usize::from(byte >> 4)]);
+            data_hex.push(HEX_DIGITS[usize::from(byte & 0x0f)]);
+        }
+        Self {
+            asset,
+            offset,
+            data_hex,
+        }
+    }
+
+    /// The bytes this chunk carries.
+    pub fn data(&self) -> Result<Vec<u8>, AssetChunkError> {
+        let raw = self.data_hex.as_bytes();
+        if !raw.len().is_multiple_of(2) {
+            return Err(AssetChunkError::NotHex);
+        }
+        let mut bytes = Vec::with_capacity(raw.len() / 2);
+        for pair in raw.chunks(2) {
+            let high = hex_value(pair[0]).ok_or(AssetChunkError::NotHex)?;
+            let low = hex_value(pair[1]).ok_or(AssetChunkError::NotHex)?;
+            bytes.push((high << 4) | low);
+        }
+        if bytes.len() > MAX_ASSET_CHUNK_BYTES {
+            return Err(AssetChunkError::TooLarge {
+                bytes: bytes.len(),
+                limit: MAX_ASSET_CHUNK_BYTES,
+            });
+        }
+        Ok(bytes)
+    }
+}
+
+const HEX_DIGITS: [char; 16] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+];
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Why a chunk's payload could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AssetChunkError {
+    #[error("the chunk payload is not lowercase hex")]
+    NotHex,
+    #[error("the chunk carries {bytes} bytes, above the per-chunk limit of {limit}")]
+    TooLarge { bytes: usize, limit: usize },
+}
+
+/// Largest slice of an asset one request may carry.
+///
+/// Hex-encoded this is twice as many bytes on the wire, which leaves a wide
+/// margin under the transport's frame limit even with the envelope around it.
+/// An asset larger than this is simply more chunks (ADR 045).
+pub const MAX_ASSET_CHUNK_BYTES: usize = 512 * 1024;
+
+/// What one snapshot needs locally before it can be put in force.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotAssetsV1 {
+    pub snapshot_id: String,
+    /// Derived from the snapshot's own content, in canonical order.
+    pub assets: Vec<AssetStatusV1>,
+    /// How many of them are not ready. Zero is the condition for activation.
+    pub pending: i64,
+    /// What the whole content store holds, for an operator watching disk.
+    pub stored_bytes: i64,
+}
+
+/// Ask what a snapshot needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotAssetsRequestV1 {
+    pub snapshot_id: String,
+}
+
+/// A way of selling: a counter, a kiosk, a self-checkout lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelV1 {
+    pub channel_ref: String,
+    pub name: LocalizedTextV1,
+    /// `OFFERED` or `WITHHELD`: what this channel does about products no
+    /// availability row mentions.
+    pub default_availability: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CategoryV1 {
+    pub category_ref: String,
+    pub name: LocalizedTextV1,
+    #[serde(default)]
+    pub display_order: i32,
+    #[serde(default)]
+    pub image: Option<AssetRefV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductPresentationV1 {
+    pub product_ref: String,
+    #[serde(default)]
+    pub category_ref: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<LocalizedTextV1>,
+    #[serde(default)]
+    pub description: Option<LocalizedTextV1>,
+    #[serde(default)]
+    pub display_order: i32,
+    #[serde(default)]
+    pub image: Option<AssetRefV1>,
+    /// What to offer alongside this product, in the order to offer it.
+    ///
+    /// Merchandising that travels with the snapshot. Nothing here changes a
+    /// price, and an importer that omits it gets an empty list, which is what
+    /// every catalog built before this field had.
+    #[serde(default)]
+    pub recommended_product_refs: Vec<String>,
+}
+
+/// One question a product asks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionGroupV1 {
+    pub group_id: String,
+    /// `PRODUCT` or `OPTION`. An `OPTION` owner is how a nested question is
+    /// expressed: picking a drink can ask for its size.
+    pub owner_kind: String,
+    pub owner_ref: String,
+    pub name: LocalizedTextV1,
+    /// Total units across the group. `min_quantity >= 1` is what required
+    /// means; there is no separate flag.
+    pub min_quantity: i64,
+    pub max_quantity: i64,
+    #[serde(default)]
+    pub display_order: i32,
+}
+
+/// One answer inside a group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionOptionV1 {
+    pub option_id: String,
+    pub group_id: String,
+    pub name: LocalizedTextV1,
+    /// The product a chargeable option bills through. Absent means the option
+    /// is purely semantic and free. **There is no price on the wire here:** a
+    /// client never states what an option costs.
+    #[serde(default)]
+    pub component_product_ref: Option<String>,
+    pub max_quantity: i64,
+    #[serde(default)]
+    pub default_quantity: i64,
+    #[serde(default)]
+    pub display_order: i32,
+    #[serde(default)]
+    pub image: Option<AssetRefV1>,
+}
+
+/// What one channel offers. Commercial availability, never stock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAvailabilityV1 {
+    pub channel_ref: String,
+    /// `PRODUCT`, `CATEGORY` or `SELECTION_OPTION`.
+    pub target_kind: String,
+    pub target_ref: String,
+    /// `OFFERED`, `WITHHELD` or `SNOOZED`.
+    pub state: String,
+    /// Required exactly when the state is `SNOOZED`.
+    #[serde(default)]
+    pub snoozed_until: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -584,6 +893,12 @@ pub struct BeginCatalogImportRequestV1 {
     pub tax_profiles: Vec<TaxProfileV1>,
     /// A snapshot must declare at least one price book.
     pub price_books: Vec<PriceBookV1>,
+    /// Channels and categories travel in the header, like tax profiles and
+    /// price books: few of them, and the chunks reference them (ADR 044).
+    #[serde(default)]
+    pub channels: Vec<ChannelV1>,
+    #[serde(default)]
+    pub categories: Vec<CategoryV1>,
 }
 
 /// One price for the product that carries it.
@@ -697,6 +1012,18 @@ pub struct PutCatalogChunkRequestV1 {
     /// must travel with it, exactly as a price does.
     #[serde(default)]
     pub promotions: Vec<PromotionRecordV1>,
+    /// How the products in this chunk are shown.
+    #[serde(default)]
+    pub presentation: Vec<ProductPresentationV1>,
+    /// The questions they ask and the answers they accept.
+    #[serde(default)]
+    pub selection_groups: Vec<SelectionGroupV1>,
+    #[serde(default)]
+    pub selection_options: Vec<SelectionOptionV1>,
+    /// What each channel offers. Resolved at commit, so a row may name
+    /// something a later chunk delivers.
+    #[serde(default)]
+    pub availability: Vec<ChannelAvailabilityV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1273,4 +1600,342 @@ pub struct PageRequestV1 {
     pub limit: i64,
     #[serde(default)]
     pub offset: i64,
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asset() -> AssetRefV1 {
+        AssetRefV1 {
+            content_hash: format!("sha256:{}", "a".repeat(64)),
+            media_type: "image/png".to_owned(),
+            byte_size: 4,
+        }
+    }
+
+    #[test]
+    fn a_chunk_round_trips_its_bytes() {
+        for bytes in [
+            Vec::new(),
+            vec![0],
+            vec![0xff],
+            vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+            (0..=255_u8).collect(),
+        ] {
+            let chunk = AssetChunkRequestV1::new(asset(), 0, &bytes);
+            assert_eq!(chunk.data().unwrap(), bytes);
+            assert_eq!(
+                chunk.data_hex.len(),
+                bytes.len() * 2,
+                "hex is exactly two characters a byte"
+            );
+            assert!(
+                chunk
+                    .data_hex
+                    .chars()
+                    .all(|character| character.is_ascii_digit()
+                        || ('a'..='f').contains(&character)),
+                "lowercase hex and nothing else"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chunk_survives_the_wire() {
+        let bytes: Vec<u8> = (0..64_u8).collect();
+        let chunk = AssetChunkRequestV1::new(asset(), 512, &bytes);
+        let json = serde_json::to_string(&chunk).unwrap();
+        assert!(
+            !json.contains('\n'),
+            "JSON Lines framing needs one line per frame"
+        );
+        let parsed: AssetChunkRequestV1 = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, chunk);
+        assert_eq!(parsed.data().unwrap(), bytes);
+        assert_eq!(parsed.offset, 512);
+    }
+
+    #[test]
+    fn a_payload_that_is_not_bytes_is_refused() {
+        let mut chunk = AssetChunkRequestV1::new(asset(), 0, &[1, 2, 3]);
+        chunk.data_hex = "abc".to_owned();
+        assert_eq!(chunk.data(), Err(AssetChunkError::NotHex));
+        chunk.data_hex = "zz".to_owned();
+        assert_eq!(chunk.data(), Err(AssetChunkError::NotHex));
+        chunk.data_hex = "../etc".to_owned();
+        assert!(chunk.data().is_err());
+    }
+
+    #[test]
+    fn a_chunk_larger_than_the_limit_is_refused() {
+        let oversized = vec![0_u8; MAX_ASSET_CHUNK_BYTES + 1];
+        let chunk = AssetChunkRequestV1::new(asset(), 0, &oversized);
+        assert!(matches!(
+            chunk.data(),
+            Err(AssetChunkError::TooLarge { limit, .. }) if limit == MAX_ASSET_CHUNK_BYTES
+        ));
+        // Hex doubles the payload, so one chunk at the limit stays well under
+        // the transport's 4 MiB frame — which this crate deliberately cannot
+        // name, since framing belongs to `edge-ipc`.
+        const {
+            assert!(MAX_ASSET_CHUNK_BYTES * 2 < 4 * 1024 * 1024);
+        }
+    }
+
+    /// A list in the contract is always a list.
+    ///
+    /// This is the bug that blacked out the cart: `selections` was omitted
+    /// when empty, so an ordinary line arrived with `undefined` where the
+    /// contract promised an array, and the first client that read `.length`
+    /// threw while rendering (ADR 046).
+    #[test]
+    fn an_ordinary_line_still_carries_an_empty_selection_list() {
+        let money = MoneyV1 {
+            minor: 5_900,
+            currency: "MXN".to_owned(),
+            formatted: "59.00".to_owned(),
+        };
+        let line = TransactionLineV1 {
+            line_id: "l1".to_owned(),
+            line_number: 1,
+            product_ref: "FRIES".to_owned(),
+            sku: None,
+            barcode: None,
+            description: "Papas".to_owned(),
+            quantity: "1".to_owned(),
+            quantity_thousandths: 1_000,
+            unit_price: money.clone(),
+            tax_rate_bps: 1_600,
+            price_mode: "TAX_EXCLUSIVE".to_owned(),
+            price_book_id: None,
+            extended_amount: money.clone(),
+            discount_amount: money.clone(),
+            taxable_amount: money.clone(),
+            tax_amount: money.clone(),
+            line_total: money.clone(),
+            base_unit_price: money.clone(),
+            configured_unit_price: money,
+            selections: Vec::new(),
+            preparation_note: None,
+        };
+
+        let json = serde_json::to_value(&line).unwrap();
+        assert_eq!(
+            json.get("selections"),
+            Some(&serde_json::json!([])),
+            "an empty list is still a list on the wire"
+        );
+        assert_eq!(
+            json.get("preparation_note"),
+            Some(&Value::Null),
+            "and an absent note is still a field"
+        );
+        // And it survives the round trip it has to survive.
+        let parsed: TransactionLineV1 = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, line);
+    }
+
+    /// There is no field on the wire by which a client could declare an asset
+    /// verified: it says what it is sending, and the core hashes it.
+    #[test]
+    fn the_wire_has_no_way_to_claim_an_asset_is_valid() {
+        let json = serde_json::to_string(&AssetChunkRequestV1::new(asset(), 0, &[1, 2])).unwrap();
+        for forbidden in ["valid", "verified", "trusted", "path", "filename", "url"] {
+            assert!(
+                !json.contains(forbidden),
+                "`{forbidden}` has no place in a chunk: {json}"
+            );
+        }
+    }
+}
+
+// ----------------------------------------------------------------- the kiosk
+
+/// Which way of selling is asking. The core filters the menu by it; absent
+/// means "everything the catalog has" (ADR 044, ADR 046).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuRequestV1 {
+    #[serde(default)]
+    pub channel_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductConfigurationRequestV1 {
+    pub product_ref: String,
+    #[serde(default)]
+    pub channel_ref: Option<String>,
+}
+
+/// Everything a kiosk screen needs to draw the menu in force.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuV1 {
+    pub snapshot_id: String,
+    pub currency: String,
+    pub categories: Vec<MenuCategoryV1>,
+    pub items: Vec<MenuItemV1>,
+    /// What a basket can earn, so a screen can advertise it. The amounts stay
+    /// the promotion engine's.
+    pub promotions: Vec<MenuPromotionV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuCategoryV1 {
+    pub category_ref: String,
+    pub name: String,
+    pub display_order: i32,
+    pub image: Option<AssetRefV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuItemV1 {
+    pub product_ref: String,
+    pub category_ref: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub display_order: i32,
+    pub image: Option<AssetRefV1>,
+    /// What it costs before any choice is made.
+    pub from_price: MoneyV1,
+    /// Whether tapping it opens a configuration screen or adds it straight
+    /// away.
+    pub configurable: bool,
+    /// What the catalog says to offer alongside this one, in order, already
+    /// filtered to products this menu actually shows.
+    ///
+    /// **Always serialized**, empty or not (ADR 046).
+    #[serde(default)]
+    pub recommended_product_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuPromotionV1 {
+    pub promotion_id: String,
+    pub code: String,
+    pub name: String,
+}
+
+/// The questions one product asks, each answer with its own price.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductConfigurationV1 {
+    pub product_ref: String,
+    pub name: String,
+    pub base_price: MoneyV1,
+    /// Flat, each group carrying the option it hangs from, so a client renders
+    /// the nesting it is told about rather than inferring one.
+    pub groups: Vec<MenuSelectionGroupV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuSelectionGroupV1 {
+    pub group_id: String,
+    /// Set for a nested question: only asked once that option is chosen.
+    pub owner_option_id: Option<String>,
+    pub name: String,
+    pub min_quantity: i64,
+    pub max_quantity: i64,
+    pub display_order: i32,
+    pub options: Vec<MenuSelectionOptionV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuSelectionOptionV1 {
+    pub option_id: String,
+    pub name: String,
+    pub component_ref: Option<String>,
+    /// Resolved by the core. Zero for a semantic choice, which has no product
+    /// and therefore no price.
+    pub unit_price: MoneyV1,
+    pub max_quantity: i64,
+    pub default_quantity: i64,
+    pub display_order: i32,
+    pub image: Option<AssetRefV1>,
+}
+
+/// The receipt printer this installation drives.
+///
+/// Device configuration, not a sale and not a tenant setting: it says which
+/// box is on this desk. The `queue` is opaque above the composition root —
+/// the core never resolves it and no client may invent one that was not in
+/// `available` (ADR 039).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrinterSettingsV1 {
+    pub enabled: bool,
+    /// A model id from `models`, or empty while nothing is chosen.
+    pub model: String,
+    /// A host print queue name from `available`, or empty.
+    pub queue: String,
+    /// Characters per line of the configured paper.
+    pub columns: i64,
+    /// Put a receipt out by itself when a sale finalizes.
+    pub auto_print: bool,
+}
+
+/// What the admin screen needs to offer a choice: what is configured now,
+/// what models this build knows, and what queues this host actually has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrinterConfigurationV1 {
+    pub settings: PrinterSettingsV1,
+    pub models: Vec<PrinterModelV1>,
+    /// Reported by the host spooler. Empty means it has none — never a
+    /// guess, and never an invented device.
+    pub available: Vec<PrinterQueueV1>,
+    /// What the driver in force calls itself, for the diagnostic line.
+    pub driver: String,
+    /// Whether the configured printer answered a probe. `None` when there is
+    /// nothing configured to probe.
+    pub reachable: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrinterModelV1 {
+    pub id: String,
+    pub label: String,
+    pub paper_mm: i64,
+    pub columns: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrinterQueueV1 {
+    pub name: String,
+    pub accepting: bool,
+}
+
+/// Ask for part of an asset's bytes.
+///
+/// A read mirrors the write: chunked, so an asset larger than one frame still
+/// crosses it, and never a path — a client names a content hash and gets bytes
+/// (ADR 045).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetReadRequestV1 {
+    pub asset: AssetRefV1,
+    pub offset: i64,
+    /// How many bytes at most. Clamped to the per-chunk ceiling.
+    pub length: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetChunkV1 {
+    pub content_hash: String,
+    pub offset: i64,
+    /// Lowercase hex of this slice.
+    pub data_hex: String,
+    /// Total length of the asset, so a client knows when it has all of it.
+    pub byte_size: i64,
+}
+
+impl AssetChunkV1 {
+    pub fn data(&self) -> Result<Vec<u8>, AssetChunkError> {
+        AssetChunkRequestV1 {
+            asset: AssetRefV1 {
+                content_hash: self.content_hash.clone(),
+                media_type: "application/octet-stream".to_owned(),
+                byte_size: self.byte_size,
+            },
+            offset: self.offset,
+            data_hex: self.data_hex.clone(),
+        }
+        .data()
+    }
 }

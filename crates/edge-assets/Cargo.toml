@@ -1,0 +1,22 @@
+[package]
+name = "edge-assets"
+description = "Local content-addressed asset store for PI.Edge: staging, verification, atomic promotion and offline reads of the bytes a CatalogSnapshot references. Knows nothing about SQLite, HTTP, IPC, Tauri or the POS domain."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# The only crate that knows where an asset's bytes live. No SQLite, no HTTP,
+# no application layer: it is handed bytes and a declared `AssetRef`, and it
+# decides whether those two agree.
+[dependencies]
+edge-catalog = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

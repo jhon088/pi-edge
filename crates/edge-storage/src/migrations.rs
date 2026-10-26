@@ -71,6 +71,21 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0011_receipts",
         sql: include_str!("../migrations/0011_receipts.sql"),
     },
+    Migration {
+        version: 12,
+        name: "0012_universal_catalog",
+        sql: include_str!("../migrations/0012_universal_catalog.sql"),
+    },
+    Migration {
+        version: 13,
+        name: "0013_configured_lines",
+        sql: include_str!("../migrations/0013_configured_lines.sql"),
+    },
+    Migration {
+        version: 14,
+        name: "0014_product_recommendations",
+        sql: include_str!("../migrations/0014_product_recommendations.sql"),
+    },
 ];
 
 /// Schema version this binary expects.
@@ -555,6 +570,178 @@ mod tests {
         assert!(insert(11_600, 20_000, 8_400).is_ok());
         // Anything else is refused.
         assert!(insert(11_600, 20_000, 1_000).is_err());
+    }
+
+    /// Migration 0012 is purely additive, which is the whole point of it: a
+    /// store already selling must gain the universal catalog tables without
+    /// its existing snapshots, prices or sales being touched or rebuilt.
+    #[test]
+    fn migration_0012_adds_the_universal_catalog_without_rebuilding_anything() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        apply_through(&conn, 11).unwrap();
+
+        // A snapshot and a product, as an installation on schema 11 has.
+        conn.execute_batch(
+            "INSERT INTO catalog_snapshots
+                 (snapshot_id, tenant_id, store_id, version, status, declared_content_hash,
+                  content_hash, generated_at, expected_tax_profiles, expected_products,
+                  expected_barcodes, imported_at, created_at, updated_at)
+             VALUES ('snap', 'T', 'S', 1, 'ACTIVE', 'h', 'h', 'now', 1, 1, 0, 'now', 'now', 'now');
+             INSERT INTO catalog_tax_profiles (snapshot_id, code, name, rate_bps)
+             VALUES ('snap', 'IVA16', 'IVA 16%', 1600);
+             INSERT INTO catalog_products
+                 (snapshot_id, product_ref, name, active, sellable, tax_profile_code)
+             VALUES ('snap', 'P-1', 'Producto', 1, 1, 'IVA16');",
+        )
+        .unwrap();
+
+        apply(&conn).unwrap();
+
+        // The pre-existing rows are still there, unchanged.
+        let (product, snapshot): (String, String) = conn
+            .query_row(
+                "SELECT p.name, s.content_hash FROM catalog_products p
+                 JOIN catalog_snapshots s ON s.snapshot_id = p.snapshot_id",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((product.as_str(), snapshot.as_str()), ("Producto", "h"));
+
+        // The new expectations default to zero, which is what makes an old
+        // snapshot still verify.
+        let expected: i64 = conn
+            .query_row(
+                "SELECT expected_channels + expected_categories + expected_presentation
+                      + expected_selection_groups + expected_selection_options
+                      + expected_availability
+                 FROM catalog_snapshots",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(expected, 0);
+
+        // Every new table exists and cascades from its snapshot.
+        for table in [
+            "catalog_channels",
+            "catalog_text_translations",
+            "catalog_categories",
+            "catalog_product_presentation",
+            "catalog_selection_groups",
+            "catalog_selection_options",
+            "catalog_channel_availability",
+        ] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} must start empty");
+        }
+        verify_no_orphans(&conn).unwrap();
+    }
+
+    /// The database refuses the structural lies it can see on its own, so an
+    /// adapter bug cannot persist one.
+    #[test]
+    fn the_universal_catalog_tables_refuse_an_impossible_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        apply(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO catalog_snapshots
+                 (snapshot_id, tenant_id, store_id, version, status, declared_content_hash,
+                  content_hash, generated_at, expected_tax_profiles, expected_products,
+                  expected_barcodes, imported_at, created_at, updated_at)
+             VALUES ('snap', 'T', 'S', 1, 'IMPORTING', 'h', NULL, 'now', 0, 0, 0,
+                     'now', 'now', 'now');
+             INSERT INTO catalog_channels
+                 (snapshot_id, channel_ref, name_default, default_availability)
+             VALUES ('snap', 'KIOSK', 'Kiosko', 'OFFERED');",
+        )
+        .unwrap();
+
+        // A channel that neither offers nor withholds by default.
+        assert!(conn
+            .execute(
+                "INSERT INTO catalog_channels
+                     (snapshot_id, channel_ref, name_default, default_availability)
+                 VALUES ('snap', 'POS', 'Caja', 'MAYBE')",
+                [],
+            )
+            .is_err());
+
+        // A group that accepts nothing, and one whose minimum exceeds its own
+        // maximum.
+        let group = |id: &str, min: i64, max: i64| {
+            conn.execute(
+                "INSERT INTO catalog_selection_groups
+                     (snapshot_id, group_id, owner_kind, owner_option_id, name_default,
+                      min_quantity, max_quantity, display_order)
+                 VALUES ('snap', ?1, 'OPTION', 'O-X', 'G', ?2, ?3, 0)",
+                rusqlite::params![id, min, max],
+            )
+        };
+        assert!(group("G-1", 1, 1).is_ok());
+        assert!(group("G-2", 0, 0).is_err());
+        assert!(group("G-3", 3, 1).is_err());
+
+        // A group that claims a product owner but names none.
+        assert!(conn
+            .execute(
+                "INSERT INTO catalog_selection_groups
+                     (snapshot_id, group_id, owner_kind, name_default, min_quantity,
+                      max_quantity, display_order)
+                 VALUES ('snap', 'G-4', 'PRODUCT', 'G', 1, 1, 0)",
+                [],
+            )
+            .is_err());
+
+        // An option defaulting to more than it allows.
+        assert!(conn
+            .execute(
+                "INSERT INTO catalog_selection_options
+                     (snapshot_id, option_id, group_id, name_default, max_quantity,
+                      default_quantity, display_order)
+                 VALUES ('snap', 'O-1', 'G-1', 'O', 1, 2, 0)",
+                [],
+            )
+            .is_err());
+
+        // A snooze with no end, and an end on a state that does not expire.
+        let availability = |target: &str, state: &str, until: Option<&str>| {
+            conn.execute(
+                "INSERT INTO catalog_channel_availability
+                     (snapshot_id, channel_ref, target_kind, target_ref, state, snoozed_until)
+                 VALUES ('snap', 'KIOSK', 'PRODUCT', ?1, ?2, ?3)",
+                rusqlite::params![target, state, until],
+            )
+        };
+        assert!(availability("P-1", "SNOOZED", Some("2026-10-23T18:00:00Z")).is_ok());
+        assert!(availability("P-2", "SNOOZED", None).is_err());
+        assert!(availability("P-3", "WITHHELD", Some("2026-10-23T18:00:00Z")).is_err());
+        // And a channel the snapshot never declared.
+        assert!(conn
+            .execute(
+                "INSERT INTO catalog_channel_availability
+                     (snapshot_id, channel_ref, target_kind, target_ref, state)
+                 VALUES ('snap', 'DRIVE-THRU', 'PRODUCT', 'P-1', 'OFFERED')",
+                [],
+            )
+            .is_err());
+
+        // An image reference is all three columns or none.
+        assert!(conn
+            .execute(
+                "INSERT INTO catalog_categories
+                     (snapshot_id, category_ref, name_default, display_order,
+                      image_content_hash)
+                 VALUES ('snap', 'C-1', 'Cat', 0, 'sha256:abc')",
+                [],
+            )
+            .is_err());
     }
 
     /// Migration 0010 rebuilds `outbox_events` to widen its status set.

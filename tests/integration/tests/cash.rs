@@ -657,6 +657,8 @@ fn a_close_is_blocked_by_an_unresolved_payment() {
             edge_catalog::Barcode::new(edge_application::testing::DEMO_BARCODE).unwrap(),
         ),
         quantity: Quantity::from_units(1).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())

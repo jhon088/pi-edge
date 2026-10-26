@@ -45,6 +45,35 @@ pub fn core_at(path: &Path, id_offset: u64) -> TestCore {
     )
 }
 
+/// Build a core whose asset store lives in `assets/` next to the database, so
+/// a "restart" rediscovers both from the same directory.
+pub fn core_at_with_assets(path: &Path, id_offset: u64) -> TestCore {
+    let root = path.parent().unwrap().join("assets");
+    core_at(path, id_offset).with_assets(Arc::new(
+        edge_assets::FileSystemAssetStore::open(root).unwrap(),
+    ))
+}
+
+/// The bytes of a tiny valid PNG, and the `AssetRef` they answer to.
+pub fn png_asset(tag: u8, length: usize) -> (Vec<u8>, edge_catalog::AssetRef) {
+    use sha2::{Digest, Sha256};
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    bytes.extend((0..length).map(|index| (index as u8).wrapping_mul(tag).wrapping_add(tag)));
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut hex = String::new();
+    for byte in hasher.finalize() {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    let asset = edge_catalog::AssetRef::import(
+        format!("sha256:{hex}"),
+        "image/png",
+        i64::try_from(bytes.len()).unwrap(),
+    )
+    .unwrap();
+    (bytes, asset)
+}
+
 /// Same, with the clock frozen at an arbitrary instant: a later "lifetime"
 /// that believes it is running on another day.
 pub fn core_at_instant(path: &Path, id_offset: u64, instant: &str) -> TestCore {
@@ -126,6 +155,18 @@ pub fn on_hand(core: &TestCore, product_ref: &str) -> i64 {
         .unwrap()
         .position
         .on_hand_thousandths
+}
+
+/// Provision the device identity and nothing else: the asset tests have no
+/// sale to make, and a catalog they cannot activate yet.
+pub fn init_device(core: &TestCore) {
+    core.init_device(InitDeviceCommand {
+        tenant_id: TenantId::new("TENANT-DEMO").unwrap(),
+        store_id: StoreId::new("STORE-DEMO").unwrap(),
+        currency: Currency::Mxn,
+        allow_negative_inventory: true,
+    })
+    .unwrap();
 }
 
 /// Every movement of one product, oldest first.
@@ -267,6 +308,8 @@ pub fn demo_item() -> AddItemCommand {
         request_id: None,
         selector: ProductSelector::Barcode(Barcode::new(DEMO_BARCODE).unwrap()),
         quantity: Quantity::from_units(1).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     }
 }
 
@@ -337,6 +380,8 @@ pub fn cash_sale(core: &TestCore, tendered_minor: i64) {
         request_id: None,
         selector: ProductSelector::Barcode(Barcode::new(DEMO_BARCODE).unwrap()),
         quantity: Quantity::from_units(1).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
     core.totalize_transaction(TotalizeTransactionCommand::default())

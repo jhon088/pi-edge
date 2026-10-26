@@ -44,6 +44,8 @@ pub mod escpos;
 pub mod printer;
 pub mod scanner;
 pub mod simulator;
+pub mod spooler;
+pub mod swappable;
 pub mod unconfigured;
 
 pub use device::{HardwareDeviceKind, HardwareDeviceState, HardwareDeviceStatus};
@@ -53,4 +55,6 @@ pub use escpos::{EscPosConfig, EscPosKickDrawer, EscPosTcpPrinter};
 pub use printer::{PrintAlign, PrintDocument, PrintKind, PrintLine, PrinterPort};
 pub use scanner::{KeyInput, ScanBuffer, ScanEvent, ScanPolicy};
 pub use simulator::{IminBridge, IminDrawer, SimulatedHardware, SimulatorDrawer, SimulatorPrinter};
+pub use spooler::{list_queues, EscPosSpoolerPrinter, SpoolerQueue};
+pub use swappable::SwappablePrinter;
 pub use unconfigured::{UnconfiguredDrawer, UnconfiguredPrinter, UNCONFIGURED};

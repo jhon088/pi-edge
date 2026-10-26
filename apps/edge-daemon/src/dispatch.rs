@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use edge_application::commands::{
     AbortCatalogImportCommand, AcceptRefundCommand, ActivateCatalogSnapshotCommand,
-    CloseBusinessDayCommand, FinalizeTransactionCommand, OpenBusinessDayCommand, OpenDrawerCommand,
-    ReconcileRefundCommand, RequestSessionCloseCommand, StartRefundPaymentCommand,
-    StartTransactionCommand, TotalizeTransactionCommand,
+    CloseBusinessDayCommand, CommitAssetCommand, FinalizeTransactionCommand,
+    OpenBusinessDayCommand, OpenDrawerCommand, ReconcileRefundCommand, RequestSessionCloseCommand,
+    StartRefundPaymentCommand, StartTransactionCommand, TotalizeTransactionCommand,
 };
 use edge_application::{AppError, EdgeApplication, CORE_VERSION};
 use edge_cash::CashError;
@@ -22,13 +22,16 @@ use edge_catalog::CatalogError;
 use edge_domain::prelude::{DomainError, RetailTransaction};
 use edge_payments::{PaymentError, SimulatorPaymentProvider};
 use edge_protocol::{
-    error_codes, BusinessDayCloseV1, BusinessDayV1, CashPositionV1, CatalogImportStatusV1,
-    CatalogSnapshotViewV1, CatalogStatusV1, CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1,
-    HardwareStatusV1, InventoryBootstrapV1, InventoryMovementV1, InventoryPositionV1,
-    JournalEventV1, OperationV1, PaymentResultV1, PendingOutboxV1, ProductLookupV1, ReceiptV1,
-    RecentSalesV1, RefundEligibilityV1, RefundV1, RegisterSessionV1, RequestEnvelopeV1,
-    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
-    SessionCloseResultV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, PROTOCOL_VERSION,
+    error_codes, AssetChunkRequestV1, AssetChunkV1, AssetRefV1, AssetStatusV1, BusinessDayCloseV1,
+    BusinessDayV1, CashPositionV1, CatalogImportStatusV1, CatalogSnapshotViewV1, CatalogStatusV1,
+    CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, HardwareStatusV1, InventoryBootstrapV1,
+    InventoryMovementV1, InventoryPositionV1, JournalEventV1, MenuV1, OperationV1, PaymentResultV1,
+    PendingOutboxV1, PrinterConfigurationV1, PrinterModelV1, PrinterQueueV1, PrinterSettingsV1,
+    ProductConfigurationV1, ProductLookupV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
+    RefundV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
+    RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
+    SnapshotAssetsV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, MAX_ASSET_CHUNK_BYTES,
+    PROTOCOL_VERSION,
 };
 use edge_refunds::RefundError;
 use edge_storage::SqliteEdgeStore;
@@ -55,6 +58,9 @@ pub struct Dispatcher {
     /// refunded. Resolved here, in the composition root's dispatch, so the
     /// refund domain only ever sees an answer (ADR 030).
     refund_authority: RefundAuthoritySource,
+    /// The composition root's printer handle, when this runtime has one.
+    /// `None` in a harness that composed a core without devices.
+    printer: Option<crate::printer_settings::PrinterControl>,
 }
 
 impl Dispatcher {
@@ -71,6 +77,61 @@ impl Dispatcher {
             core,
             state,
             refund_authority,
+            printer: None,
+        }
+    }
+
+    /// Give dispatch the handle that reconfigures the receipt printer.
+    pub fn with_printer_control(
+        mut self,
+        control: crate::printer_settings::PrinterControl,
+    ) -> Self {
+        self.printer = Some(control);
+        self
+    }
+
+    /// What the admin screen draws: what is configured, what models this
+    /// build offers, and what queues this host actually reports.
+    fn printer_configuration(&self) -> PrinterConfigurationV1 {
+        let models = crate::printer_settings::MODELS
+            .iter()
+            .map(|entry| PrinterModelV1 {
+                id: entry.id.to_owned(),
+                label: entry.label.to_owned(),
+                paper_mm: i64::from(entry.paper_mm),
+                columns: entry.columns as i64,
+            })
+            .collect();
+        // Whatever the host says, and nothing when it says nothing.
+        let available = edge_hardware::list_queues()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|queue| PrinterQueueV1 {
+                name: queue.name,
+                accepting: queue.accepting,
+            })
+            .collect();
+        let settings = self
+            .printer
+            .as_ref()
+            .map(|control| control.settings())
+            .unwrap_or_default();
+        PrinterConfigurationV1 {
+            settings: PrinterSettingsV1 {
+                enabled: settings.enabled,
+                model: settings.model.clone(),
+                queue: settings.queue.clone(),
+                columns: settings.columns as i64,
+                auto_print: settings.auto_print,
+            },
+            models,
+            available,
+            driver: self
+                .printer
+                .as_ref()
+                .map(|control| control.driver().to_owned())
+                .unwrap_or_else(|| edge_hardware::UNCONFIGURED.to_owned()),
+            reachable: self.printer.as_ref().and_then(|c| c.reachable()),
         }
     }
 
@@ -375,6 +436,36 @@ impl Dispatcher {
                 let view = self.core.print_test_page().map_err(|e| self.app_error(e))?;
                 Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
             }
+            OperationV1::GetPrinterSettings => {
+                Ok(ResultV1::PrinterConfiguration(self.printer_configuration()))
+            }
+            OperationV1::SetPrinterSettings(payload) => {
+                let control = self.printer.as_ref().ok_or_else(|| {
+                    // No handle means this runtime was composed without one,
+                    // which is a deployment fact, not a client mistake.
+                    ErrorV1::new(
+                        error_codes::HARDWARE_NOT_CONFIGURED,
+                        "this runtime cannot be configured from a client",
+                    )
+                })?;
+                let settings = crate::printer_settings::PrinterSettings {
+                    enabled: payload.enabled,
+                    model: payload.model,
+                    queue: payload.queue,
+                    columns: usize::try_from(payload.columns).unwrap_or(48),
+                    auto_print: payload.auto_print,
+                };
+                control.apply(&settings).map_err(|detail| {
+                    ErrorV1::new(error_codes::HARDWARE_INVALID_CONFIGURATION, detail)
+                })?;
+                tracing::info!(
+                    enabled = settings.enabled,
+                    model = %settings.model,
+                    auto_print = settings.auto_print,
+                    "receipt printer reconfigured"
+                );
+                Ok(ResultV1::PrinterConfiguration(self.printer_configuration()))
+            }
             OperationV1::PrintTransaction(payload) => {
                 let command = payload
                     .into_command(Some(request_id))
@@ -636,6 +727,71 @@ impl Dispatcher {
                 Ok(ResultV1::CatalogImport(CatalogImportStatusV1::from(
                     &status,
                 )))
+            }
+            OperationV1::GetMenu(payload) => {
+                let channel = payload.channel().map_err(catalog_error)?;
+                let menu = self.core.get_menu(channel).map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::Menu(MenuV1::from(&menu)))
+            }
+            OperationV1::GetProductConfiguration(payload) => {
+                let product_ref = payload.product().map_err(catalog_error)?;
+                let channel = payload.channel().map_err(catalog_error)?;
+                let configuration = self
+                    .core
+                    .get_product_configuration(product_ref, channel)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::ProductConfiguration(
+                    ProductConfigurationV1::from(&configuration),
+                ))
+            }
+            OperationV1::ReadAsset(payload) => {
+                let (asset, offset, length) = payload.into_domain().map_err(catalog_error)?;
+                // Clamped here rather than trusted: a client asking for
+                // everything at once must not be able to overrun the frame.
+                let wanted = length.clamp(0, MAX_ASSET_CHUNK_BYTES as i64);
+                let bytes = self
+                    .core
+                    .read_asset(&asset, offset, wanted)
+                    .map_err(|e| self.app_error(e))?;
+                let chunk = AssetChunkRequestV1::new(AssetRefV1::from(&asset), offset, &bytes);
+                Ok(ResultV1::AssetChunk(AssetChunkV1 {
+                    content_hash: asset.content_hash.clone(),
+                    offset,
+                    data_hex: chunk.data_hex,
+                    byte_size: asset.byte_size,
+                }))
+            }
+            OperationV1::GetSnapshotAssets(payload) => {
+                let snapshot_id = payload.snapshot_id().map_err(catalog_error)?;
+                let view = self
+                    .core
+                    .get_snapshot_assets(snapshot_id)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::SnapshotAssets(SnapshotAssetsV1::from(&view)))
+            }
+            OperationV1::GetAssetStatus(payload) => {
+                let asset = payload.into_domain().map_err(catalog_error)?;
+                let view = self
+                    .core
+                    .get_asset_status(asset)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::AssetStatus(AssetStatusV1::from(&view)))
+            }
+            OperationV1::PutAssetChunk(payload) => {
+                let command = payload.into_command().map_err(catalog_error)?;
+                let view = self
+                    .core
+                    .put_asset_chunk(command)
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::AssetStatus(AssetStatusV1::from(&view)))
+            }
+            OperationV1::CommitAsset(payload) => {
+                let asset = payload.into_domain().map_err(catalog_error)?;
+                let view = self
+                    .core
+                    .commit_asset(CommitAssetCommand { asset })
+                    .map_err(|e| self.app_error(e))?;
+                Ok(ResultV1::AssetStatus(AssetStatusV1::from(&view)))
             }
             OperationV1::CommitCatalogImport(payload) => {
                 let command = payload

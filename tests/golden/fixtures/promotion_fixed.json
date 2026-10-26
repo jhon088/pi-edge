@@ -53,7 +53,19 @@
         "minor": 5497,
         "currency": "MXN",
         "formatted": "54.97"
-      }
+      },
+      "base_unit_price": {
+        "minor": 1999,
+        "currency": "MXN",
+        "formatted": "19.99"
+      },
+      "configured_unit_price": {
+        "minor": 1999,
+        "currency": "MXN",
+        "formatted": "19.99"
+      },
+      "selections": [],
+      "preparation_note": null
     }
   ],
   "applied_promotions": [
@@ -124,6 +136,34 @@
   },
   "basket_locked": false,
   "requires_payment_resolution": false,
+  "running_totals": {
+    "subtotal": {
+      "minor": 5997,
+      "currency": "MXN",
+      "formatted": "59.97"
+    },
+    "discount_total": {
+      "minor": 500,
+      "currency": "MXN",
+      "formatted": "5.00"
+    },
+    "net_total": {
+      "minor": 5497,
+      "currency": "MXN",
+      "formatted": "54.97"
+    },
+    "tax_total": {
+      "minor": 0,
+      "currency": "MXN",
+      "formatted": "0.00"
+    },
+    "grand_total": {
+      "minor": 5497,
+      "currency": "MXN",
+      "formatted": "54.97"
+    }
+  },
+  "order_code": "K01-0001",
   "created_at": "2026-10-08T15:00:00.000000Z",
   "updated_at": "2026-10-08T15:00:00.000000Z",
   "finalized_at": null,

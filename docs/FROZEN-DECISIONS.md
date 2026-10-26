@@ -542,6 +542,127 @@ for payment states that do not exist yet.
   printed refund voucher today; a dedicated refund document is a future product
   decision, not symmetry to be built now. (ADR 043)
 
+## Universal catalog extensions (milestone 13A)
+
+* **One core, six products.** Retail POS, retail kiosk, restaurant POS,
+  restaurant kiosk, venue POS and venue kiosk share this core. Whatever a
+  vertical needs beyond retail is **catalog content**, never a parallel runtime,
+  a second transaction engine or a vertical-specific module. (ADR 044)
+* **The names are universal and the verticals are data.** `SelectionGroup`,
+  `SelectionOption`, `Channel`, `ChannelAvailability`, `Category`,
+  `LocalizedText`, `AssetRef`. There is no `RestaurantModifier` and no
+  `RestaurantMenu`. (ADR 044)
+* **A `ChannelRef` is opaque**, like a store or a price book. The core never
+  branches on `"kiosk"` or `"pos"`: it asks the catalog what a channel offers.
+  (ADR 044)
+* **A question is a quantity range, not a rules engine.** A group declares
+  `min_quantity .. max_quantity` in **units across the group**; an option
+  declares its own `max_quantity` and `default_quantity`. `min_quantity >= 1`
+  **is** what required means — there is no `required` flag to contradict it.
+  (ADR 044)
+* **Nesting is a group owned by an option.** That is the whole mechanism behind
+  `Bebida → Coca Cola → Tamaño`: no tree type, no condition language, no rule
+  evaluator. A cycle in the owner chain is refused at commit. (ADR 044)
+* **A chargeable option names a product and never carries a price.** It sets
+  `component_ref` to a product the snapshot already contains, and the
+  **existing** price books price it. No price column, no delta, no second
+  price-book engine, and nothing on the wire by which a client could state what
+  an extra costs. An option with no component is semantic and free. (ADR 044)
+* **Commercial availability is not inventory.** "We do not sell that here" is
+  catalog content per channel; "there is none left" is this installation's
+  ledger (ADR 029). A product with stock can be off the kiosk's menu, and a
+  product that ran out today is still on tomorrow's menu. (ADR 044)
+* **A channel declares its own default as data**, `OFFERED` or `WITHHELD`, so
+  absence is never ambiguous. A snapshot with no channels filters nothing. A
+  product is offered only if the product **and** its category are offered, and
+  an **unknown channel offers nothing**. (ADR 044)
+* **Localized text resolves by exact locale or falls back to the default** —
+  no prefix matching, because `es` is not `es-MX`. Translations are rows, not a
+  blob, and every one of them participates in the content hash in locale order,
+  so the order of a JSON object cannot change a snapshot's identity. (ADR 044)
+* **An image is a reference, never bytes**: `sha256:<64 hex>`, media type, byte
+  size. It participates in the hash, so a changed photo is a changed snapshot.
+  SQLite is not an asset store. (ADR 044)
+* **One importer, extended.** `begin → put_chunk → commit → activate` is
+  unchanged; channels and categories travel in the header, the bulk content in
+  the chunks. There is no second importer. (ADR 044)
+* **Structural validation runs before `PENDING`.** What a value object can
+  refuse it refuses; what a foreign key or CHECK can see it sees; what only a
+  complete snapshot can answer — a dangling option owner, a cycle, an
+  availability target that does not exist — is answered at commit. An invalid
+  import stays `IMPORTING` and never prices a sale. (ADR 044)
+* **A snapshot that declares no extensions keeps the content hash it already
+  had.** The six new hash sections contribute nothing when empty. This protects
+  a persisted `content_hash` and the `(store, version, declared_content_hash)`
+  idempotency of `begin_catalog_import` across the upgrade. (ADR 044)
+* **The core still has no concept of a configured sale line.** The line prices
+  `unit_price × quantity`. Base price, selected options and a configured unit
+  price on `TransactionLine` — so a promotion can distinguish BASE_ONLY from
+  CONFIGURED_TOTAL — is a later milestone and was deliberately not guessed at
+  here. (ADR 044)
+
+## Local asset runtime (milestone 13B)
+
+* **A snapshot never becomes `ACTIVE` while an asset it references is missing,
+  the wrong length, or does not hash to what it claims.** There is no path to
+  `ACTIVE` + missing image, including through a crash. (ADR 045)
+* **An asset is the SHA-256 of its bytes and nothing else.** Not a filename,
+  not a URL, not the product that shows it. Same content means one physical
+  file, shared by every snapshot and every product that references it.
+  (ADR 045)
+* **No blobs in SQLite, and no asset table at all.** The content store *is*
+  the state: a file at the path its own digest dictates, of the declared
+  length. Nothing to keep in step with the filesystem, and therefore no window
+  in which the two disagree. (ADR 045)
+* **Stage, verify, promote.** Bytes accumulate in `staging/<hex>.part`, never
+  served; commit checks length, SHA-256 and media type, then promotes with one
+  atomic rename inside the same filesystem. A reader sees the whole verified
+  file or no file. (ADR 045)
+* **Offsets are strict and replays are free.** A chunk must start exactly where
+  the staged file ends, so no gap is ever written; a chunk that re-sends staged
+  bytes is a no-op, because a retrying transport must not be punished and the
+  digest at commit is the authority. (ADR 045)
+* **A failed staging never touches the content store.** Proven-wrong `.part`
+  files are discarded so an import can start clean; a verified asset is never
+  deleted because another import went wrong. (ADR 045)
+* **The client never declares an asset valid.** It declares what it is
+  sending; PI.Edge hashes what it received and decides. No field on the wire
+  says "verified", and **no path or filename ever crosses the protocol**. The
+  only string that becomes a path component is the 64-hex digest, re-validated
+  in the function that builds the path. (ADR 045)
+* **The manifest is derived from the snapshot's own rows**, never maintained
+  beside them: category, presentation and selection-option images, distinct by
+  hash, in canonical order. One hash may not be declared with two lengths or
+  two media types. (ADR 045)
+* **Activation verifies, in two passes, before anything is dismounted** —
+  cheap presence first, then SHA-256 over the stored bytes — inside the
+  transaction that activates. A failure is one code,
+  `CATALOG_ASSET_NOT_READY`; the snapshot stays `PENDING` and resumable and
+  **the catalog that was selling keeps selling**. (ADR 045)
+* **An `AssetRef` present means the bytes are obligatory; an `AssetRef` absent
+  means the product has no photo.** Never conflated, and a local placeholder is
+  a client's answer to the second case only. (ADR 045)
+* **No fallback to a remote URL, ever.** After activation, product images,
+  category images, the menu and its localized text all read from local storage
+  with no network of any kind. (ADR 045)
+* **No HTTP in the asset runtime.** The store is handed bytes; a cloud sync, a
+  bundle, a USB stick and a test are all the same to it. There is no
+  downloader and no `AssetSource` trait standing in for one. (ADR 045)
+* **No image processing.** No resize, no transcode, no thumbnails. The stored
+  bytes hash to exactly what the catalog declared because they *are* exactly
+  what it declared. Media type is checked against an allowlist plus a
+  signature check where one is unambiguous. (ADR 045)
+* **Nothing is ever evicted.** Usage is measurable and a per-asset ceiling is
+  configurable; a full disk is its own explicit error. No garbage collection
+  yet, and an unreferenced asset simply stays — keeping a file nobody
+  references costs disk, deleting one somebody references costs a kiosk.
+  (ADR 045)
+* **A runtime with no asset store refuses rather than improvises.** Every
+  asset reads `MISSING`, every write answers `ASSET_STORE_NOT_CONFIGURED`, a
+  snapshot that needs an image cannot be activated — and the till still sells.
+  Never a temporary directory nobody asked for, and never the network.
+  (ADR 045)
+
 ## Engineering rules (frozen in milestone 7)
 
 The organisation and quality rules in **`CLAUDE.md`** at the repository root are

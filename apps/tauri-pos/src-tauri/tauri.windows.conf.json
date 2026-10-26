@@ -1,0 +1,37 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PX Kiosk",
+        "fullscreen": true,
+        "maximized": true,
+        "decorations": false,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "externalBin": [
+      "binaries/edge-daemon",
+      "binaries/edge-cli"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": [
+          "English",
+          "SpanishInternational"
+        ]
+      }
+    }
+  }
+}

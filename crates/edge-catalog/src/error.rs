@@ -77,6 +77,93 @@ pub enum CatalogError {
     #[error("promotion `{promotion_id}` is not declared by this snapshot")]
     UnknownPromotion { promotion_id: String },
 
+    #[error("selection group `{group_id}` appears twice in this snapshot")]
+    DuplicateSelectionGroup { group_id: String },
+
+    #[error("selection option `{option_id}` appears twice in this snapshot")]
+    DuplicateSelectionOption { option_id: String },
+
+    #[error("selection group `{group_id}` is not in this snapshot")]
+    UnknownSelectionGroup { group_id: String },
+
+    #[error("selection group `{group_id}` hangs from `{owner}`, which is not in this snapshot")]
+    UnknownSelectionOwner { group_id: String, owner: String },
+
+    /// A chargeable option whose component is absent: the price books would
+    /// have nothing to price it from.
+    #[error(
+        "selection option `{option_id}` charges for `{product_ref}`, \
+         which is not in this snapshot"
+    )]
+    UnknownSelectionComponent {
+        option_id: String,
+        product_ref: String,
+    },
+
+    #[error("selection group `{group_id}` is part of a cycle of groups")]
+    CyclicSelectionGroup { group_id: String },
+
+    #[error("selection group `{group_id}` has impossible defaults: {reason}")]
+    InvalidSelectionDefaults { group_id: String, reason: String },
+
+    #[error("channel `{channel_ref}` appears twice in this snapshot")]
+    DuplicateChannel { channel_ref: String },
+
+    #[error("channel `{channel_ref}` is not declared in this snapshot")]
+    UnknownChannel { channel_ref: String },
+
+    #[error("channel `{channel_ref}` says two things about `{target}`")]
+    DuplicateAvailability { channel_ref: String, target: String },
+
+    #[error("category `{category_ref}` appears twice in this snapshot")]
+    DuplicateCategory { category_ref: String },
+
+    #[error(
+        "`{product_ref}` is shown in category `{category_ref}`, \
+         which is not in this snapshot"
+    )]
+    UnknownCategory {
+        product_ref: String,
+        category_ref: String,
+    },
+
+    #[error("`{product_ref}` has two presentation records in this snapshot")]
+    DuplicatePresentation { product_ref: String },
+
+    #[error("`{product_ref}` has a presentation but is not in this snapshot")]
+    PresentationWithoutProduct { product_ref: String },
+
+    #[error("availability names `{target}`, which is not in this snapshot")]
+    UnknownAvailabilityTarget { target: String },
+
+    /// A client asked for a choice this product does not offer — or asked for
+    /// a nested one without choosing the answer it hangs from.
+    #[error("`{option_id}` is not a choice this product offers")]
+    OptionNotOffered { option_id: String },
+
+    /// More of something than it allows, whether that is one option or the
+    /// whole group.
+    #[error("`{reference}` accepts at most {limit}, not {requested}")]
+    SelectionQuantityRefused {
+        reference: String,
+        limit: i64,
+        requested: i64,
+    },
+
+    /// A question that has to be answered was not.
+    #[error("`{name}` needs at least {minimum} chosen")]
+    RequiredSelectionMissing {
+        group_id: String,
+        name: String,
+        minimum: i64,
+    },
+
+    /// The same bytes declared two ways. A content hash identifies exactly
+    /// one sequence of bytes, so it has exactly one length and one media type
+    /// (ADR 045).
+    #[error("asset `{content_hash}` is declared with two different sizes or media types")]
+    ConflictingAssetDeclaration { content_hash: String },
+
     #[error("chunk {index} was already stored with different content")]
     ChunkConflict { index: i64 },
     #[error("chunk {index} is missing")]
@@ -133,6 +220,29 @@ impl CatalogError {
             CatalogError::InvalidValidity { .. } => "CATALOG_INVALID_VALIDITY",
             CatalogError::AmbiguousPromotion { .. } => "AMBIGUOUS_PROMOTION",
             CatalogError::UnknownPromotion { .. } => "CATALOG_UNKNOWN_PROMOTION",
+            CatalogError::DuplicateSelectionGroup { .. } => "CATALOG_DUPLICATE_SELECTION_GROUP",
+            CatalogError::DuplicateSelectionOption { .. } => "CATALOG_DUPLICATE_SELECTION_OPTION",
+            CatalogError::UnknownSelectionGroup { .. } => "CATALOG_UNKNOWN_SELECTION_GROUP",
+            CatalogError::UnknownSelectionOwner { .. } => "CATALOG_UNKNOWN_SELECTION_OWNER",
+            CatalogError::UnknownSelectionComponent { .. } => "CATALOG_UNKNOWN_SELECTION_COMPONENT",
+            CatalogError::CyclicSelectionGroup { .. } => "CATALOG_CYCLIC_SELECTION_GROUP",
+            CatalogError::InvalidSelectionDefaults { .. } => "CATALOG_INVALID_SELECTION_DEFAULTS",
+            CatalogError::DuplicateChannel { .. } => "CATALOG_DUPLICATE_CHANNEL",
+            CatalogError::UnknownChannel { .. } => "CATALOG_UNKNOWN_CHANNEL",
+            CatalogError::DuplicateAvailability { .. } => "CATALOG_DUPLICATE_AVAILABILITY",
+            CatalogError::DuplicateCategory { .. } => "CATALOG_DUPLICATE_CATEGORY",
+            CatalogError::UnknownCategory { .. } => "CATALOG_UNKNOWN_CATEGORY",
+            CatalogError::DuplicatePresentation { .. } => "CATALOG_DUPLICATE_PRESENTATION",
+            CatalogError::PresentationWithoutProduct { .. } => {
+                "CATALOG_PRESENTATION_WITHOUT_PRODUCT"
+            }
+            CatalogError::UnknownAvailabilityTarget { .. } => "CATALOG_UNKNOWN_AVAILABILITY_TARGET",
+            CatalogError::OptionNotOffered { .. } => "CATALOG_OPTION_NOT_OFFERED",
+            CatalogError::SelectionQuantityRefused { .. } => "CATALOG_SELECTION_QUANTITY_REFUSED",
+            CatalogError::RequiredSelectionMissing { .. } => "CATALOG_SELECTION_REQUIRED",
+            CatalogError::ConflictingAssetDeclaration { .. } => {
+                "CATALOG_CONFLICTING_ASSET_DECLARATION"
+            }
             CatalogError::ChunkConflict { .. } => "CATALOG_CHUNK_CONFLICT",
             CatalogError::MissingChunk { .. } => "CATALOG_IMPORT_INCOMPLETE",
             CatalogError::CountMismatch { .. } => "CATALOG_COUNT_MISMATCH",

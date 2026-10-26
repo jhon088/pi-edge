@@ -45,6 +45,8 @@ fn resolves_the_same_product_by_sku_and_by_product_ref() {
         request_id: None,
         selector: ProductSelector::Sku("SKU-001".to_owned()),
         quantity: Quantity::from_units(1).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
     let transaction = core.add_item(item("SKU-001", 1)).unwrap();
@@ -91,6 +93,8 @@ fn supports_fractional_quantities() {
         request_id: None,
         selector: selector("7500000000333"),
         quantity: Quantity::from_thousandths(2_500).unwrap(),
+        selections: Vec::new(),
+        preparation_note: None,
     })
     .unwrap();
     let totalized = core

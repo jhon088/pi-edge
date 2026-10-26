@@ -7,18 +7,31 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use edge_catalog::{
-    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Currency, PriceEntry, Promotion,
-    SnapshotContent,
+    hash_chunk, hash_snapshot, CatalogBarcode, CatalogProduct, Category, Channel,
+    ChannelAvailability, ChunkContent, Currency, PriceEntry, ProductPresentation, Promotion,
+    SelectionGroup, SelectionOption, SnapshotContent,
 };
 use edge_client::{ClientError, EdgeClient, IpcEdgeClient};
 use edge_protocol::{
     AddItemRequestV1, BeginCatalogImportRequestV1, CatalogProductRecordV1, CatalogSnapshotViewV1,
-    CommitCatalogImportRequestV1, ImportInventoryBootstrapRequestV1, InitDeviceRequestV1,
-    InventoryBootstrapItemV1, InventoryBootstrapV1, InventoryPositionV1, InventoryQueryV1,
-    OpenRegisterSessionRequestV1, PriceBookV1, PriceRecordV1, ProductSelectorV1, PromotionRecordV1,
-    PromotionRuleV1, PutCatalogChunkRequestV1, SnapshotCountsV1, StartPaymentRequestV1,
-    TaxProfileV1,
+    CategoryV1, ChannelAvailabilityV1, ChannelV1, CommitCatalogImportRequestV1,
+    ImportInventoryBootstrapRequestV1, InitDeviceRequestV1, InventoryBootstrapItemV1,
+    InventoryBootstrapV1, InventoryPositionV1, InventoryQueryV1, OpenRegisterSessionRequestV1,
+    PriceBookV1, PriceRecordV1, ProductPresentationV1, ProductSelectorV1, PromotionRecordV1,
+    PromotionRuleV1, PutCatalogChunkRequestV1, SelectionGroupV1, SelectionOptionV1,
+    SnapshotCountsV1, StartPaymentRequestV1, TaxProfileV1,
 };
+
+/// The extensions of one spec, converted once into the domain so the hash is
+/// computed from exactly what the daemon will persist.
+struct DomainExtensions {
+    channels: Vec<Channel>,
+    categories: Vec<Category>,
+    presentation: Vec<ProductPresentation>,
+    selection_groups: Vec<SelectionGroup>,
+    selection_options: Vec<SelectionOption>,
+    availability: Vec<ChannelAvailability>,
+}
 
 /// A spawned daemon process. Killed on drop so a failing test cannot leak a
 /// runtime that would block the next one.
@@ -275,6 +288,14 @@ pub struct CatalogSpec {
     pub price_books: Vec<PriceBookV1>,
     pub products: Vec<CatalogProductRecordV1>,
     pub promotions: Vec<PromotionRecordV1>,
+    /// Universal catalog extensions (ADR 044). Empty for every Retail spec,
+    /// which is what every earlier milestone's test builds.
+    pub channels: Vec<ChannelV1>,
+    pub categories: Vec<CategoryV1>,
+    pub presentation: Vec<ProductPresentationV1>,
+    pub selection_groups: Vec<SelectionGroupV1>,
+    pub selection_options: Vec<SelectionOptionV1>,
+    pub availability: Vec<ChannelAvailabilityV1>,
 }
 
 impl CatalogSpec {
@@ -297,6 +318,12 @@ impl CatalogSpec {
             price_books: vec![base_book()],
             products,
             promotions: Vec::new(),
+            channels: Vec::new(),
+            categories: Vec::new(),
+            presentation: Vec::new(),
+            selection_groups: Vec::new(),
+            selection_options: Vec::new(),
+            availability: Vec::new(),
         }
     }
 
@@ -304,6 +331,79 @@ impl CatalogSpec {
     pub fn promoting(mut self, promotion: PromotionRecordV1) -> Self {
         self.promotions.push(promotion);
         self
+    }
+
+    /// Declare a way of selling (ADR 044).
+    pub fn with_channel(mut self, channel: ChannelV1) -> Self {
+        self.channels.push(channel);
+        self
+    }
+
+    pub fn with_category(mut self, category: CategoryV1) -> Self {
+        self.categories.push(category);
+        self
+    }
+
+    pub fn with_presentation(mut self, presentation: ProductPresentationV1) -> Self {
+        self.presentation.push(presentation);
+        self
+    }
+
+    /// One question and its answers: a group never travels without them.
+    pub fn with_selection(
+        mut self,
+        group: SelectionGroupV1,
+        options: Vec<SelectionOptionV1>,
+    ) -> Self {
+        self.selection_groups.push(group);
+        self.selection_options.extend(options);
+        self
+    }
+
+    pub fn with_availability(mut self, row: ChannelAvailabilityV1) -> Self {
+        self.availability.push(row);
+        self
+    }
+
+    fn domain_extensions(&self) -> DomainExtensions {
+        DomainExtensions {
+            channels: self
+                .channels
+                .iter()
+                .cloned()
+                .map(|value| value.into_domain().unwrap())
+                .collect(),
+            categories: self
+                .categories
+                .iter()
+                .cloned()
+                .map(|value| value.into_domain().unwrap())
+                .collect(),
+            presentation: self
+                .presentation
+                .iter()
+                .cloned()
+                .map(|value| value.into_domain().unwrap())
+                .collect(),
+            selection_groups: self
+                .selection_groups
+                .iter()
+                .cloned()
+                .map(|value| value.into_domain().unwrap())
+                .collect(),
+            selection_options: self
+                .selection_options
+                .iter()
+                .cloned()
+                .map(|value| value.into_domain().unwrap())
+                .collect(),
+            availability: self
+                .availability
+                .iter()
+                .cloned()
+                .map(|value| value.into_domain().unwrap())
+                .collect(),
+        }
     }
 
     fn domain_promotions(&self) -> Vec<Promotion> {
@@ -343,6 +443,7 @@ impl CatalogSpec {
             .collect::<Result<_, _>>()
             .unwrap();
         let (products, price_entries, barcodes) = self.domain();
+        let extensions = self.domain_extensions();
         hash_snapshot(SnapshotContent {
             tax_profiles: &profiles,
             price_books: &books,
@@ -350,6 +451,12 @@ impl CatalogSpec {
             price_entries: &price_entries,
             barcodes: &barcodes,
             promotions: &self.domain_promotions(),
+            channels: &extensions.channels,
+            categories: &extensions.categories,
+            presentation: &extensions.presentation,
+            selection_groups: &extensions.selection_groups,
+            selection_options: &extensions.selection_options,
+            availability: &extensions.availability,
         })
     }
 
@@ -368,9 +475,17 @@ impl CatalogSpec {
                 price_entries: price_entries.len() as i64,
                 barcodes: barcodes.len() as i64,
                 promotions: self.promotions.len() as i64,
+                channels: self.channels.len() as i64,
+                categories: self.categories.len() as i64,
+                presentation: self.presentation.len() as i64,
+                selection_groups: self.selection_groups.len() as i64,
+                selection_options: self.selection_options.len() as i64,
+                availability: self.availability.len() as i64,
             },
             tax_profiles: self.tax_profiles.clone(),
             price_books: self.price_books.clone(),
+            channels: self.channels.clone(),
+            categories: self.categories.clone(),
         }
     }
 
@@ -392,12 +507,26 @@ impl CatalogSpec {
         }
         // Single-chunk imports in these tests, so every promotion rides here.
         let promotions = self.domain_promotions();
+        let extensions = self.domain_extensions();
         PutCatalogChunkRequestV1 {
             snapshot_id: snapshot_id.to_owned(),
             chunk_index,
-            chunk_hash: hash_chunk(&products, &prices, &barcodes, &promotions),
+            chunk_hash: hash_chunk(ChunkContent {
+                products: &products,
+                price_entries: &prices,
+                barcodes: &barcodes,
+                promotions: &promotions,
+                presentation: &extensions.presentation,
+                selection_groups: &extensions.selection_groups,
+                selection_options: &extensions.selection_options,
+                availability: &extensions.availability,
+            }),
             products: records.to_vec(),
             promotions: self.promotions.clone(),
+            presentation: self.presentation.clone(),
+            selection_groups: self.selection_groups.clone(),
+            selection_options: self.selection_options.clone(),
+            availability: self.availability.clone(),
         }
     }
 
@@ -571,6 +700,8 @@ pub fn demo_item() -> AddItemRequestV1 {
     AddItemRequestV1 {
         product: ProductSelectorV1::Barcode(DEMO_BARCODE.to_owned()),
         quantity_thousandths: 1_000,
+        selections: Vec::new(),
+        preparation_note: None,
     }
 }
 

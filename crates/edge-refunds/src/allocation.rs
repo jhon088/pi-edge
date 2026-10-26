@@ -257,6 +257,9 @@ mod tests {
             taxable_amount: mxn(net),
             tax_amount: mxn(tax),
             line_total: mxn(net + tax),
+            base_unit_price: mxn(unit_price),
+            selections: Vec::new(),
+            preparation_note: None,
         }
     }
 

@@ -35,7 +35,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use edge_catalog::{
-    CatalogBarcode, CatalogProduct, PriceBook, PriceEntry, Promotion, SnapshotCounts, TaxProfile,
+    CatalogBarcode, CatalogProduct, Category, Channel, ChannelAvailability, PriceBook, PriceEntry,
+    ProductPresentation, Promotion, SelectionGroup, SelectionOption, SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
 use edge_payments::PaymentProviderPort;
@@ -141,6 +142,12 @@ pub struct InboundCatalogBegin {
     pub tax_profiles: Vec<TaxProfile>,
     #[serde(default)]
     pub price_books: Vec<PriceBook>,
+    /// Universal catalog extensions (ADR 044). Defaulted, so a server that has
+    /// never sent them keeps importing.
+    #[serde(default)]
+    pub channels: Vec<Channel>,
+    #[serde(default)]
+    pub categories: Vec<Category>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +163,14 @@ pub struct InboundCatalogChunk {
     pub barcodes: Vec<CatalogBarcode>,
     #[serde(default)]
     pub promotions: Vec<Promotion>,
+    #[serde(default)]
+    pub presentation: Vec<ProductPresentation>,
+    #[serde(default)]
+    pub selection_groups: Vec<SelectionGroup>,
+    #[serde(default)]
+    pub selection_options: Vec<SelectionOption>,
+    #[serde(default)]
+    pub availability: Vec<ChannelAvailability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -438,6 +453,8 @@ where
                     expected: body.expected,
                     tax_profiles: body.tax_profiles,
                     price_books: body.price_books,
+                    channels: body.channels,
+                    categories: body.categories,
                 })?;
             }
             InboundKind::CatalogChunk => {
@@ -451,6 +468,10 @@ where
                     price_entries: body.price_entries,
                     barcodes: body.barcodes,
                     promotions: body.promotions,
+                    presentation: body.presentation,
+                    selection_groups: body.selection_groups,
+                    selection_options: body.selection_options,
+                    availability: body.availability,
                 })?;
             }
             InboundKind::CatalogCommit => {

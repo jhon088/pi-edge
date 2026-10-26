@@ -165,6 +165,24 @@ opaque_id!(
     /// Reference to a promotion, assigned upstream.
     PromotionId
 );
+opaque_id!(
+    /// A way of selling: counter POS, kiosk, self-checkout. Opaque to the
+    /// core, which never branches on its value — it only asks the catalog
+    /// what is available for it.
+    ChannelRef
+);
+opaque_id!(
+    /// Reference to a catalog category, assigned upstream.
+    CategoryRef
+);
+opaque_id!(
+    /// Reference to a group of choices a product offers, assigned upstream.
+    SelectionGroupId
+);
+opaque_id!(
+    /// Reference to one choice inside a group, assigned upstream.
+    SelectionOptionId
+);
 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]

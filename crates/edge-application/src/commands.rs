@@ -5,8 +5,9 @@
 //! applying the command twice (explicit idempotency).
 
 use edge_catalog::{
-    CatalogBarcode, CatalogProduct, PriceBook, PriceEntry, ProductSelector, Promotion,
-    SnapshotCounts, TaxProfile,
+    AssetRef, CatalogBarcode, CatalogProduct, Category, Channel, ChannelAvailability, PriceBook,
+    PriceEntry, ProductPresentation, ProductSelector, Promotion, RequestedOption, SelectionGroup,
+    SelectionOption, SnapshotCounts, TaxProfile,
 };
 use edge_domain::prelude::*;
 use edge_hardware::ScanEvent;
@@ -55,6 +56,28 @@ pub struct AddItemCommand {
     pub request_id: Option<Uuid>,
     pub selector: ProductSelector,
     pub quantity: Quantity,
+    /// The choices the customer made, as **ids and quantities only**.
+    ///
+    /// Empty is every retail scan there has ever been. A client never sends a
+    /// price, a delta or a total: the core resolves each option against the
+    /// sale's own snapshot and prices the chargeable ones through the existing
+    /// price books (ADR 046).
+    pub selections: Vec<RequestedOption>,
+    /// Free text for whoever prepares it. Never priced, never taxed.
+    pub preparation_note: Option<String>,
+}
+
+impl AddItemCommand {
+    /// An ordinary scan: one product, no questions asked.
+    pub fn scan(selector: ProductSelector, quantity: Quantity) -> Self {
+        Self {
+            request_id: None,
+            selector,
+            quantity,
+            selections: Vec::new(),
+            preparation_note: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -218,6 +241,13 @@ pub struct BeginCatalogImportCommand {
     /// Likewise: a handful of books, and every price entry in every chunk has
     /// to name one of them.
     pub price_books: Vec<PriceBook>,
+    /// Ways of selling this snapshot is curated for (ADR 044). Empty is the
+    /// Retail case: nothing is filtered and every product is offered.
+    pub channels: Vec<Channel>,
+    /// Browsable groupings. In the header with the channels because an
+    /// availability row may withdraw a whole category, and presentation rows
+    /// in every chunk name one.
+    pub categories: Vec<Category>,
 }
 
 /// One durable, idempotent slice of catalog content.
@@ -238,6 +268,16 @@ pub struct PutCatalogChunkCommand {
     /// Promotions for the products in this chunk, for the same reason as the
     /// prices: a promotion that names a product must land with it.
     pub promotions: Vec<Promotion>,
+    /// How the products in this chunk are shown (ADR 044).
+    pub presentation: Vec<ProductPresentation>,
+    /// Questions the products in this chunk ask, and their answers. A group
+    /// owned by an option may travel in a later chunk than that option: the
+    /// whole structure is only validated once every chunk has arrived.
+    pub selection_groups: Vec<SelectionGroup>,
+    pub selection_options: Vec<SelectionOption>,
+    /// What each channel offers. Targets are resolved at commit, so a row may
+    /// name something that arrives later.
+    pub availability: Vec<ChannelAvailability>,
 }
 
 /// Close the import. Everything is verified before the snapshot becomes
@@ -390,4 +430,26 @@ pub struct CloseRegisterSessionCommand {
 #[derive(Debug, Clone, Default)]
 pub struct CloseBusinessDayCommand {
     pub request_id: Option<Uuid>,
+}
+
+/// One slice of an asset's bytes.
+///
+/// No `request_id`: the content hash *is* the idempotency key, so a replayed
+/// chunk is a no-op and a replayed commit returns the asset it already stored
+/// (ADR 045).
+#[derive(Debug, Clone)]
+pub struct PutAssetChunkCommand {
+    /// What the sender claims it is sending. Checked, never trusted: the
+    /// declared digest is compared against the bytes at commit.
+    pub asset: AssetRef,
+    /// Where these bytes go. Must be exactly what is already staged, so a gap
+    /// can never be written.
+    pub offset: i64,
+    pub bytes: Vec<u8>,
+}
+
+/// Verify what is staged for one asset and promote it.
+#[derive(Debug, Clone)]
+pub struct CommitAssetCommand {
+    pub asset: AssetRef,
 }

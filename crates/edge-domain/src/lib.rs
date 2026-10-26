@@ -28,9 +28,9 @@ pub mod prelude {
     };
     pub use crate::error::DomainError;
     pub use crate::ids::{
-        BusinessDayId, CatalogSnapshotId, EventId, IdError, LineId, OperatorId, PaymentId,
-        PriceBookId, ProductRef, PromotionId, RefundId, RegisterId, SessionId, StoreId, TenantId,
-        TransactionId,
+        BusinessDayId, CatalogSnapshotId, CategoryRef, ChannelRef, EventId, IdError, LineId,
+        OperatorId, PaymentId, PriceBookId, ProductRef, PromotionId, RefundId, RegisterId,
+        SelectionGroupId, SelectionOptionId, SessionId, StoreId, TenantId, TransactionId,
     };
     pub use crate::journal::{JournalEvent, JournalEventType};
     pub use crate::money::{
@@ -47,9 +47,9 @@ pub mod prelude {
     };
     pub use crate::time::{TimeError, Timestamp};
     pub use crate::transaction::{
-        AppliedPromotion, LineDiscount, NewLineInput, NewRetailTransaction, PaymentSummary,
-        PricingCapture, PromotionOutcome, PromotionTarget, RetailTransaction,
-        RetailTransactionState, Totals, TransactionLine, TransactionStatus,
+        AppliedPromotion, LineConfiguration, LineDiscount, NewLineInput, NewRetailTransaction,
+        PaymentSummary, PricingCapture, PromotionOutcome, PromotionTarget, RetailTransaction,
+        RetailTransactionState, Totals, TransactionLine, TransactionSelection, TransactionStatus,
     };
 }
 

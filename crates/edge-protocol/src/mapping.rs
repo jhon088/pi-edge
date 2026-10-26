@@ -13,11 +13,14 @@ use edge_application::commands::{
     CashInCommand, CashOutCommand, ChangeQuantityCommand, CommitCatalogImportCommand,
     CreateRefundCommand, DeclareClosingCashCommand, ForceCloseBusinessDayCommand,
     ImportInventoryBootstrapCommand, InitDeviceCommand, InventoryInCommand, InventoryOutCommand,
-    OpenRegisterSessionCommand, PrintTransactionCommand, PutCatalogChunkCommand,
-    ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand, RequestSafeDropCommand,
-    ReversePaymentCommand, StartPaymentCommand, SubmitScanCommand,
+    OpenRegisterSessionCommand, PrintTransactionCommand, PutAssetChunkCommand,
+    PutCatalogChunkCommand, ReconcilePaymentCommand, RemoveItemCommand, ReopenSessionCommand,
+    RequestSafeDropCommand, ReversePaymentCommand, StartPaymentCommand, SubmitScanCommand,
 };
 use edge_application::ports::{DeviceProfile, InventoryBootstrapState};
+use edge_application::queries::{
+    AssetStatusView, MenuView, ProductConfigurationView, SnapshotAssetsView,
+};
 use edge_application::queries::{
     BusinessDayCloseResult, CashPositionView, CatalogImportStatus, CatalogSnapshotView,
     CatalogStatus, EdgeState, HardwareStatusView, InventoryPositionView, PendingOutbox,
@@ -26,7 +29,7 @@ use edge_application::queries::{
 };
 use edge_application::{AppError, PaymentOutcome};
 use edge_cash::{CashError, CashMovement, SafeDrop, SessionCloseRequirements};
-use edge_catalog::CatalogError;
+use edge_catalog::{AssetRef, CatalogError, RequestedOption};
 use edge_domain::prelude::*;
 use edge_hardware::{HardwareDeviceStatus, ScanEvent};
 use edge_inventory::{BootstrapItem, InventoryMovement};
@@ -106,6 +109,33 @@ impl From<&TransactionLine> for TransactionLineV1 {
             taxable_amount: MoneyV1::from(&line.taxable_amount),
             tax_amount: MoneyV1::from(&line.tax_amount),
             line_total: MoneyV1::from(&line.line_total),
+            base_unit_price: MoneyV1::from(&line.base_unit_price),
+            // `unit_price` *is* the configured price; naming it twice on the
+            // wire saves every client the arithmetic, and there is still only
+            // one stored amount (ADR 046).
+            configured_unit_price: MoneyV1::from(&line.unit_price),
+            selections: line
+                .selections
+                .iter()
+                .map(TransactionSelectionV1::from)
+                .collect(),
+            preparation_note: line.preparation_note.clone(),
+        }
+    }
+}
+
+impl From<&TransactionSelection> for TransactionSelectionV1 {
+    fn from(selection: &TransactionSelection) -> Self {
+        Self {
+            option_id: selection.option_id.to_string(),
+            group_id: selection.group_id.to_string(),
+            group_name: selection.group_name.clone(),
+            name: selection.name.clone(),
+            quantity: selection.quantity,
+            component_ref: selection.component_ref.as_ref().map(ToString::to_string),
+            chargeable: selection.is_chargeable(),
+            unit_price: MoneyV1::from(&selection.unit_price),
+            amount: MoneyV1::from(&selection.amount),
         }
     }
 }
@@ -208,6 +238,8 @@ impl RetailTransactionV1 {
             change_due: MoneyV1::from(&transaction.change_due()?),
             basket_locked: transaction.basket_is_locked(),
             requires_payment_resolution: state.payments.requires_resolution,
+            running_totals: TotalsV1::from(&transaction.preview_totals()?),
+            order_code: edge_application::order_code(&state.register_id, state.register_sequence),
             created_at: state.created_at.to_rfc3339(),
             updated_at: state.updated_at.to_rfc3339(),
             finalized_at: state.finalized_at.map(|ts| ts.to_rfc3339()),
@@ -364,10 +396,22 @@ impl OpenRegisterSessionRequestV1 {
 
 impl AddItemRequestV1 {
     pub fn into_command(self, request_id: Option<Uuid>) -> Result<AddItemCommand, CatalogError> {
+        let selections = self
+            .selections
+            .into_iter()
+            .map(|requested| {
+                Ok(RequestedOption {
+                    option_id: SelectionOptionId::new(requested.option_id)?,
+                    quantity: requested.quantity,
+                })
+            })
+            .collect::<Result<Vec<_>, CatalogError>>()?;
         Ok(AddItemCommand {
             request_id,
             selector: self.product.into_domain()?,
             quantity: Quantity::from_thousandths(self.quantity_thousandths)?,
+            selections,
+            preparation_note: self.preparation_note,
         })
     }
 }
@@ -558,6 +602,16 @@ impl BeginCatalogImportRequestV1 {
             .into_iter()
             .map(PriceBookV1::into_domain)
             .collect::<Result<Vec<_>, _>>()?;
+        let channels = self
+            .channels
+            .into_iter()
+            .map(ChannelV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        let categories = self
+            .categories
+            .into_iter()
+            .map(CategoryV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(BeginCatalogImportCommand {
             request_id,
             version: self.version,
@@ -568,6 +622,8 @@ impl BeginCatalogImportRequestV1 {
             expected: edge_catalog::SnapshotCounts::from(self.expected),
             tax_profiles,
             price_books,
+            channels,
+            categories,
         })
     }
 }
@@ -595,6 +651,26 @@ impl PutCatalogChunkRequestV1 {
             .into_iter()
             .map(|record| record.into_domain(currency))
             .collect::<Result<Vec<_>, _>>()?;
+        let presentation = self
+            .presentation
+            .into_iter()
+            .map(ProductPresentationV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        let selection_groups = self
+            .selection_groups
+            .into_iter()
+            .map(SelectionGroupV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        let selection_options = self
+            .selection_options
+            .into_iter()
+            .map(SelectionOptionV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        let availability = self
+            .availability
+            .into_iter()
+            .map(ChannelAvailabilityV1::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(PutCatalogChunkCommand {
             snapshot_id,
             chunk_index: self.chunk_index,
@@ -603,6 +679,10 @@ impl PutCatalogChunkRequestV1 {
             price_entries,
             barcodes,
             promotions,
+            presentation,
+            selection_groups,
+            selection_options,
+            availability,
         })
     }
 }
@@ -1241,5 +1321,172 @@ impl PrintTransactionRequestV1 {
             transaction_id: self.transaction_id.parse()?,
             reprint: self.reprint,
         })
+    }
+}
+
+// -------------------------------------------------------- local asset runtime
+
+impl From<&AssetStatusView> for AssetStatusV1 {
+    fn from(view: &AssetStatusView) -> Self {
+        Self {
+            asset: AssetRefV1::from(&view.asset),
+            state: view.state.as_str().to_owned(),
+            bytes_received: view.state.bytes_received(),
+        }
+    }
+}
+
+impl From<&SnapshotAssetsView> for SnapshotAssetsV1 {
+    fn from(view: &SnapshotAssetsView) -> Self {
+        Self {
+            snapshot_id: view.snapshot_id.to_string(),
+            assets: view.assets.iter().map(AssetStatusV1::from).collect(),
+            pending: i64::try_from(view.pending()).unwrap_or(i64::MAX),
+            stored_bytes: view.stored_bytes,
+        }
+    }
+}
+
+impl AssetRequestV1 {
+    pub fn into_domain(self) -> Result<AssetRef, CatalogError> {
+        self.asset.into_domain()
+    }
+}
+
+impl SnapshotAssetsRequestV1 {
+    pub fn snapshot_id(&self) -> Result<CatalogSnapshotId, CatalogError> {
+        parse_snapshot_id(&self.snapshot_id)
+    }
+}
+
+impl AssetChunkRequestV1 {
+    /// Validate the declaration and decode the bytes.
+    ///
+    /// A malformed payload is refused here, before the core sees it: the
+    /// transport's job is to deliver bytes, and bytes that are not bytes are
+    /// not a question for the asset store.
+    pub fn into_command(self) -> Result<PutAssetChunkCommand, CatalogError> {
+        let bytes = self.data().map_err(|error| CatalogError::InvalidRecord {
+            field: "asset_chunk.data_hex",
+            reason: error.to_string(),
+        })?;
+        Ok(PutAssetChunkCommand {
+            asset: self.asset.into_domain()?,
+            offset: self.offset,
+            bytes,
+        })
+    }
+}
+
+// ----------------------------------------------------------------- the kiosk
+
+impl From<&MenuView> for MenuV1 {
+    fn from(menu: &MenuView) -> Self {
+        Self {
+            snapshot_id: menu.snapshot_id.to_string(),
+            currency: menu.currency.code().to_owned(),
+            categories: menu
+                .categories
+                .iter()
+                .map(|category| MenuCategoryV1 {
+                    category_ref: category.category_ref.to_string(),
+                    name: category.name.clone(),
+                    display_order: category.display_order,
+                    image: category.image.as_ref().map(AssetRefV1::from),
+                })
+                .collect(),
+            items: menu
+                .items
+                .iter()
+                .map(|item| MenuItemV1 {
+                    product_ref: item.product_ref.to_string(),
+                    category_ref: item.category_ref.as_ref().map(ToString::to_string),
+                    name: item.name.clone(),
+                    description: item.description.clone(),
+                    display_order: item.display_order,
+                    image: item.image.as_ref().map(AssetRefV1::from),
+                    from_price: MoneyV1::from(&item.from_price),
+                    configurable: item.configurable,
+                    recommended_product_refs: item
+                        .recommended_product_refs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                })
+                .collect(),
+            promotions: menu
+                .promotions
+                .iter()
+                .map(|promotion| MenuPromotionV1 {
+                    promotion_id: promotion.promotion_id.to_string(),
+                    code: promotion.code.clone(),
+                    name: promotion.name.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&ProductConfigurationView> for ProductConfigurationV1 {
+    fn from(configuration: &ProductConfigurationView) -> Self {
+        Self {
+            product_ref: configuration.product_ref.to_string(),
+            name: configuration.name.clone(),
+            base_price: MoneyV1::from(&configuration.base_price),
+            groups: configuration
+                .groups
+                .iter()
+                .map(|group| MenuSelectionGroupV1 {
+                    group_id: group.group_id.to_string(),
+                    owner_option_id: group.owner_option_id.as_ref().map(ToString::to_string),
+                    name: group.name.clone(),
+                    min_quantity: group.min_quantity,
+                    max_quantity: group.max_quantity,
+                    display_order: group.display_order,
+                    options: group
+                        .options
+                        .iter()
+                        .map(|option| MenuSelectionOptionV1 {
+                            option_id: option.option_id.to_string(),
+                            name: option.name.clone(),
+                            component_ref: option.component_ref.as_ref().map(ToString::to_string),
+                            unit_price: MoneyV1::from(&option.unit_price),
+                            max_quantity: option.max_quantity,
+                            default_quantity: option.default_quantity,
+                            display_order: option.display_order,
+                            image: option.image.as_ref().map(AssetRefV1::from),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl MenuRequestV1 {
+    pub fn channel(&self) -> Result<Option<ChannelRef>, CatalogError> {
+        match self.channel_ref.as_deref() {
+            Some(reference) => Ok(Some(ChannelRef::new(reference)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+impl ProductConfigurationRequestV1 {
+    pub fn product(&self) -> Result<ProductRef, CatalogError> {
+        ProductRef::new(self.product_ref.as_str()).map_err(CatalogError::from)
+    }
+
+    pub fn channel(&self) -> Result<Option<ChannelRef>, CatalogError> {
+        match self.channel_ref.as_deref() {
+            Some(reference) => Ok(Some(ChannelRef::new(reference)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+impl AssetReadRequestV1 {
+    pub fn into_domain(self) -> Result<(AssetRef, i64, i64), CatalogError> {
+        Ok((self.asset.into_domain()?, self.offset, self.length))
     }
 }
