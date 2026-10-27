@@ -212,24 +212,94 @@ fn whatever_printers_the_host_has_are_offered_by_name() {
 
     let config = client.printer_settings().unwrap();
     for queue in &config.available {
-        assert!(!queue.name.is_empty());
+        // A real queue is called "Microsoft Print to PDF" or "3nStar RPT008
+        // (Copy 1)". Spaces and punctuation are ordinary in a printer name;
+        // what matters is that the name the host gave us is the name that
+        // comes back, not that it looks like an identifier.
         assert!(
-            !queue.name.contains(char::is_whitespace),
-            "`{}` is a sentence, not a queue name",
-            queue.name
+            !queue.name.is_empty(),
+            "the host offered a queue with no name"
         );
-        // And every reported queue is one the core would accept.
-        let accepted = client.set_printer_settings(
+        assert!(
+            !queue.name.contains('\0'),
+            "`{}` contains a NUL, which no name may",
+            queue.name.escape_debug()
+        );
+
+        let accepted = client
+            .set_printer_settings(
+                PrinterSettingsV1 {
+                    enabled: true,
+                    model: "RPT004".to_owned(),
+                    queue: queue.name.clone(),
+                    columns: 48,
+                    auto_print: false,
+                },
+                None,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "`{}` was offered by the host but refused: {error}",
+                    queue.name
+                )
+            });
+
+        // Byte for byte. This is the real invariant: nothing split it on a
+        // space, quoted it, escaped it, or trimmed it on the way through the
+        // core — which is what "not interpreted as command-line arguments"
+        // means in practice.
+        assert_eq!(
+            accepted.settings.queue, queue.name,
+            "the queue name changed between the spooler and storage"
+        );
+        assert_eq!(
+            client.printer_settings().unwrap().settings.queue,
+            queue.name,
+            "the queue name changed between storage and reading it back"
+        );
+    }
+
+    // Names with spaces, explicitly, on every platform. Windows exercises
+    // this naturally — "Microsoft Print to PDF" is what the host offers —
+    // but a Mac with one underscore-named queue does not, which is exactly
+    // how a "no whitespace" assertion survived review here and failed there.
+    for name in [
+        "Microsoft Print to PDF",
+        "3nStar RPT008 (Copy 1)",
+        "Receipt Printer #2",
+    ] {
+        let stored = client
+            .set_printer_settings(
+                PrinterSettingsV1 {
+                    enabled: true,
+                    model: "RPT008".to_owned(),
+                    queue: name.to_owned(),
+                    columns: 48,
+                    auto_print: false,
+                },
+                None,
+            )
+            .unwrap_or_else(|error| panic!("`{name}` is a valid printer name: {error}"));
+        assert_eq!(
+            stored.settings.queue, name,
+            "`{name}` did not survive storage"
+        );
+    }
+
+    // And the protection that matters is still there: a name that a spooler
+    // would read as an option is refused, however it arrived.
+    for hostile in ["-d", "-o raw", "--help"] {
+        let refused = client.set_printer_settings(
             PrinterSettingsV1 {
                 enabled: true,
                 model: "RPT004".to_owned(),
-                queue: queue.name.clone(),
+                queue: hostile.to_owned(),
                 columns: 48,
                 auto_print: false,
             },
             None,
         );
-        assert!(accepted.is_ok(), "`{}` was offered but refused", queue.name);
+        assert!(refused.is_err(), "`{hostile}` must not be storable");
     }
 }
 
