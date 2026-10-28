@@ -51,6 +51,15 @@ pub struct CatalogStatus {
     pub pending: Vec<CatalogSnapshotView>,
     /// Open imports. These never price a sale.
     pub importing: Vec<CatalogSnapshotView>,
+    /// Highest version this store has *ever* held, superseded ones included.
+    /// `0` when it has never held a catalog.
+    ///
+    /// A version is an identity: the core refuses one that already exists with
+    /// different content, and it is right to. So a producer deciding what to
+    /// call its next snapshot has to know which numbers are taken — and the
+    /// lists above cannot tell it, because a superseded snapshot appears in
+    /// none of them while still owning its version forever.
+    pub highest_version: i64,
 }
 
 /// Progress of an open import, for resume and for a progress indicator.

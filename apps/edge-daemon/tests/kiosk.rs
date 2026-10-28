@@ -13,11 +13,18 @@ use std::process::Command;
 use common::{client, DaemonProcess};
 use edge_client::EdgeClient;
 use edge_protocol::{
-    AddItemRequestV1, ProductSelectorV1, RequestedSelectionV1, StartPaymentRequestV1,
-    TransactionRequestV1, MAX_ASSET_CHUNK_BYTES,
+    AddItemRequestV1, PrintTransactionRequestV1, ProductSelectorV1, RequestedSelectionV1,
+    StartPaymentRequestV1, TransactionRequestV1, MAX_ASSET_CHUNK_BYTES,
 };
 
 const CHANNEL: &str = "KIOSK";
+
+/// Simulated hardware, asked for explicitly: a test that uses fake devices
+/// says so out loud (ADR 038).
+const SIMULATED: [(&str, &str); 2] = [
+    ("PI_EDGE_PRINTER", "simulator"),
+    ("PI_EDGE_DRAWER", "simulator"),
+];
 
 /// Run the one-command offline bootstrap: assets, catalog, activation, till.
 fn seed(database: &std::path::Path) -> serde_json::Value {
@@ -64,10 +71,12 @@ fn the_demo_restaurant_seeds_itself_offline_and_serves_a_configured_sale() {
     assert_eq!(report["activated"], true);
     assert_eq!(report["session_opened"], true);
     assert_eq!(report["channel"], CHANNEL);
-    // One file per stem: twelve dishes plus three option photographs.
+    // One file per stem: twelve dishes plus three option photographs, and
+    // the twenty-two retail packshots, because one installation seeds both
+    // verticals into one snapshot and tells them apart by channel (ADR 044).
     // Category tiles and the attract banner reuse product stems, so they add
     // none.
-    assert_eq!(report["assets_imported"].as_i64().unwrap(), 15);
+    assert_eq!(report["assets_imported"].as_i64().unwrap(), 15 + 22);
 
     let client = client(&database, "tauri-pos");
 
@@ -975,4 +984,421 @@ fn an_animated_dish_arrives_animated() {
             "{product_ref} has {frames} frame marker(s); that is a still image"
         );
     }
+}
+
+/// What an option's quantity is worth, all the way to the receipt.
+///
+/// The screen's stepper only ever sends `{option_id, quantity}` — so the thing
+/// that has to be right on this side is that the *quantity* is honoured
+/// everywhere a number appears: the configured unit price, the line, the
+/// running total, the official total, the finalized sale, and the selections
+/// the printed receipt renders from.
+///
+/// Generic on purpose: the option is whichever one in this product's groups
+/// accepts more than one of itself, found by reading the contract rather than
+/// by naming a product.
+#[test]
+fn an_options_quantity_is_honoured_from_the_screen_to_the_receipt() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start_with_env(&database, None, true, &SIMULATED);
+    seed(&database);
+    let client = client(&database, "tauri-pos");
+
+    // --- find a countable option by asking the catalog, not by knowing one -
+    let configuration = client
+        .product_configuration("SMASH-CLASSIC", Some(CHANNEL.to_owned()))
+        .unwrap();
+    let (group, option) = configuration
+        .groups
+        .iter()
+        .filter(|group| group.max_quantity > 1)
+        .flat_map(|group| group.options.iter().map(move |option| (group, option)))
+        .find(|(_, option)| option.max_quantity > 1)
+        .expect("this product has an option you can take several of");
+    assert!(
+        option.max_quantity >= 2 && group.max_quantity >= option.max_quantity,
+        "`{}` allows {} of itself in a group that accepts {}",
+        option.option_id,
+        option.max_quantity,
+        group.max_quantity
+    );
+    let unit = option.unit_price.minor;
+    assert!(unit > 0, "a free option would prove nothing about pricing");
+
+    // --- one of it ---------------------------------------------------------
+    client.start_transaction(None).unwrap();
+    let one = client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef("SMASH-CLASSIC".to_owned()),
+                quantity_thousandths: 1_000,
+                selections: vec![chose("O-CL-SINGLE", 1), chose(&option.option_id, 1)],
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+    let line = &one.lines[0];
+    assert_eq!(
+        line.configured_unit_price.minor,
+        line.base_unit_price.minor + unit
+    );
+    let chosen = line
+        .selections
+        .iter()
+        .find(|selection| selection.option_id == option.option_id)
+        .expect("the choice came back on the line");
+    assert_eq!(chosen.quantity, 1);
+    assert_eq!(chosen.amount.minor, unit);
+    let with_one = one.running_totals.grand_total.minor;
+
+    // --- two of it, on an otherwise identical line -------------------------
+    client.cancel_transaction(None, None).unwrap();
+    client.start_transaction(None).unwrap();
+    let two = client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef("SMASH-CLASSIC".to_owned()),
+                quantity_thousandths: 1_000,
+                selections: vec![chose("O-CL-SINGLE", 1), chose(&option.option_id, 2)],
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+    let line = &two.lines[0];
+    assert_eq!(
+        line.configured_unit_price.minor,
+        line.base_unit_price.minor + unit * 2,
+        "the second one was not charged"
+    );
+    let chosen = line
+        .selections
+        .iter()
+        .find(|selection| selection.option_id == option.option_id)
+        .unwrap();
+    assert_eq!(
+        chosen.quantity, 2,
+        "the quantity the screen sent was not kept"
+    );
+    assert_eq!(chosen.amount.minor, unit * 2);
+    let with_two = two.running_totals.grand_total.minor;
+    assert!(
+        with_two > with_one,
+        "one more of a paid option left the total alone"
+    );
+
+    // --- and the official total agrees with the basket ---------------------
+    let totalized = client.totalize(None).unwrap();
+    assert_eq!(totalized.totals.grand_total.minor, with_two);
+
+    // --- through payment, with the quantity intact -------------------------
+    client
+        .start_payment(
+            StartPaymentRequestV1 {
+                tender_type: "CARD".to_owned(),
+                amount_minor: totalized.totals.grand_total.minor,
+            },
+            None,
+        )
+        .unwrap();
+    let finalized = client.finalize_transaction(None).unwrap();
+    assert_eq!(finalized.status, "FINALIZED");
+    assert_eq!(finalized.totals.grand_total.minor, with_two);
+    let kept = finalized.lines[0]
+        .selections
+        .iter()
+        .find(|selection| selection.option_id == option.option_id)
+        .expect("the finalized sale forgot the choice");
+    assert_eq!(
+        kept.quantity, 2,
+        "the quantity did not survive finalization"
+    );
+    assert_eq!(kept.amount.minor, unit * 2);
+
+    // --- the receipt is built from exactly those selections ----------------
+    //
+    // The printed document renders `+ <name> x<quantity>` straight off the
+    // line's materialised selections — the same rows asserted just above — and
+    // nothing is read back out of a catalog that may be gone (ADR 046). With a
+    // printer configured the obligation is discharged as the sale closes, so
+    // its state is the evidence that the document was built and went out
+    // (ADR 043).
+    let receipt = client.get_receipt(&finalized.transaction_id).unwrap();
+    assert_eq!(receipt.status, "PRINTED");
+    assert_eq!(receipt.attempt_count, 1);
+    assert!(receipt.first_printed_at.is_some());
+    // Asking for it a second time is refused rather than quietly reprinting.
+    let again = client.print_transaction(
+        PrintTransactionRequestV1 {
+            transaction_id: finalized.transaction_id.clone(),
+            reprint: false,
+        },
+        None,
+    );
+    assert!(format!("{:?}", again.err()).contains("RECEIPT_ALREADY_PRINTED"));
+}
+
+/// The core refuses more of an option than the catalog allows.
+///
+/// The screen's stepper stops at the same ceiling, but the ceiling is the
+/// core's: a client that asked for more — an old build, a replayed request —
+/// is refused rather than priced.
+#[test]
+fn more_of_an_option_than_the_catalog_allows_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    seed(&database);
+    let client = client(&database, "tauri-pos");
+
+    let configuration = client
+        .product_configuration("SMASH-CLASSIC", Some(CHANNEL.to_owned()))
+        .unwrap();
+    let option = configuration
+        .groups
+        .iter()
+        .flat_map(|group| group.options.iter())
+        .find(|option| option.max_quantity > 1)
+        .expect("an option you can take several of");
+
+    client.start_transaction(None).unwrap();
+    let refused = client.add_item(
+        AddItemRequestV1 {
+            product: ProductSelectorV1::ProductRef("SMASH-CLASSIC".to_owned()),
+            quantity_thousandths: 1_000,
+            selections: vec![
+                chose("O-CL-SINGLE", 1),
+                chose(&option.option_id, option.max_quantity + 1),
+            ],
+            preparation_note: None,
+        },
+        None,
+    );
+    let error = refused.expect_err("the core priced more than it offers");
+    assert!(
+        format!("{error}").contains("CATALOG_SELECTION_QUANTITY_REFUSED"),
+        "{error}"
+    );
+    // And nothing was sold on the way to being refused.
+    assert!(client
+        .get_active_transaction()
+        .unwrap()
+        .unwrap()
+        .lines
+        .is_empty());
+}
+
+/// The journey the offer screen drives, through the core.
+///
+/// A dish, then one of the things it recommends — a one-tap one and a
+/// configurable one, both found by reading the menu rather than by naming a
+/// product — and then a sale that closes with every line on it. The screen's
+/// own navigation is tested on its side of the wire; what is checked here is
+/// that the calls it makes in that order do what it assumes.
+#[test]
+fn a_recommended_dish_can_be_added_right_after_the_one_that_recommended_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    seed(&database);
+    let client = client(&database, "tauri-pos");
+
+    let menu = client.menu(Some(CHANNEL.to_owned())).unwrap();
+    let by_ref = |wanted: &str| menu.items.iter().find(|item| item.product_ref == wanted);
+    let kinds = |item: &edge_protocol::MenuItemV1| {
+        let offered: Vec<&edge_protocol::MenuItemV1> = item
+            .recommended_product_refs
+            .iter()
+            .filter_map(|reference| by_ref(reference))
+            .collect();
+        (
+            offered.iter().find(|entry| !entry.configurable).copied(),
+            offered.iter().find(|entry| entry.configurable).copied(),
+        )
+    };
+    // The offer screen shows both kinds side by side, so the dish under test
+    // is one that offers both — found by reading the menu, not by name.
+    let (source, one_tap, asks) = menu
+        .items
+        .iter()
+        .filter(|item| item.configurable)
+        .find_map(|item| match kinds(item) {
+            (Some(one_tap), Some(asks)) => Some((item, one_tap, asks)),
+            _ => None,
+        })
+        .expect("a dish that recommends both a one-tap item and a configurable one");
+
+    client.start_transaction(None).unwrap();
+    client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef(source.product_ref.clone()),
+                quantity_thousandths: 1_000,
+                selections: answers_for(&client, &source.product_ref),
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+
+    // --- the one-tap suggestion: no configuration call needed -------------
+    let configuration = client
+        .product_configuration(&one_tap.product_ref, Some(CHANNEL.to_owned()))
+        .unwrap();
+    assert!(
+        configuration.groups.is_empty(),
+        "`{}` asks questions after all",
+        one_tap.product_ref
+    );
+    let after = client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef(one_tap.product_ref.clone()),
+                quantity_thousandths: 1_000,
+                selections: Vec::new(),
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(after.lines.len(), 2);
+    assert_eq!(after.lines[1].product_ref, one_tap.product_ref);
+
+    // --- the configurable one: its questions, then its line ---------------
+    let configuration = client
+        .product_configuration(&asks.product_ref, Some(CHANNEL.to_owned()))
+        .unwrap();
+    let required = configuration
+        .groups
+        .iter()
+        .find(|group| group.min_quantity > 0)
+        .expect("a question with a required answer");
+    let answer = &required.options[0];
+    let after = client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef(asks.product_ref.clone()),
+                quantity_thousandths: 1_000,
+                selections: vec![chose(&answer.option_id, 1)],
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(after.lines.len(), 3);
+
+    // --- adding the same suggestion again is a second line, as asked ------
+    let twice = client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef(one_tap.product_ref.clone()),
+                quantity_thousandths: 1_000,
+                selections: Vec::new(),
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        twice.lines.len(),
+        4,
+        "a repeat of a suggestion was silently merged"
+    );
+
+    // --- and it all closes ------------------------------------------------
+    let totalized = client.totalize(None).unwrap();
+    client
+        .start_payment(
+            StartPaymentRequestV1 {
+                tender_type: "CARD".to_owned(),
+                amount_minor: totalized.totals.grand_total.minor,
+            },
+            None,
+        )
+        .unwrap();
+    let finalized = client.finalize_transaction(None).unwrap();
+    assert_eq!(finalized.status, "FINALIZED");
+    assert_eq!(finalized.lines.len(), 4);
+}
+
+/// Whatever a required group needs, answered with its first option.
+///
+/// So a test can add a configured dish without naming an option: the screen
+/// reads the questions and sends ids, and so does this.
+fn answers_for(client: &impl EdgeClient, product_ref: &str) -> Vec<RequestedSelectionV1> {
+    client
+        .product_configuration(product_ref, Some(CHANNEL.to_owned()))
+        .unwrap()
+        .groups
+        .iter()
+        .filter(|group| group.min_quantity > 0 && group.owner_option_id.is_none())
+        .map(|group| chose(&group.options[0].option_id, 1))
+        .collect()
+}
+
+/// A suggestion the core refuses leaves the sale exactly as it was.
+///
+/// This is what the offer screen's recovery path depends on: it puts the
+/// customer back on the offer screen, and the basket behind it has to still be
+/// the basket they had.
+#[test]
+fn a_refused_suggestion_changes_nothing_about_the_sale() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    seed(&database);
+    let client = client(&database, "tauri-pos");
+
+    client.start_transaction(None).unwrap();
+    let before = client
+        .add_item(
+            AddItemRequestV1 {
+                product: ProductSelectorV1::ProductRef("SMASH-CLASSIC".to_owned()),
+                quantity_thousandths: 1_000,
+                selections: vec![chose("O-CL-SINGLE", 1)],
+                preparation_note: None,
+            },
+            None,
+        )
+        .unwrap();
+
+    // A suggestion that is no longer in the catalog: what a kiosk holding a
+    // menu from a snapshot that has since been replaced would ask for. It is
+    // also the shape of every other refusal the offer screen can meet — the
+    // screen cannot tell them apart and does not try.
+    let refused = client.add_item(
+        AddItemRequestV1 {
+            product: ProductSelectorV1::ProductRef("NO-SUCH-DISH".to_owned()),
+            quantity_thousandths: 1_000,
+            selections: Vec::new(),
+            preparation_note: None,
+        },
+        None,
+    );
+    let error = refused.expect_err("the core sold something it does not have");
+    assert!(format!("{error}").contains("PRODUCT_NOT_FOUND"), "{error}");
+
+    // And one that exists but was sent without the answers it requires, which
+    // is the refusal a configured suggestion would meet.
+    let incomplete = client.add_item(
+        AddItemRequestV1 {
+            product: ProductSelectorV1::ProductRef("SODA".to_owned()),
+            quantity_thousandths: 1_000,
+            selections: Vec::new(),
+            preparation_note: None,
+        },
+        None,
+    );
+    assert!(incomplete.is_err(), "a required question went unanswered");
+
+    let after = client.get_active_transaction().unwrap().unwrap();
+    assert_eq!(after.lines.len(), before.lines.len());
+    assert_eq!(
+        after.running_totals.grand_total.minor, before.running_totals.grand_total.minor,
+        "a refused suggestion moved the total"
+    );
+    // And the sale is still open, so the screen has something to go back to.
+    assert_eq!(after.status, before.status);
 }

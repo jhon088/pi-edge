@@ -501,6 +501,7 @@ where
                 active: None,
                 pending: Vec::new(),
                 importing: Vec::new(),
+                highest_version: uow.highest_catalog_version(&device.store_id)?,
             };
             for snapshot in uow.list_catalog_snapshots(&device.store_id, 20)? {
                 let stored = uow.catalog_stored_counts(snapshot.id())?;

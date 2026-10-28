@@ -1,0 +1,14 @@
+# Which dependencies may run install scripts.
+#
+# pnpm refuses to decide this for you, and an undecided entry fails *every*
+# subsequent `pnpm` command — including lint and build — rather than only the
+# install. So the answer is recorded here instead of being left to a prompt
+# nobody can answer in CI.
+#
+# esbuild: false. Its postinstall only resolves the platform binary that
+# `@esbuild/<platform>` already provides as an optional dependency, and this
+# project has always built with the script skipped. Vite finds the binary and
+# `pnpm build` is green either way, so there is nothing to gain by running
+# arbitrary code at install time.
+allowBuilds:
+  esbuild: false

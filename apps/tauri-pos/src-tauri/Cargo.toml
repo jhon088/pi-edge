@@ -27,9 +27,13 @@ uuid = { version = "1", features = ["v4"] }
 edge-client = { path = "../../../crates/edge-client" }
 edge-protocol = { path = "../../../crates/edge-protocol" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tauri = { version = "2", features = [] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"

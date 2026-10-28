@@ -1,0 +1,942 @@
+{
+  "version": 1,
+  "vertical": "retail",
+  "channels": [
+    {
+      "channel_ref": "KIOSK-RETAIL",
+      "name": {
+        "default": "Autoservicio",
+        "translations": {
+          "en": "Self-checkout"
+        }
+      },
+      "default_availability": "OFFERED"
+    }
+  ],
+  "categories": [
+    {
+      "category_ref": "R-BEBIDAS",
+      "name": {
+        "default": "Bebidas",
+        "translations": {
+          "en": "Drinks"
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:coca",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-SNACKS",
+      "name": {
+        "default": "Snacks",
+        "translations": {
+          "en": "Snacks"
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:ruffles",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-PANADERIA",
+      "name": {
+        "default": "Panadería",
+        "translations": {
+          "en": "Bakery"
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:bagels",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-FRUTAS",
+      "name": {
+        "default": "Frutas y Verduras",
+        "translations": {
+          "en": "Produce"
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:manzana",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-CARNES",
+      "name": {
+        "default": "Carnes y Pollo",
+        "translations": {
+          "en": "Meat & poultry"
+        }
+      },
+      "display_order": 4,
+      "image": {
+        "content_hash": "file:arrachera",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-LACTEOS",
+      "name": {
+        "default": "Lácteos",
+        "translations": {
+          "en": "Dairy"
+        }
+      },
+      "display_order": 5,
+      "image": {
+        "content_hash": "file:leche",
+        "media_type": "image/png",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-DESPENSA",
+      "name": {
+        "default": "Despensa",
+        "translations": {
+          "en": "Pantry"
+        }
+      },
+      "display_order": 6,
+      "image": {
+        "content_hash": "file:aceite",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "R-HOGAR",
+      "name": {
+        "default": "Hogar y Limpieza",
+        "translations": {
+          "en": "Home & cleaning"
+        }
+      },
+      "display_order": 7,
+      "image": {
+        "content_hash": "file:clorox",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    }
+  ],
+  "products": [
+    {
+      "product_ref": "R-COCA-3L",
+      "sku": "SKU-RT-1001",
+      "name": "Coca-Cola Sabor Original 3 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000015"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-POWERADE",
+      "sku": "SKU-RT-1002",
+      "name": "Powerade Sabor Moras 1 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000022"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2400,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-BELIGHT",
+      "sku": "SKU-RT-1003",
+      "name": "Be Light Agua Saborizada 1.5 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000039"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2100,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-JUMEX",
+      "sku": "SKU-RT-1004",
+      "name": "Jumex Néctar de Naranja 1 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000046"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2750,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-RUFFLES",
+      "sku": "SKU-RT-2001",
+      "name": "Ruffles Queso 185 g",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000053"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3800,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-BAGELS",
+      "sku": "SKU-RT-3001",
+      "name": "Bagels Bimbo Original 4 pz",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000060"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4600,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-MANZANA",
+      "sku": "SKU-RT-4001",
+      "name": "Manzana Red Delicious 1 kg",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000077"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 5990,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-PLATANO",
+      "sku": "SKU-RT-4002",
+      "name": "Plátano Orgánico por Penca 1 kg",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000084"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1990,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-LIMON",
+      "sku": "SKU-RT-4003",
+      "name": "Limón con Semilla 1 kg",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000091"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3290,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-ARRACHERA",
+      "sku": "SKU-RT-5001",
+      "name": "Arrachera Marinada SuKarne 600 g",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000107"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 18900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-MOLIDA",
+      "sku": "SKU-RT-5002",
+      "name": "Carne Molida de Res 90/10 500 g",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000114"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 9800,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-ALITAS",
+      "sku": "SKU-RT-5003",
+      "name": "Alitas de Pollo Bachoco Picositas",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000121"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 8900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-POLLO",
+      "sku": "SKU-RT-5004",
+      "name": "Pollo Rostizado Entero",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000138"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 13900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-LECHE",
+      "sku": "SKU-RT-6001",
+      "name": "Leche Entera 1 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000145"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2650,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-YOGURT",
+      "sku": "SKU-RT-6002",
+      "name": "Yogurt Natural 900 g",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000152"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3400,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-ACEITE",
+      "sku": "SKU-RT-7001",
+      "name": "Aceite Vegetal Cártamus 900 ml",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000169"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4850,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-ATUN",
+      "sku": "SKU-RT-7002",
+      "name": "Atún Tuny en Agua 140 g",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000176"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2250,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-CAFE",
+      "sku": "SKU-RT-7003",
+      "name": "Café Molido 250 g",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000183"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 8900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-CLOROX",
+      "sku": "SKU-RT-8001",
+      "name": "Cloro Clorox Triple Acción 1.89 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000190"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3850,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-PERSIL-LIQ",
+      "sku": "SKU-RT-8002",
+      "name": "Detergente Líquido Persil Universal 1.66 L",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000206"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 11200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-PERSIL-POL",
+      "sku": "SKU-RT-8003",
+      "name": "Detergente en Polvo Persil Universal 4.5 kg",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000213"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 18900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "R-PAPEL",
+      "sku": "SKU-RT-8004",
+      "name": "Papel Higiénico 4 rollos",
+      "tax_profile": "IVA16",
+      "barcodes": [
+        "7500000000220"
+      ],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    }
+  ],
+  "presentation": [
+    {
+      "product_ref": "R-COCA-3L",
+      "category_ref": "R-BEBIDAS",
+      "display_name": {
+        "default": "Coca-Cola Sabor Original 3 L",
+        "translations": {
+          "en": "Coca-Cola Sabor Original 3 L"
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:coca",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-POWERADE",
+      "category_ref": "R-BEBIDAS",
+      "display_name": {
+        "default": "Powerade Sabor Moras 1 L",
+        "translations": {
+          "en": "Powerade Sabor Moras 1 L"
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:powerade",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-BELIGHT",
+      "category_ref": "R-BEBIDAS",
+      "display_name": {
+        "default": "Be Light Agua Saborizada 1.5 L",
+        "translations": {
+          "en": "Be Light Agua Saborizada 1.5 L"
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:belight",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-JUMEX",
+      "category_ref": "R-BEBIDAS",
+      "display_name": {
+        "default": "Jumex Néctar de Naranja 1 L",
+        "translations": {
+          "en": "Jumex Néctar de Naranja 1 L"
+        }
+      },
+      "display_order": 4,
+      "image": {
+        "content_hash": "file:jumex",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-RUFFLES",
+      "category_ref": "R-SNACKS",
+      "display_name": {
+        "default": "Ruffles Queso 185 g",
+        "translations": {
+          "en": "Ruffles Queso 185 g"
+        }
+      },
+      "display_order": 5,
+      "image": {
+        "content_hash": "file:ruffles",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-BAGELS",
+      "category_ref": "R-PANADERIA",
+      "display_name": {
+        "default": "Bagels Bimbo Original 4 pz",
+        "translations": {
+          "en": "Bagels Bimbo Original 4 pz"
+        }
+      },
+      "display_order": 6,
+      "image": {
+        "content_hash": "file:bagels",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-MANZANA",
+      "category_ref": "R-FRUTAS",
+      "display_name": {
+        "default": "Manzana Red Delicious 1 kg",
+        "translations": {
+          "en": "Manzana Red Delicious 1 kg"
+        }
+      },
+      "display_order": 7,
+      "image": {
+        "content_hash": "file:manzana",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-PLATANO",
+      "category_ref": "R-FRUTAS",
+      "display_name": {
+        "default": "Plátano Orgánico por Penca 1 kg",
+        "translations": {
+          "en": "Plátano Orgánico por Penca 1 kg"
+        }
+      },
+      "display_order": 8,
+      "image": {
+        "content_hash": "file:platano",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-LIMON",
+      "category_ref": "R-FRUTAS",
+      "display_name": {
+        "default": "Limón con Semilla 1 kg",
+        "translations": {
+          "en": "Limón con Semilla 1 kg"
+        }
+      },
+      "display_order": 9,
+      "image": {
+        "content_hash": "file:limon",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-ARRACHERA",
+      "category_ref": "R-CARNES",
+      "display_name": {
+        "default": "Arrachera Marinada SuKarne 600 g",
+        "translations": {
+          "en": "Arrachera Marinada SuKarne 600 g"
+        }
+      },
+      "display_order": 10,
+      "image": {
+        "content_hash": "file:arrachera",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-MOLIDA",
+      "category_ref": "R-CARNES",
+      "display_name": {
+        "default": "Carne Molida de Res 90/10 500 g",
+        "translations": {
+          "en": "Carne Molida de Res 90/10 500 g"
+        }
+      },
+      "display_order": 11,
+      "image": {
+        "content_hash": "file:molida",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-ALITAS",
+      "category_ref": "R-CARNES",
+      "display_name": {
+        "default": "Alitas de Pollo Bachoco Picositas",
+        "translations": {
+          "en": "Alitas de Pollo Bachoco Picositas"
+        }
+      },
+      "display_order": 12,
+      "image": {
+        "content_hash": "file:alitas",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-POLLO",
+      "category_ref": "R-CARNES",
+      "display_name": {
+        "default": "Pollo Rostizado Entero",
+        "translations": {
+          "en": "Pollo Rostizado Entero"
+        }
+      },
+      "display_order": 13,
+      "image": {
+        "content_hash": "file:pollo",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-LECHE",
+      "category_ref": "R-LACTEOS",
+      "display_name": {
+        "default": "Leche Entera 1 L",
+        "translations": {
+          "en": "Leche Entera 1 L"
+        }
+      },
+      "display_order": 14,
+      "image": {
+        "content_hash": "file:leche",
+        "media_type": "image/png",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-YOGURT",
+      "category_ref": "R-LACTEOS",
+      "display_name": {
+        "default": "Yogurt Natural 900 g",
+        "translations": {
+          "en": "Yogurt Natural 900 g"
+        }
+      },
+      "display_order": 15,
+      "image": {
+        "content_hash": "file:yogurt",
+        "media_type": "image/png",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-ACEITE",
+      "category_ref": "R-DESPENSA",
+      "display_name": {
+        "default": "Aceite Vegetal Cártamus 900 ml",
+        "translations": {
+          "en": "Aceite Vegetal Cártamus 900 ml"
+        }
+      },
+      "display_order": 16,
+      "image": {
+        "content_hash": "file:aceite",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-ATUN",
+      "category_ref": "R-DESPENSA",
+      "display_name": {
+        "default": "Atún Tuny en Agua 140 g",
+        "translations": {
+          "en": "Atún Tuny en Agua 140 g"
+        }
+      },
+      "display_order": 17,
+      "image": {
+        "content_hash": "file:atun",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-CAFE",
+      "category_ref": "R-DESPENSA",
+      "display_name": {
+        "default": "Café Molido 250 g",
+        "translations": {
+          "en": "Café Molido 250 g"
+        }
+      },
+      "display_order": 18,
+      "image": {
+        "content_hash": "file:cafe",
+        "media_type": "image/png",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-CLOROX",
+      "category_ref": "R-HOGAR",
+      "display_name": {
+        "default": "Cloro Clorox Triple Acción 1.89 L",
+        "translations": {
+          "en": "Cloro Clorox Triple Acción 1.89 L"
+        }
+      },
+      "display_order": 19,
+      "image": {
+        "content_hash": "file:clorox",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-PERSIL-LIQ",
+      "category_ref": "R-HOGAR",
+      "display_name": {
+        "default": "Detergente Líquido Persil Universal 1.66 L",
+        "translations": {
+          "en": "Detergente Líquido Persil Universal 1.66 L"
+        }
+      },
+      "display_order": 20,
+      "image": {
+        "content_hash": "file:persil",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-PERSIL-POL",
+      "category_ref": "R-HOGAR",
+      "display_name": {
+        "default": "Detergente en Polvo Persil Universal 4.5 kg",
+        "translations": {
+          "en": "Detergente en Polvo Persil Universal 4.5 kg"
+        }
+      },
+      "display_order": 21,
+      "image": {
+        "content_hash": "file:persil-polvo",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    },
+    {
+      "product_ref": "R-PAPEL",
+      "category_ref": "R-HOGAR",
+      "display_name": {
+        "default": "Papel Higiénico 4 rollos",
+        "translations": {
+          "en": "Papel Higiénico 4 rollos"
+        }
+      },
+      "display_order": 22,
+      "image": {
+        "content_hash": "file:papel",
+        "media_type": "image/png",
+        "byte_size": 0
+      },
+      "recommended_product_refs": []
+    }
+  ],
+  "availability": [
+    {
+      "channel_ref": "KIOSK-RETAIL",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-BURGERS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-RETAIL",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-COMBOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-RETAIL",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-SIDES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-RETAIL",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-DRINKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-BEBIDAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-SNACKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-PANADERIA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-FRUTAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-CARNES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-LACTEOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-DESPENSA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-HOGAR",
+      "state": "WITHHELD"
+    }
+  ]
+}

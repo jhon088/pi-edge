@@ -45,5 +45,6 @@
     }
   },
   "pending": [],
-  "importing": []
+  "importing": [],
+  "highest_version": 1
 }

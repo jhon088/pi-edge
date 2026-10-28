@@ -32,13 +32,15 @@
       "icons/icon.ico"
     ],
     "publisher": "PX Commerce",
-    "copyright": "\u00a9 PX Commerce",
+    "copyright": "© PX Commerce",
     "category": "Business",
-    "shortDescription": "Self-service restaurant kiosk",
-    "longDescription": "PX Kiosk \u2014 the self-service ordering screen for PX Commerce, running entirely on the machine it is installed on.",
+    "shortDescription": "Self-service kiosk for restaurant and retail",
+    "longDescription": "PX Kiosk — the self-service screen for PX Commerce, as a restaurant kiosk or a retail self-checkout, running entirely on the machine it is installed on.",
     "resources": {
       "../../../demo/menu.json": "demo/menu.json",
-      "../../../demo/assets/": "demo/assets/"
+      "../../../demo/assets/": "demo/assets/",
+      "../../../demo/retail/menu.json": "demo/retail/menu.json",
+      "../../../demo/retail/assets/": "demo/retail/assets/"
     },
     "targets": "all"
   }

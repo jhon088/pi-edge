@@ -199,16 +199,28 @@ impl Drop for DaemonProcess {
 /// `cargo build` left it behind — which is every development machine, and no
 /// clean CI runner.
 pub fn cli_binary() -> PathBuf {
+    // Once per test binary. Every test in it that shells out to the CLI wants
+    // the same path, and `cargo build` takes a package lock — so asking per
+    // test would queue every thread behind the first one for nothing.
+    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BUILT.get_or_init(build_cli).clone()
+}
+
+fn build_cli() -> PathBuf {
     // Same directory, same profile, whatever profile that is.
     let daemon = PathBuf::from(env!("CARGO_BIN_EXE_edge-daemon"));
     let dir = daemon.parent().expect("a built binary has a directory");
     let candidate = dir.join(format!("edge-cli{}", std::env::consts::EXE_SUFFIX));
-    if candidate.exists() {
-        return candidate;
-    }
 
-    // Build it with the cargo that is running this test. `CARGO` is set for
-    // exactly this, so nothing here guesses at an executable or a layout.
+    // Built every time, not only when missing. Cargo never builds `edge-cli`
+    // as a side effect of testing `edge-daemon`, so a binary left over from an
+    // earlier build is *stale*, and a stale CLI makes these tests assert the
+    // behaviour of code that is no longer in the tree — green for a bug, red
+    // for a fix. A no-op `cargo build` costs a fraction of a second; believing
+    // an old binary costs an afternoon.
+    //
+    // `CARGO` is set for exactly this, so nothing here guesses at an
+    // executable or a layout.
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
     let mut build = Command::new(cargo);

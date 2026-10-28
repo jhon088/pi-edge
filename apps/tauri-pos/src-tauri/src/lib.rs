@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 mod bootstrap;
 mod kiosk;
+mod retail;
 mod scanner;
 
 /// Event name the webview listens on.
@@ -442,6 +443,12 @@ pub fn run() {
             kiosk::kiosk_pay,
             kiosk::kiosk_receipt,
             kiosk::kiosk_asset,
+            retail::kiosk_preferences,
+            retail::set_vertical_setting,
+            retail::set_camera_preview,
+            retail::retail_scan_key,
+            retail::retail_scan,
+            retail::retail_add_item,
             kiosk::admin_printer_settings,
             kiosk::admin_save_printer_settings,
             kiosk::admin_test_print,

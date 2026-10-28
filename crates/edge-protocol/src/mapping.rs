@@ -547,6 +547,7 @@ impl From<&CatalogStatus> for CatalogStatusV1 {
                 .iter()
                 .map(CatalogSnapshotViewV1::from)
                 .collect(),
+            highest_version: status.highest_version,
         }
     }
 }

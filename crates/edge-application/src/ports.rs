@@ -95,6 +95,11 @@ pub trait CatalogUnitOfWork {
         store_id: &StoreId,
         limit: i64,
     ) -> Result<Vec<CatalogSnapshot>, AppError>;
+    /// Highest snapshot version this store has ever held, `0` for none.
+    ///
+    /// Asked of the whole table rather than of the snapshots a status view
+    /// shows, because a superseded snapshot still owns its version.
+    fn highest_catalog_version(&mut self, store_id: &StoreId) -> Result<i64, AppError>;
     fn insert_catalog_snapshot(
         &mut self,
         snapshot: &CatalogSnapshot,

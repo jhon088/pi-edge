@@ -1,0 +1,23 @@
+product_ref,sku,barcode,name,price_mxn,category,image
+R-COCA-3L,SKU-RT-1001,7500000000015,Coca-Cola Sabor Original 3 L,42.00,Bebidas,coca.jpg
+R-POWERADE,SKU-RT-1002,7500000000022,Powerade Sabor Moras 1 L,24.00,Bebidas,powerade.jpg
+R-BELIGHT,SKU-RT-1003,7500000000039,Be Light Agua Saborizada 1.5 L,21.00,Bebidas,belight.jpg
+R-JUMEX,SKU-RT-1004,7500000000046,Jumex Néctar de Naranja 1 L,27.50,Bebidas,jumex.jpg
+R-RUFFLES,SKU-RT-2001,7500000000053,Ruffles Queso 185 g,38.00,Snacks,ruffles.jpg
+R-BAGELS,SKU-RT-3001,7500000000060,Bagels Bimbo Original 4 pz,46.00,Panadería,bagels.jpg
+R-MANZANA,SKU-RT-4001,7500000000077,Manzana Red Delicious 1 kg,59.90,Frutas y Verduras,manzana.jpg
+R-PLATANO,SKU-RT-4002,7500000000084,Plátano Orgánico por Penca 1 kg,19.90,Frutas y Verduras,platano.jpg
+R-LIMON,SKU-RT-4003,7500000000091,Limón con Semilla 1 kg,32.90,Frutas y Verduras,limon.jpg
+R-ARRACHERA,SKU-RT-5001,7500000000107,Arrachera Marinada SuKarne 600 g,189.00,Carnes y Pollo,arrachera.jpg
+R-MOLIDA,SKU-RT-5002,7500000000114,Carne Molida de Res 90/10 500 g,98.00,Carnes y Pollo,molida.jpg
+R-ALITAS,SKU-RT-5003,7500000000121,Alitas de Pollo Bachoco Picositas,89.00,Carnes y Pollo,alitas.jpg
+R-POLLO,SKU-RT-5004,7500000000138,Pollo Rostizado Entero,139.00,Carnes y Pollo,pollo.jpg
+R-LECHE,SKU-RT-6001,7500000000145,Leche Entera 1 L,26.50,Lácteos,leche.png
+R-YOGURT,SKU-RT-6002,7500000000152,Yogurt Natural 900 g,34.00,Lácteos,yogurt.png
+R-ACEITE,SKU-RT-7001,7500000000169,Aceite Vegetal Cártamus 900 ml,48.50,Despensa,aceite.jpg
+R-ATUN,SKU-RT-7002,7500000000176,Atún Tuny en Agua 140 g,22.50,Despensa,atun.jpg
+R-CAFE,SKU-RT-7003,7500000000183,Café Molido 250 g,89.00,Despensa,cafe.png
+R-CLOROX,SKU-RT-8001,7500000000190,Cloro Clorox Triple Acción 1.89 L,38.50,Hogar y Limpieza,clorox.jpg
+R-PERSIL-LIQ,SKU-RT-8002,7500000000206,Detergente Líquido Persil Universal 1.66 L,112.00,Hogar y Limpieza,persil.jpg
+R-PERSIL-POL,SKU-RT-8003,7500000000213,Detergente en Polvo Persil Universal 4.5 kg,189.00,Hogar y Limpieza,persil-polvo.jpg
+R-PAPEL,SKU-RT-8004,7500000000220,Papel Higiénico 4 rollos,42.00,Hogar y Limpieza,papel.png

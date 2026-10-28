@@ -132,6 +132,18 @@ impl CatalogUnitOfWork for SqliteUnitOfWork<'_, '_> {
         rows.into_iter().map(RawSnapshot::into_domain).collect()
     }
 
+    fn highest_catalog_version(&mut self, store_id: &StoreId) -> Result<i64, AppError> {
+        // COALESCE, so a store with no catalog answers 0 rather than NULL and
+        // the caller has one shape to handle.
+        self.tx
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM catalog_snapshots WHERE store_id = ?1",
+                params![store_id.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_err)
+    }
+
     fn insert_catalog_snapshot(
         &mut self,
         snapshot: &CatalogSnapshot,

@@ -26,12 +26,12 @@ import {
   fetchConfiguration,
   fetchMenu,
   fetchPrinterSettings,
-  pay,
-  printReceipt,
   removeItem,
   startTransaction,
   totalize,
 } from "./api";
+import { Gate, screenAfterPick, type Origin, type Stage } from "./flow";
+import { usePaymentJourney } from "./payment";
 import {
   Brand,
   ErrorBoundary,
@@ -84,38 +84,30 @@ const IDLE_MS = 75_000;
  */
 const CONFIRM_SECONDS = 4 satisfies 4;
 
-type Stage =
-  | "loading"
-  | "attract"
-  | "fulfillment"
-  | "menu"
-  | "product"
-  | "postadd"
-  | "cart"
-  | "admin"
-  | "method"
-  | "payment"
-  | "done";
-
 /**
  * A render failure must never be a black screen.
  *
  * The boundary shows what broke and remounts the kiosk on demand. The sale
  * itself lives in the core, so a remount picks it straight back up.
  */
-export default function KioskApp() {
+export default function KioskApp({
+  onLeave,
+}: {
+  /** Called when an operator switched the installation to another vertical. */
+  onLeave: () => void;
+}) {
   const [generation, setGeneration] = useState(0);
   return (
     <ErrorBoundary
       key={generation}
       onReset={() => setGeneration((value) => value + 1)}
     >
-      <Kiosk />
+      <Kiosk onLeave={onLeave} />
     </ErrorBoundary>
   );
 }
 
-function Kiosk() {
+function Kiosk({ onLeave }: { onLeave: () => void }) {
   const [stage, setStage] = useState<Stage>("loading");
   const [menu, setMenu] = useState<Menu | null>(null);
   const [fulfillment, setFulfillment] = useState<Fulfillment>("DINE_IN");
@@ -126,7 +118,6 @@ function Kiosk() {
   const [transaction, setTransaction] = useState<RetailTransaction | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paying, setPaying] = useState<"waiting" | "approving">("waiting");
   const [method, setMethod] = useState<Method>("CARD");
   /** Where to go once this product is added: the menu, or back to the cart. */
   const [returnTo, setReturnTo] = useState<"menu" | "cart">("menu");
@@ -145,6 +136,9 @@ function Kiosk() {
 
   const stageRef = useRef(stage);
   stageRef.current = stage;
+
+  /** Held while a pick is in flight, so one tap is one line. */
+  const picking = useRef(new Gate());
 
   const complain = useCallback((value: unknown) => {
     setError(describe(value));
@@ -192,6 +186,30 @@ function Kiosk() {
 
   useEffect(refreshAutoPrint, [refreshAutoPrint]);
 
+  // --- payment, as a demo terminal would feel ----------------------------
+  //
+  // The journey itself is shared with the retail lane: one hook, one `pay`
+  // call, one place where a tender becomes a finalized sale.
+  const { paying, reset: resetPaying } = usePaymentJourney({
+    active: stage === "payment",
+    transaction,
+    method,
+    autoPrint,
+    onApproved: (finalized) => {
+      setConfirmed({
+        order: finalized.order_code,
+        total: `$${finalized.totals.grand_total.formatted}`,
+        method,
+      });
+      setTransaction(null);
+      setStage("done");
+    },
+    onRefused: (reason) => {
+      complain(reason);
+      setStage("cart");
+    },
+  });
+
   // --- abandon a forgotten order rather than leave it on screen ----------
   const reset = useCallback(
     async (cancel: boolean) => {
@@ -209,12 +227,12 @@ function Kiosk() {
       setConfiguration(null);
       setCategory(null);
       setConfirmed(null);
-      setPaying("waiting");
+      resetPaying();
       setMethod("CARD");
       setReturnTo("menu");
       setStage("attract");
     },
-    [],
+    [resetPaying],
   );
 
   useEffect(() => {
@@ -286,10 +304,19 @@ function Kiosk() {
     }
   };
 
-  const open = async (
-    picked: MenuItem,
-    from: "menu" | "cart" | "postadd" = "menu",
-  ) => {
+  /** Put the screen where `flow.ts` says it goes, with what it needs. */
+  const show = (screen: { stage: Stage; offer: boolean }, picked: MenuItem) => {
+    setJustAdded(screen.offer ? picked : null);
+    setStage(screen.stage);
+  };
+
+  const open = async (picked: MenuItem, from: Origin = "menu") => {
+    // A second tap on the same card while the first is in flight would be a
+    // second sale line. Refused here, where the tap is, because `busy` only
+    // reaches the buttons on the next render (ADR 046).
+    if (!picking.current.enter()) {
+      return;
+    }
     setItem(picked);
     // A suggestion taken from the offer screen comes back to the basket, not
     // to another offer: the customer is told once, not in a loop.
@@ -297,21 +324,27 @@ function Kiosk() {
     setBusy(true);
     try {
       const value = await fetchConfiguration(picked.product_ref, CHANNEL);
-      setConfiguration(value);
-      if (value.groups.length === 0) {
-        // Nothing to ask: one tap adds it, and the screen does not move.
-        const updated = await addItem(picked.product_ref, 1, [], null);
-        setTransaction(updated);
-        setItem(null);
-        setConfiguration(null);
+      if (value.groups.length > 0) {
+        setConfiguration(value);
+        show(screenAfterPick(from, "configure"), picked);
         return;
       }
-      setStage("product");
+      // Nothing to ask: one tap adds it. Where that leaves the screen depends
+      // on where the tap came from — and it is never "wherever it was", which
+      // is what used to leave the offer screen rendering nothing at all.
+      const updated = await addItem(picked.product_ref, 1, [], null);
+      setTransaction(updated);
+      setItem(null);
+      setConfiguration(null);
+      show(screenAfterPick(from, "added"), picked);
     } catch (reason) {
       complain(reason);
       setItem(null);
+      setConfiguration(null);
+      show(screenAfterPick(from, "failed"), picked);
     } finally {
       setBusy(false);
+      picking.current.leave();
     }
   };
 
@@ -372,7 +405,7 @@ function Kiosk() {
     try {
       const totalized = await totalize();
       setTransaction(totalized);
-      setPaying("waiting");
+      resetPaying();
       setStage("method");
     } catch (reason) {
       complain(reason);
@@ -383,70 +416,9 @@ function Kiosk() {
 
   const choosePayment = (picked: Method) => {
     setMethod(picked);
-    setPaying("waiting");
+    resetPaying();
     setStage("payment");
   };
-
-  // --- payment, as a demo terminal would feel ----------------------------
-  useEffect(() => {
-    if (stage !== "payment" || !transaction) {
-      return;
-    }
-    const tap = window.setTimeout(
-      () => setPaying("approving"),
-      method === "CASH" ? 2200 : 2600,
-    );
-    return () => window.clearTimeout(tap);
-  }, [stage, transaction, method]);
-
-  useEffect(() => {
-    if (stage !== "payment" || paying !== "approving" || !transaction) {
-      return;
-    }
-    let live = true;
-    const run = window.setTimeout(() => {
-      // The amount is the core's own grand total, handed straight back, and
-      // the tender is the one the customer chose. The screen never decides
-      // what is owed and never decides it was paid.
-      void pay(method, transaction.totals.grand_total.minor)
-        .then((finalized) => {
-          if (!live) {
-            return;
-          }
-          setConfirmed({
-            order: finalized.order_code,
-            total: `$${finalized.totals.grand_total.formatted}`,
-            method,
-          });
-          setTransaction(null);
-          setStage("done");
-          // Paper is a second act, after the money. The sale is finalized and
-          // durable by the time this runs, so a printer that is off, jammed
-          // or unplugged cannot touch it — the attempt resolves to a boolean
-          // and the core records the receipt's own fate either way.
-          if (autoPrint) {
-            void printReceipt(finalized.transaction_id).then((printed) => {
-              if (!printed) {
-                // Worth knowing at the counter, not worth alarming a customer
-                // whose order is already paid for and on its way.
-                console.warn("the receipt did not print");
-              }
-            });
-          }
-        })
-        .catch((reason) => {
-          if (live) {
-            complain(reason);
-            setPaying("waiting");
-            setStage("cart");
-          }
-        });
-    }, 1300);
-    return () => {
-      live = false;
-      window.clearTimeout(run);
-    };
-  }, [stage, paying, transaction, method, complain, autoPrint]);
 
   // --- render -------------------------------------------------------------
 
@@ -470,7 +442,7 @@ function Kiosk() {
             setConfiguration(null);
             setCategory(null);
             setConfirmed(null);
-            setPaying("waiting");
+            resetPaying();
             setMethod("CARD");
             setReturnTo("menu");
             refreshAutoPrint();
@@ -482,6 +454,7 @@ function Kiosk() {
             refreshAutoPrint();
             setStage(adminFrom);
           }}
+          onVerticalChange={onLeave}
         />
         {error ? <Toast message={error} /> : null}
       </div>
@@ -618,10 +591,10 @@ function Kiosk() {
                 (transaction?.lines ?? []).map((line) => line.product_ref),
               )}
               busy={busy}
-              onAdd={(picked) => {
-                setJustAdded(null);
-                void open(picked, "postadd");
-              }}
+              // The dish stays set until the flow says the screen has
+              // somewhere else to be: clearing it here was what left this
+              // screen with nothing to draw.
+              onAdd={(picked) => void open(picked, "postadd")}
               onSkip={() => {
                 setJustAdded(null);
                 setStage("cart");

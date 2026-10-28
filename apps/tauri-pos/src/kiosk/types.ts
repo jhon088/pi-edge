@@ -146,6 +146,22 @@ export interface RetailTransaction {
   balance_due: Money;
 }
 
+/**
+ * Which lane this installation opens in.
+ *
+ * One build, one core, one catalog: the vertical selects a shell and the
+ * channel it reads the menu for, and nothing else (ADR 044).
+ */
+export type Vertical = "RESTAURANT" | "RETAIL";
+
+export interface KioskPreferences {
+  vertical: Vertical;
+  /** The channel this lane sells from. Decided by the host, not the screen. */
+  channel_ref: string;
+  /** Whether the retail lane shows the customer their own camera. */
+  camera_preview: boolean;
+}
+
 export interface BridgeError {
   code: string;
   message: string;

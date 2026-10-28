@@ -60,7 +60,12 @@ else
   [ -n "$ready" ] || die "edge-daemon never answered on $SOCK after 10s."
 fi
 
-say "seeding the demo restaurant (offline)"
+# Safe to run over an installation that already has a demo in it, including
+# one seeded before the retail vertical existed: the seed reconciles its
+# version against what the core already holds, so an unchanged dataset costs
+# nothing and a changed one takes the next version and leaves the old snapshot
+# intact (ADR 047). There is no `rm` here, and there never should be.
+say "seeding the demo catalog — restaurant and retail, offline"
 "$ROOT/target/debug/edge-cli" --db "$DB" demo-seed
 
 say "socket in use: $SOCK"

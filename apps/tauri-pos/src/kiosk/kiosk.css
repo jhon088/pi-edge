@@ -99,6 +99,10 @@ body.kiosk {
   --sh-2: 0 12px 34px rgba(18, 38, 33, 0.12);
   --sh-mint: 0 6px 20px rgba(14, 156, 122, 0.26);
 
+  /* The customer-facing preview, and the room the lane leaves for it. */
+  --cam-w: clamp(180px, 17vw, 240px);
+  --cam-h: calc(var(--cam-w) * 0.75);
+
   --font: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
@@ -1033,6 +1037,120 @@ button {
 }
 
 
+
+/* --- an option you can take several of -------------------------------
+ *
+ * Two controls, not one gesture doing two jobs: the card adds (the tap
+ * everybody already makes), and the stepper beside it takes away. Before this,
+ * the only way down from the maximum was to tap once more and have the whole
+ * option clear itself — which is not a quantity control, it is a trap.
+ *
+ * Both buttons are the same size as the cart's stepper, because they do the
+ * same thing and a kiosk should not have two sizes of "one more".
+ */
+
+.k-option--counted {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  /* The tap target owns the padding, so it reaches the card's edges. */
+  padding: 0 16px 0 0;
+  cursor: default;
+}
+
+.k-option__tap {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 18px;
+  min-height: 84px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* At the maximum the card cannot add any more — but it is still a chosen
+   option, so it must not grey itself out as though it were unavailable. The
+   stepper's own "+" is where "no further" is shown. */
+.k-option__tap:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.k-qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+
+.k-qty__btn {
+  width: 54px;
+  height: 54px;
+  border: none;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--fg);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 130ms var(--ease), transform 130ms var(--ease);
+}
+
+.k-qty__btn:active {
+  transform: scale(0.9);
+  background: var(--line-strong);
+}
+
+.k-qty__btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.k-qty__value {
+  min-width: 44px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 740;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-option--counted.k-option--on .k-qty {
+  background: var(--surface);
+  border-color: var(--mint-line);
+}
+
+/* In the photo grid the card is a column, so the stepper sits under the
+   picture rather than beside it. */
+.k-options--visual .k-option--counted {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.k-options--visual .k-option__tap {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.k-options--visual .k-qty {
+  margin: 0 14px 14px;
+  justify-content: space-between;
+}
 
 /* ================================================================== cart */
 
@@ -2251,4 +2369,707 @@ button {
 .k-admin__driver code {
   font-size: 13.5px;
   color: var(--fg-2);
+}
+
+/* ====================================================== the retail lane
+ *
+ * A self-checkout has one job the restaurant screens do not: show a running
+ * total that a customer can read from a step back, while a list of what they
+ * have scanned grows underneath their hands. So the lane is a two-column
+ * layout with the total pinned beside it — not a page that scrolls the number
+ * out of sight.
+ *
+ * Everything here reuses the kiosk's own tokens. There is no second palette
+ * and no retail accent: one brand, two shops. */
+
+/* --- attract: a shop, not a machine ----------------------------------
+ *
+ * A split hero. The left half invites; the right half is a photograph that
+ * runs to the edge of the glass, because a self-checkout standing idle should
+ * look like the shop it is in. The seam between them is softened by a wash
+ * rather than drawn, so the two halves read as one composition.
+ */
+
+.k-r-attract {
+  display: grid;
+  grid-template-columns: minmax(420px, 47%) 1fr;
+  height: 100%;
+  min-height: 0;
+}
+
+.k-r-attract__copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 18px;
+  padding: clamp(36px, 4.4vw, 92px);
+  /* Carries just past the seam, so the photograph appears to sit behind it. */
+  background: linear-gradient(100deg, var(--bg) 86%, rgba(246, 248, 248, 0));
+}
+
+.k-r-attract__eyebrow {
+  margin: 10px 0 0;
+  color: var(--mint-text);
+  letter-spacing: 0.16em;
+}
+
+.k-r-attract__title {
+  margin: 0;
+  max-width: 13ch;
+  font-size: clamp(42px, 4.6vw, 74px);
+  line-height: 1.0;
+  letter-spacing: -0.035em;
+  font-weight: 760;
+  color: var(--on-surface);
+}
+
+/* The instruction and the animation that illustrates it, as one object. */
+.k-r-attract__scan {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 4px;
+  padding: 14px 24px 14px 20px;
+  border: 1px solid var(--mint-line);
+  border-radius: var(--r-pill);
+  background: var(--mint-soft);
+}
+
+.k-r-attract__lead {
+  margin: 0;
+  font-size: clamp(17px, 1.4vw, 21px);
+  font-weight: 620;
+  color: var(--mint-text);
+}
+
+.k-r-attract__cta {
+  margin-top: 10px;
+}
+
+.k-r-attract__foot {
+  margin-top: 18px;
+}
+
+.k-r-attract__foot .k-powered {
+  margin: 0;
+}
+
+.k-r-attract__art {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      120% 90% at 78% 22%,
+      var(--mint-soft),
+      var(--bg-2) 62%
+    );
+}
+
+.k-r-attract__photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Low enough that the still life keeps its feet on tall screens. */
+  object-position: 42% 62%;
+}
+
+/* A wash over the inner edge, so the photograph fades into the copy rather
+   than stopping against it. */
+.k-r-attract__art::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 26%;
+  background: linear-gradient(90deg, var(--bg), rgba(246, 248, 248, 0));
+  pointer-events: none;
+}
+
+/* The scan line: seven bars that sweep, once, and keep sweeping. The point is
+   to say "pass something over the glass" without a word of instruction. */
+.k-r-scanline {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  flex: none;
+  height: 38px;
+}
+
+.k-r-scanline i {
+  display: block;
+  width: 6px;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--mint-deep);
+  opacity: 0.25;
+  animation: k-r-sweep 1.6s var(--ease) infinite;
+}
+
+.k-r-scanline i:nth-child(2) { width: 3px; animation-delay: 0.08s }
+.k-r-scanline i:nth-child(3) { width: 8px; animation-delay: 0.16s }
+.k-r-scanline i:nth-child(4) { width: 4px; animation-delay: 0.24s }
+.k-r-scanline i:nth-child(5) { width: 7px; animation-delay: 0.32s }
+.k-r-scanline i:nth-child(6) { width: 3px; animation-delay: 0.4s }
+.k-r-scanline i:nth-child(7) { width: 6px; animation-delay: 0.48s }
+
+.k-r-scanline--sm {
+  height: 34px;
+  justify-content: center;
+}
+
+@keyframes k-r-sweep {
+  0%, 100% { opacity: 0.2; transform: scaleY(0.72) }
+  45% { opacity: 1; transform: scaleY(1) }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-r-scanline i {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+/* The admin key is white-on-glass for a photographic attract screen. The
+   retail one sits over the copy half, which is light. */
+.k-r-attract ~ .k-admin-key {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--fg-2);
+  box-shadow: var(--sh-1);
+}
+
+/* --- the lane --------------------------------------------------------- */
+
+.k-r-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 29vw, 400px);
+  gap: 26px;
+  align-items: start;
+  padding-top: 4px;
+}
+
+.k-r-lane {
+  min-width: 0;
+}
+
+.k-r-lines {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-r-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  /* Newly scanned lines arrive at the end of the list; a short lift is how a
+     customer sees that the thing in their hand registered. */
+  animation: k-r-land 0.26s var(--ease);
+}
+
+@keyframes k-r-land {
+  from { opacity: 0; transform: translateY(-6px) }
+  to { opacity: 1; transform: none }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-r-line { animation: none }
+}
+
+.k-r-line__name {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--on-surface);
+}
+
+.k-r-line__unit {
+  margin: 4px 0 0;
+  font-size: 14.5px;
+  color: var(--fg-3);
+}
+
+.k-r-line__qty {
+  flex: none;
+}
+
+.k-r-line__total {
+  min-width: 108px;
+  text-align: right;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.k-r-line__remove {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.k-r-line__remove:active {
+  background: var(--red-soft);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.k-r-empty {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 10px;
+  min-height: 46vh;
+  padding: 30px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  text-align: center;
+}
+
+/* --- the total, beside the lane --------------------------------------- */
+
+.k-r-panel {
+  position: sticky;
+  top: 4px;
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--sh-card);
+}
+
+.k-r-panel__label {
+  margin: 10px 0 0;
+  font-size: 15px;
+  font-weight: 640;
+  color: var(--fg-2);
+}
+
+.k-r-panel__total {
+  font-size: clamp(38px, 4.4vw, 58px);
+  font-weight: 780;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  color: var(--on-surface);
+}
+
+.k-r-panel__saving {
+  margin: 0;
+  color: var(--mint-text);
+  font-size: 15px;
+  font-weight: 640;
+}
+
+.k-r-panel__breakdown {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  margin: 8px 0 4px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.k-r-panel__breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.k-r-panel__breakdown dt {
+  color: var(--fg-2);
+  font-size: 15px;
+}
+
+.k-r-panel__breakdown dd {
+  margin: 0;
+  color: var(--fg);
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.k-r-panel__pay,
+.k-r-panel .k-btn--ghost {
+  width: 100%;
+  justify-content: center;
+}
+
+.k-r-panel__pay {
+  margin-top: 6px;
+}
+
+.k-r-panel__hint {
+  margin: 2px 0 0;
+}
+
+/* --- search: browse, or type the number ------------------------------- */
+
+.k-r-search {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.k-r-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  justify-self: start;
+}
+
+.k-r-tab {
+  padding: 12px 22px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 16px;
+  font-weight: 640;
+}
+
+.k-r-tab--on {
+  background: var(--surface);
+  color: var(--on-surface);
+  box-shadow: var(--sh-1);
+}
+
+/* The browse chips are buttons here, so they need the selected state the
+   restaurant's read-only chips never had. */
+.k-chip--on {
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  border-color: transparent;
+  color: var(--mint-ink);
+}
+
+.k-r-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
+  gap: 14px;
+}
+
+.k-r-card {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 16px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  text-align: center;
+}
+
+.k-r-card:active {
+  transform: translateY(1px);
+  border-color: var(--mint-line);
+}
+
+.k-r-card__photo {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.k-r-card__name {
+  font-size: 16px;
+  font-weight: 640;
+  line-height: 1.2;
+  color: var(--on-surface);
+}
+
+.k-r-card__price {
+  font-size: 18px;
+  font-weight: 720;
+  color: var(--on-surface);
+}
+
+.k-r-card__add {
+  margin-top: 2px;
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  background: var(--mint-soft);
+  color: var(--mint-text);
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.k-r-search__none {
+  padding: 26px 0;
+}
+
+/* --- the on-screen keys ----------------------------------------------- */
+
+.k-r-keys {
+  display: grid;
+  gap: 10px;
+}
+
+.k-r-keys__field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: 21px;
+  font-weight: 620;
+  color: var(--on-surface);
+}
+
+.k-r-keys__ghost {
+  color: var(--fg-3);
+  font-weight: 500;
+}
+
+.k-r-keys__clear {
+  margin-left: auto;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 20px;
+}
+
+.k-r-keys__rows {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.k-r-keys__row {
+  display: flex;
+  gap: 8px;
+}
+
+.k-r-key {
+  min-width: 68px;
+  height: 68px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  color: var(--on-surface);
+  font-size: 20px;
+  font-weight: 640;
+}
+
+.k-r-key:active {
+  background: var(--mint-soft);
+  border-color: var(--mint-line);
+}
+
+.k-r-key--wide {
+  min-width: 96px;
+}
+
+/* --- the barcode pad -------------------------------------------------- */
+
+.k-r-pad {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 10px 0 20px;
+}
+
+.k-r-pad__display {
+  min-width: min(440px, 80vw);
+  padding: 16px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  text-align: center;
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: 0.06em;
+  color: var(--on-surface);
+}
+
+.k-r-pad__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 92px);
+  gap: 10px;
+}
+
+.k-r-key--pad {
+  min-width: 92px;
+  height: 78px;
+  font-size: 26px;
+}
+
+.k-r-key--go {
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  border-color: transparent;
+  color: var(--mint-ink);
+  box-shadow: var(--sh-mint);
+}
+
+.k-r-key--go:disabled {
+  background: var(--surface-2);
+  color: var(--fg-3);
+  box-shadow: none;
+}
+
+/* --- admin: which lane this box is ------------------------------------ */
+
+.k-admin__lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 14px 0 4px;
+}
+
+.k-admin__lane {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  text-align: left;
+}
+
+.k-admin__lane--on {
+  border-color: var(--mint);
+  background: var(--mint-soft);
+  box-shadow: var(--sh-1);
+}
+
+.k-admin__lane-name {
+  font-size: 19px;
+  font-weight: 680;
+  color: var(--on-surface);
+}
+
+.k-admin__lane-on {
+  margin-top: 4px;
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  background: var(--mint);
+  color: var(--mint-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* A narrower panel: the lane becomes one column and the total goes on top,
+   where it is still the first thing read. */
+@media (max-width: 1040px) {
+  .k-r-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .k-r-panel {
+    position: static;
+    order: -1;
+  }
+
+  .k-r-attract {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* One column: the photograph goes behind the copy rather than away, so a
+     narrow screen keeps the same composition instead of a different design. */
+  .k-r-attract__art {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+  }
+
+  .k-r-attract__copy {
+    background: linear-gradient(
+      180deg,
+      var(--bg) 54%,
+      rgba(246, 248, 248, 0.86) 72%,
+      rgba(246, 248, 248, 0)
+    );
+    align-content: start;
+    padding-top: clamp(40px, 8vh, 90px);
+  }
+
+  .k-r-attract__art::before {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------- the customer's camera
+ *
+ * A mirror in the corner of a self-checkout, so the customer can see
+ * themselves while they scan. Small, quiet, and out of the way of everything
+ * that matters: it sits above the header's right-hand end, clear of the total
+ * panel, the Pagar button and the search grid.
+ *
+ * Mirrored horizontally, because a preview that is not mirrored reads as
+ * somebody else's camera pointing at you.
+ */
+
+.k-cam {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 6;
+  width: var(--cam-w);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--sh-card);
+  /* Never a target: it is a mirror, and taps belong to the screen under it. */
+  pointer-events: none;
+}
+
+.k-cam__video {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* The stream decides 4:3 or 16:9; this only keeps the box from collapsing
+     before the first frame arrives. */
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  transform: scaleX(-1);
+  background: var(--surface-2);
+}
+
+/* The lane's total panel starts below the preview rather than under it.
+   Reserved from the preference, not from whether a stream actually opened,
+   so the layout does not jump when a camera is slow or refused. */
+.k-r-main--cam .k-r-panel {
+  margin-top: calc(var(--cam-h) + 10px);
+  top: calc(var(--cam-h) + 14px);
+}
+
+/* The admin key shares the attract screen's corner; the preview takes the
+   top, the key keeps the bottom. */
+@media (max-width: 760px) {
+  :root,
+  body.kiosk {
+    --cam-w: 150px;
+  }
 }

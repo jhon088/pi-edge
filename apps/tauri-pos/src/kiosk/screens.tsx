@@ -16,6 +16,21 @@ import {
   Steps,
   previewAmount,
 } from "./components";
+import {
+  askedGroups,
+  canDecrease,
+  canIncrease,
+  decrease,
+  defaultsFor,
+  groupTotal,
+  hasQuantity,
+  increase,
+  isSingleSelect,
+  quantityOf,
+  requested,
+  tap,
+  unsatisfied,
+} from "./selection";
 import type {
   AssetRef,
   Menu,
@@ -25,9 +40,17 @@ import type {
   RequestedSelection,
   RetailTransaction,
   SelectionGroup,
+  SelectionOption,
 } from "./types";
 
-export type Fulfillment = "DINE_IN" | "TAKE_AWAY";
+/**
+ * How the customer takes what they bought.
+ *
+ * `SELF_CHECKOUT` is the retail lane: there is no choice to make there — you
+ * take your bag and go — but the confirmation still has to say the right
+ * thing, so the lane names itself here rather than borrowing "para llevar".
+ */
+export type Fulfillment = "DINE_IN" | "TAKE_AWAY" | "SELF_CHECKOUT";
 
 // ================================================================ attract
 
@@ -275,33 +298,6 @@ export function MenuScreen({
 
 // ========================================================= product detail
 
-function askedGroups(
-  configuration: ProductConfiguration,
-  chosen: Map<string, number>,
-): SelectionGroup[] {
-  return configuration.groups.filter(
-    (group) => group.owner_option_id === null || chosen.has(group.owner_option_id),
-  );
-}
-
-/** Answers to questions that hung from an option no longer chosen. */
-function dropNested(
-  configuration: ProductConfiguration,
-  chosen: Map<string, number>,
-  optionId: string,
-) {
-  for (const group of configuration.groups) {
-    if (group.owner_option_id !== optionId) {
-      continue;
-    }
-    for (const option of group.options) {
-      if (chosen.delete(option.option_id)) {
-        dropNested(configuration, chosen, option.option_id);
-      }
-    }
-  }
-}
-
 export function ProductScreen({
   item,
   configuration,
@@ -340,12 +336,7 @@ export function ProductScreen({
         continue;
       }
       if (!group.options.some((option) => next.has(option.option_id))) {
-        for (const option of group.options) {
-          if (option.default_quantity > 0) {
-            next.set(option.option_id, option.default_quantity);
-            changed = true;
-          }
-        }
+        changed = defaultsFor(group, next) || changed;
       }
     }
     return changed ? next : chosen;
@@ -355,35 +346,19 @@ export function ProductScreen({
     setChosen(withNestedDefaults);
   }
 
-  const toggle = (group: SelectionGroup, optionId: string, max: number) => {
-    setChosen((current) => {
-      const next = new Map(current);
-      const had = next.get(optionId) ?? 0;
-      if (group.max_quantity === 1) {
-        for (const option of group.options) {
-          if (next.delete(option.option_id)) {
-            dropNested(configuration, next, option.option_id);
-          }
-        }
-        if (had === 0) {
-          next.set(optionId, 1);
-        }
-        return next;
-      }
-      if (had >= max) {
-        next.delete(optionId);
-        dropNested(configuration, next, optionId);
-      } else {
-        next.set(optionId, had + 1);
-      }
-      return next;
-    });
-  };
+  // Every gesture goes through `selection.ts`, which keeps the configuration
+  // inside the bounds the catalog declared. This screen decides nothing about
+  // what is allowed, and nothing about what anything costs.
+  const onTap = (group: SelectionGroup, option: SelectionOption) =>
+    setChosen((current) => tap(configuration, current, group, option));
+  const onMore = (group: SelectionGroup, option: SelectionOption) =>
+    setChosen((current) => increase(configuration, current, group, option));
+  const onFewer = (group: SelectionGroup, option: SelectionOption) =>
+    setChosen((current) => decrease(configuration, current, group, option));
 
-  const totalOf = (group: SelectionGroup) =>
-    group.options.reduce((sum, option) => sum + (chosen.get(option.option_id) ?? 0), 0);
+  const totalOf = (group: SelectionGroup) => groupTotal(group, chosen);
 
-  const missing = asked.find((group) => totalOf(group) < group.min_quantity);
+  const missing = unsatisfied(configuration, chosen)[0];
 
   // A preview, never an official amount: every price in it came from the
   // core, and the core prices the line again the moment it is added.
@@ -393,8 +368,7 @@ export function ProductScreen({
         (sum, group) =>
           sum +
           group.options.reduce(
-            (inner, option) =>
-              inner + option.unit_price.minor * (chosen.get(option.option_id) ?? 0),
+            (inner, option) => inner + option.unit_price.minor * quantityOf(chosen, option),
             0,
           ),
         0,
@@ -449,26 +423,18 @@ export function ProductScreen({
               </p>
               <div className={`k-options${visual ? " k-options--visual" : ""}`}>
                 {group.options.map((option) => {
-                  const picked = chosen.get(option.option_id) ?? 0;
+                  const picked = quantityOf(chosen, option);
                   const blocked = picked === 0 && full && group.max_quantity > 1;
-                  const single = group.max_quantity === 1;
-                  return (
-                    <button
-                      type="button"
-                      key={option.option_id}
-                      className={`k-option${picked > 0 ? " k-option--on" : ""}${
-                        single ? " k-option--round" : ""
-                      }`}
-                      disabled={blocked}
-                      onClick={() => toggle(group, option.option_id, option.max_quantity)}
-                    >
+                  const counted = hasQuantity(group, option);
+                  const body = (
+                    <>
                       {option.image ? (
                         <span className="k-option__art">
                           <AssetImage asset={option.image} alt={option.name} />
                         </span>
                       ) : null}
                       <span className="k-option__box" aria-hidden>
-                        {picked > 0 ? (option.max_quantity > 1 ? picked : "✓") : ""}
+                        {picked > 0 ? (counted ? picked : "✓") : ""}
                       </span>
                       <span className="k-option__name">{option.name}</span>
                       {option.unit_price.minor > 0 ? (
@@ -478,6 +444,70 @@ export function ProductScreen({
                       ) : (
                         <span className="k-option__incl">Incluido</span>
                       )}
+                    </>
+                  );
+
+                  // An option you can take several of gets its own [−] n [+].
+                  // Tapping the card still adds one — that is the gesture
+                  // people already know — but coming back down no longer means
+                  // tapping through the maximum and out the other side.
+                  if (counted) {
+                    const more = canIncrease(group, option, chosen);
+                    const fewer = canDecrease(group, option, chosen);
+                    return (
+                      <div
+                        key={option.option_id}
+                        className={`k-option k-option--counted${
+                          picked > 0 ? " k-option--on" : ""
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          className="k-option__tap"
+                          disabled={blocked || !more}
+                          aria-label={`Agregar ${option.name}`}
+                          onClick={() => onMore(group, option)}
+                        >
+                          {body}
+                        </button>
+                        <div className="k-qty" role="group" aria-label={option.name}>
+                          <button
+                            type="button"
+                            className="k-qty__btn"
+                            aria-label={`Quitar un ${option.name}`}
+                            disabled={!fewer}
+                            onClick={() => onFewer(group, option)}
+                          >
+                            −
+                          </button>
+                          <span className="k-qty__value" aria-live="polite">
+                            {picked}
+                          </span>
+                          <button
+                            type="button"
+                            className="k-qty__btn"
+                            aria-label={`Agregar un ${option.name}`}
+                            disabled={!more}
+                            onClick={() => onMore(group, option)}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button
+                      type="button"
+                      key={option.option_id}
+                      className={`k-option${picked > 0 ? " k-option--on" : ""}${
+                        isSingleSelect(group) ? " k-option--round" : ""
+                      }`}
+                      disabled={blocked}
+                      onClick={() => onTap(group, option)}
+                    >
+                      {body}
                     </button>
                   );
                 })}
@@ -500,13 +530,7 @@ export function ProductScreen({
               className="k-btn k-btn--primary k-btn--cta"
               disabled={busy || missing !== undefined}
               onClick={() =>
-                onAdd(
-                  [...chosen.entries()].map(([option_id, qty]) => ({
-                    option_id,
-                    quantity: qty,
-                  })),
-                  quantity,
-                )
+                onAdd(requested(chosen), quantity)
               }
             >
               <span>Agregar</span>
@@ -740,10 +764,16 @@ export function ConfirmationScreen({
         ✓
       </div>
       <div className="k-order">
-        <span className="k-order__label">Pedido</span>
+        <span className="k-order__label">
+          {fulfillment === "SELF_CHECKOUT" ? "Ticket" : "Pedido"}
+        </span>
         <span className="k-order__code">{orderCode}</span>
       </div>
-      <h1 className="k-h1">Tu pedido está en preparación</h1>
+      <h1 className="k-h1">
+        {fulfillment === "SELF_CHECKOUT"
+          ? "Gracias por tu compra"
+          : "Tu pedido está en preparación"}
+      </h1>
       <div className="k-done__meta">
         <span>
           Total <b>{total}</b>
@@ -752,7 +782,13 @@ export function ConfirmationScreen({
           Pago <b>{method === "CASH" ? "Efectivo" : "Tarjeta"}</b>
         </span>
         <span>
-          <b>{fulfillment === "DINE_IN" ? "Comer aquí" : "Para llevar"}</b>
+          <b>
+            {fulfillment === "DINE_IN"
+              ? "Comer aquí"
+              : fulfillment === "TAKE_AWAY"
+                ? "Para llevar"
+                : "Toma tu ticket"}
+          </b>
         </span>
       </div>
       <div className="k-countdown">

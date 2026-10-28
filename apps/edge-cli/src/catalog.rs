@@ -83,6 +83,29 @@ pub struct ImportOutcome {
     pub chunks_sent: i64,
     pub chunks_skipped: i64,
     pub activated: bool,
+    /// The version actually imported, which under `VersionPolicy::Reconcile`
+    /// is not necessarily the one the file names.
+    pub version: i64,
+}
+
+/// What version an import should carry.
+///
+/// A catalog version is an identity, not a counter: the core refuses a version
+/// that already exists with different content (`CATALOG_VERSION_CONFLICT`) and
+/// that refusal is what makes "what did this sale cost" answerable. So who
+/// chooses the number matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionPolicy {
+    /// The number in the file, verbatim. What a real upstream catalog uses:
+    /// versions are assigned by whoever owns the content, and a collision is
+    /// a genuine error that must surface rather than be worked around.
+    Declared,
+    /// Ask the core what is already there and pick accordingly — reuse the
+    /// version that already holds this exact content, otherwise take the next
+    /// one free. For a dataset that ships *with* the application and changes
+    /// between releases, where the number in the file is a default rather than
+    /// an assertion.
+    Reconcile,
 }
 
 /// Read a snapshot file, stream it to the core, and verify it there.
@@ -91,6 +114,7 @@ pub fn import_catalog(
     path: &Path,
     chunk_budget_bytes: usize,
     activate: bool,
+    versioning: VersionPolicy,
 ) -> Result<ImportOutcome, CliError> {
     let raw = std::fs::read_to_string(path)
         .map_err(|error| CliError::Input(format!("cannot read {}: {error}", path.display())))?;
@@ -224,11 +248,16 @@ pub fn import_catalog(
         availability: i64::try_from(all_availability.len()).unwrap_or(i64::MAX),
     };
 
+    let version = match versioning {
+        VersionPolicy::Declared => fixture.version,
+        VersionPolicy::Reconcile => reconcile_version(client, fixture.version, &declared_hash)?,
+    };
+
     // Opening an import for content that is already open returns its progress,
     // which is what makes a resume an ordinary call.
     let opened = client.begin_catalog_import(
         BeginCatalogImportRequestV1 {
-            version: fixture.version,
+            version,
             currency: fixture.currency.clone(),
             content_hash: declared_hash.clone(),
             generated_at: fixture.generated_at.clone(),
@@ -357,7 +386,47 @@ pub fn import_catalog(
         chunks_sent,
         chunks_skipped,
         activated: activate,
+        version,
     })
+}
+
+/// Which version this content should be, given what the store already holds.
+///
+/// Three answers, in this order:
+///
+/// 1. **A snapshot already holds exactly this content** — reuse its version.
+///    `begin_catalog_import` then returns that snapshot rather than making a
+///    second one, so re-running converges instead of accumulating. This is the
+///    case that makes the whole thing idempotent, and it is checked first
+///    precisely so that re-running never costs a version.
+/// 2. **The version in the file is free** — use it. A clean installation gets
+///    version 1 from a dataset that says 1, which is what anyone reading the
+///    file would expect.
+/// 3. **It is taken by different content** — take `highest + 1`. The snapshot
+///    that holds the old content stays exactly as it is; it is superseded on
+///    activation, not rewritten, so the sales that captured it still price.
+fn reconcile_version(
+    client: &IpcEdgeClient,
+    declared: i64,
+    content_hash: &str,
+) -> Result<i64, CliError> {
+    let status = client.catalog_status()?;
+    let known = status
+        .active
+        .iter()
+        .chain(status.pending.iter())
+        .chain(status.importing.iter());
+    for view in known {
+        if view.snapshot.declared_content_hash == content_hash {
+            return Ok(view.snapshot.version);
+        }
+    }
+    // Superseded snapshots appear in none of those lists and still own their
+    // versions forever, so the ceiling comes from the core, not from the lists.
+    if status.highest_version < declared {
+        return Ok(declared);
+    }
+    Ok(status.highest_version + 1)
 }
 
 impl ImportOutcome {
@@ -368,6 +437,7 @@ impl ImportOutcome {
             "chunks_sent": self.chunks_sent,
             "chunks_skipped": self.chunks_skipped,
             "activated": self.activated,
+            "version": self.version,
         }))
     }
 }

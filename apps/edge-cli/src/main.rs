@@ -578,6 +578,9 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
                 file,
                 chunk_bytes.unwrap_or(catalog::DEFAULT_CHUNK_BUDGET_BYTES),
                 *activate,
+                // A real catalog's version is assigned by whoever produced it,
+                // so a collision is an error to see, not one to route around.
+                catalog::VersionPolicy::Declared,
             )?;
             outcome.to_value()
         }

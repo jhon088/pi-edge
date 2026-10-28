@@ -839,6 +839,11 @@ pub struct CatalogStatusV1 {
     pub pending: Vec<CatalogSnapshotViewV1>,
     /// Open imports. These never price a sale.
     pub importing: Vec<CatalogSnapshotViewV1>,
+    /// Highest version this store has ever held, superseded ones included;
+    /// `0` when it has never held a catalog. What a producer needs in order to
+    /// name a new snapshot without colliding with one it cannot see.
+    #[serde(default)]
+    pub highest_version: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

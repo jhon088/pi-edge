@@ -206,6 +206,58 @@ jobs:
             Write-Host "  ${name}: $magic, $frames frames, $($bytes.Length) bytes"
           }
 
+          # ---------------------------------------------------- the retail lane
+          #
+          # The second vertical is a separate dataset and a separate folder of
+          # photographs, declared separately in the bundle's resources. An
+          # installer that shipped only the restaurant would look perfectly
+          # healthy until somebody switched lanes on a stand, so it is checked
+          # here rather than discovered there (ADR 047).
+
+          $retail = Join-Path $staged.Directory.FullName 'retail'
+          if (-not (Test-Path $retail)) {
+            throw "the retail lane did not ship: no $retail"
+          }
+          $retailMenu = Join-Path $retail 'menu.json'
+          if (-not (Test-Path $retailMenu)) { throw "no menu.json in $retail" }
+          $shelf = Get-Content $retailMenu -Raw | ConvertFrom-Json
+          Write-Host "retail products: $($shelf.products.Count), categories: $($shelf.categories.Count)"
+          if ($shelf.products.Count -ne 22) {
+            throw "expected 22 retail products, found $($shelf.products.Count)"
+          }
+
+          $retailAssets = Join-Path $retail 'assets'
+          if (-not (Test-Path $retailAssets)) { throw "no assets in $retail" }
+          $photos = @(Get-ChildItem $retailAssets -Filter *.jpg)
+          $drawn  = @(Get-ChildItem $retailAssets -Filter *.png)
+          Write-Host "retail photographs: $($photos.Count), placeholders: $($drawn.Count)"
+          if ($photos.Count -ne 18) {
+            throw "expected 18 real retail photographs, found $($photos.Count)"
+          }
+          # One image per product, and every one of them present.
+          if (($photos.Count + $drawn.Count) -ne $shelf.products.Count) {
+            throw "$($shelf.products.Count) products but $($photos.Count + $drawn.Count) images"
+          }
+          foreach ($photo in $photos) {
+            if ($photo.Length -lt 4000) { throw "$($photo.Name) is $($photo.Length) bytes" }
+          }
+
+          # ------------------------------------------- nothing points outside
+          #
+          # Source material, build machines and the network are all things this
+          # installer must not need. A dataset that mentions any of them works
+          # where it was built and nowhere else.
+          foreach ($dataset in @($staged.FullName, $retailMenu)) {
+            $text = Get-Content $dataset -Raw
+            foreach ($forbidden in 'examples/', 'http://', 'https://', 'file://', '/Users/', 'C:\Users') {
+              if ($text.Contains($forbidden)) {
+                throw "$dataset mentions '$forbidden'"
+              }
+            }
+          }
+          Write-Host "datasets reference nothing outside the installation"
+
+
       - name: Check the installer
         id: nsis
         if: always()
