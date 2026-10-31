@@ -1290,7 +1290,104 @@
       }
     }
   ],
-  "availability": [],
+  "availability": [
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-BEBIDAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-CARNES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-DESPENSA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-FRUTAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-HOGAR",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-LACTEOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-PANADERIA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-SNACKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-BEBIDAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-ENSALADAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-PIZZAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-REBANADAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-CAFE",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-DESAYUNO",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-FRIAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-PANADERIA",
+      "state": "WITHHELD"
+    }
+  ],
   "promotions": [
     {
       "promotion_id": "PROMO-SMASH25",

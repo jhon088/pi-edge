@@ -40,12 +40,13 @@ export type OpenCamera = (constraints: {
 /**
  * Whether a camera may be opened at all.
  *
- * Two conditions, both necessary: an operator enabled it, and this is the lane
- * that has a preview. Asked before every request, so switching to the
- * restaurant cannot leave one running.
+ * One condition: an operator enabled it. The preview is a property of the
+ * box, not of one lane — a showroom turns it on to show the feature and
+ * expects to see it whichever brand the screen is wearing. Asked before every
+ * request, so a disabled kiosk never reaches for a camera and never prompts.
  */
-export function shouldStream(enabled: boolean, vertical: string): boolean {
-  return enabled && vertical === "RETAIL";
+export function shouldStream(enabled: boolean): boolean {
+  return enabled;
 }
 
 /**

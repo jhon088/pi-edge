@@ -108,14 +108,16 @@ pub fn seed(client: &IpcEdgeClient, path: &Path) -> Result<DemoOutcome, CliError
     // 2. The bytes, before the catalog that references them — otherwise
     //    activation would be refused, which is exactly what it should do
     //    (ADR 045).
-    // Both verticals' assets, from their own directories. A stem defined in
-    // both would be a mistake in the datasets, not something to resolve here,
-    // so `best_per_stem` sees one flat list and the later definition wins
-    // exactly as it would within one directory.
+    // Every vertical's assets, from its own directory. A stem defined in two
+    // of them would be a mistake in the datasets, not something to resolve
+    // here, so `best_per_stem` sees one flat list and the later definition
+    // wins exactly as it would within one directory.
     let mut sources = best_per_stem(&path.join("assets"))?;
-    let retail_assets = path.join("retail").join("assets");
-    if retail_assets.is_dir() {
-        sources.extend(best_per_stem(&retail_assets)?);
+    for vertical in verticals(path)? {
+        let assets = vertical.join("assets");
+        if assets.is_dir() {
+            sources.extend(best_per_stem(&assets)?);
+        }
     }
     let mut assets_imported = 0;
     let mut assets_already_present = 0;
@@ -148,13 +150,15 @@ pub fn seed(client: &IpcEdgeClient, path: &Path) -> Result<DemoOutcome, CliError
     let mut fixture: Value = serde_json::from_str(&raw).map_err(|error| {
         CliError::Input(format!("{} is not valid JSON: {error}", source.display()))
     })?;
-    // The second vertical, if it ships. One snapshot carries both, because a
-    // store may have exactly one active catalog — the two lanes are kept
-    // apart by channel availability, not by swapping catalogs underneath a
-    // running till (ADR 044).
-    let retail = path.join("retail").join("menu.json");
-    if retail.is_file() {
-        merge_vertical(&mut fixture, &retail)?;
+    // Every other vertical that ships. One snapshot carries all of them,
+    // because a store may have exactly one active catalog — the lanes are
+    // kept apart by channel availability, not by swapping catalogs underneath
+    // a running till (ADR 044, ADR 047).
+    for vertical in verticals(path)? {
+        let menu = vertical.join("menu.json");
+        if menu.is_file() {
+            merge_vertical(&mut fixture, &menu)?;
+        }
     }
     let mut unsupplied = BTreeSet::new();
     resolve_assets(&mut fixture, &hashes, &mut unsupplied)?;
@@ -231,6 +235,28 @@ fn open_session(client: &IpcEdgeClient) -> Result<bool, CliError> {
 
 fn already(error: &edge_client::ClientError, code: &str) -> bool {
     format!("{error}").contains(code)
+}
+
+/// The vertical directories beside the base dataset, in a stable order.
+///
+/// Any subdirectory of `demo/` is a vertical: drop one in with a `menu.json`
+/// and an `assets/` folder and it is part of the installation. Sorted, so two
+/// runs produce the same snapshot and therefore the same content hash.
+fn verticals(path: &Path) -> Result<Vec<PathBuf>, CliError> {
+    let entries = std::fs::read_dir(path)
+        .map_err(|error| CliError::Input(format!("cannot read {}: {error}", path.display())))?;
+    let mut found = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| CliError::Input(format!("cannot read an entry: {error}")))?;
+        let candidate = entry.path();
+        // `assets/` is the base dataset's own, not a vertical.
+        if candidate.is_dir() && candidate.file_name().is_some_and(|name| name != "assets") {
+            found.push(candidate);
+        }
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// Fold a second vertical's catalog into the one being imported.

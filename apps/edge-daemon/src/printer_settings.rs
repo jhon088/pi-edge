@@ -35,27 +35,107 @@ pub struct PrinterModel {
     pub paper_mm: u32,
     /// Characters per line, which is what the document composer needs.
     pub columns: usize,
+    /// What this model's firmware will tell us about itself.
+    ///
+    /// It matters because the answer differs by model, and a status screen
+    /// that claims more than the hardware reports is worse than one that says
+    /// `UNKNOWN`. Nothing here reads a sensor yet — the field declares what
+    /// *could* be read once the transport does, so the demo can show the
+    /// association between a configured model and the states it supports
+    /// (ADR 035).
+    pub reports: Reports,
+}
+
+/// What a printer's firmware can say back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reports {
+    /// Paper present / near-end / out.
+    pub paper: bool,
+    /// A cover open or a jam.
+    pub jam: bool,
+    /// Whether the device answers a status query at all (ASB or equivalent).
+    pub online: bool,
+}
+
+impl Reports {
+    /// A device that answers nothing but "the queue took it".
+    const SILENT: Self = Self {
+        paper: false,
+        jam: false,
+        online: false,
+    };
+    /// ESC/POS Automatic Status Back: paper, cover and online.
+    const ASB: Self = Self {
+        paper: true,
+        jam: true,
+        online: true,
+    };
+    /// Paper and online, but no cover/jam line.
+    const PAPER_ONLY: Self = Self {
+        paper: true,
+        jam: false,
+        online: true,
+    };
+
+    /// The states a status screen may show for this model, in order.
+    pub fn paper_states(self) -> &'static [&'static str] {
+        if self.paper {
+            &["OK", "LOW", "OUT", "UNKNOWN"]
+        } else {
+            &["UNKNOWN"]
+        }
+    }
 }
 
 /// Every model this build offers. All ESC/POS, all through the spooler.
-pub const MODELS: [PrinterModel; 3] = [
+///
+/// The 3nStar units are driven write-only: the demo sends a document and the
+/// spooler says whether it took it. The Epson units speak ASB, so a later
+/// build can read paper and cover from them — which is why the model is
+/// recorded rather than just its column count.
+pub const MODELS: [PrinterModel; 6] = [
     PrinterModel {
         id: "RPT004",
         label: "3nStar RPT004",
         paper_mm: 80,
         columns: 48,
+        reports: Reports::SILENT,
     },
     PrinterModel {
         id: "RPT008",
         label: "3nStar RPT008",
         paper_mm: 80,
         columns: 48,
+        reports: Reports::SILENT,
     },
     PrinterModel {
         id: "RPT015",
         label: "3nStar RPT015",
         paper_mm: 80,
         columns: 48,
+        reports: Reports::SILENT,
+    },
+    PrinterModel {
+        id: "EPSON-EU30",
+        label: "Epson EU-m30 (EU30)",
+        paper_mm: 58,
+        columns: 32,
+        // A kiosk-mount printer: paper status, no cover line.
+        reports: Reports::PAPER_ONLY,
+    },
+    PrinterModel {
+        id: "EPSON-TM-T88VI",
+        label: "Epson TM-T88VI",
+        paper_mm: 80,
+        columns: 48,
+        reports: Reports::ASB,
+    },
+    PrinterModel {
+        id: "EPSON-TM-T82III",
+        label: "Epson TM-T82III",
+        paper_mm: 80,
+        columns: 48,
+        reports: Reports::ASB,
     },
 ];
 

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS asks for this before it will hand a camera to the webview, and a
+  build without it is refused silently: `getUserMedia` rejects, the preview
+  reports "unavailable" and the corner simply stays empty. Windows — the
+  kiosk's actual target — needs nothing here, but the demo is shown on a Mac
+  too, so the key ships.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>PX Kiosk muestra al cliente su propia cámara en la esquina de la pantalla mientras usa el autoservicio. El video no se graba, no se guarda y no sale de este equipo.</string>
+</dict>
+</plist>

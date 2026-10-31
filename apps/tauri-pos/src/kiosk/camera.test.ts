@@ -49,14 +49,14 @@ function refusedWith(name: string) {
 
 describe("camera_disabled_does_not_request_media", () => {
   it("does not stream when nobody turned it on", () => {
-    assert.equal(shouldStream(false, "RETAIL"), false);
+    assert.equal(shouldStream(false), false);
   });
 
   it("asks for nothing at all while disabled", async () => {
     const { open, asked } = camera(async () => fakeStream().stream);
     const preview = new CameraPreview(open);
     // The shell consults the policy first; this is what it would skip.
-    if (shouldStream(false, "RETAIL")) {
+    if (shouldStream(false)) {
       await preview.start();
     }
     assert.deepEqual(asked, [], "a disabled preview reached for the camera");
@@ -65,15 +65,17 @@ describe("camera_disabled_does_not_request_media", () => {
   });
 });
 
-describe("camera_preview_only_exists_in_retail", () => {
-  it("never streams in the restaurant, however it is configured", () => {
-    assert.equal(shouldStream(true, "RESTAURANT"), false);
-    assert.equal(shouldStream(false, "RESTAURANT"), false);
+describe("the preview belongs to the box, not to a lane", () => {
+  it("streams in every brand once it is turned on", () => {
+    for (const lane of ["RESTAURANT", "TIM_HORTONS", "SBARRO", "RETAIL"]) {
+      assert.equal(shouldStream(true), true, lane);
+    }
   });
 
-  it("streams in retail only when it was turned on", () => {
-    assert.equal(shouldStream(true, "RETAIL"), true);
-    assert.equal(shouldStream(false, "RETAIL"), false);
+  it("streams in none of them while it is off", () => {
+    for (const lane of ["RESTAURANT", "TIM_HORTONS", "SBARRO", "RETAIL"]) {
+      assert.equal(shouldStream(false), false, lane);
+    }
   });
 });
 
@@ -191,36 +193,35 @@ describe("camera_stream_stops_on_disable", () => {
   });
 });
 
-describe("camera_stream_stops_when_switching_to_restaurant", () => {
+describe("camera_stream_stops_when_the_operator_turns_it_off", () => {
   it("the policy turns it off, and the stream follows", async () => {
     const live = fakeStream();
     const { open } = camera(async () => live.stream);
     const preview = new CameraPreview(open);
 
-    let vertical = "RETAIL";
-    const enabled = true;
-    if (shouldStream(enabled, vertical)) {
+    let enabled = true;
+    if (shouldStream(enabled)) {
       await preview.start();
     }
     assert.equal(preview.live, true);
 
-    // What the shell does when the operator switches shops: the preference is
-    // untouched, the lane is not retail any more, so the stream ends.
-    vertical = "RESTAURANT";
-    if (!shouldStream(enabled, vertical)) {
+    // What the shell does when Admin switches it off: the lane is unchanged,
+    // the preference is not, so the stream ends and the light goes out.
+    enabled = false;
+    if (!shouldStream(enabled)) {
       preview.stop();
     }
-    assert.equal(live.stopped(), true, "the camera stayed on in the restaurant");
+    assert.equal(live.stopped(), true, "the camera stayed on");
     assert.equal(preview.live, false);
 
-    // And coming back turns it on again, because the choice was kept.
-    vertical = "RETAIL";
+    // And turning it back on starts a new one.
+    enabled = true;
     const second = fakeStream();
     const again = new CameraPreview(camera(async () => second.stream).open);
-    if (shouldStream(enabled, vertical)) {
+    if (shouldStream(enabled)) {
       await again.start();
     }
-    assert.equal(again.live, true, "returning to retail left the preview dark");
+    assert.equal(again.live, true, "switching it back on left the preview dark");
   });
 });
 

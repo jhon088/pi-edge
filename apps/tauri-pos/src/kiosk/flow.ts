@@ -83,6 +83,17 @@ export function screenAfterPick(from: Origin, outcome: Pick): Screen {
 }
 
 /**
+ * Whether the note acceptor takes this payment, or the simulator does.
+ *
+ * Two conditions, both necessary: an operator enabled the device, and the
+ * customer chose cash. A card never touches it, and a kiosk with no acceptor
+ * configured keeps the behaviour it has always had.
+ */
+export function takesCash(cashGenic: boolean, method: "CASH" | "CARD"): boolean {
+  return cashGenic && method === "CASH";
+}
+
+/**
  * One intent at a time.
  *
  * Two taps on the same card are two `add_item` calls, and the core is right to

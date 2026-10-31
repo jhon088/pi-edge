@@ -31,8 +31,10 @@ import {
   tap,
   unsatisfied,
 } from "./selection";
+import type { Invitation } from "./brands";
 import type {
   AssetRef,
+  CashGenicStatus,
   Menu,
   MenuItem,
   Money,
@@ -56,9 +58,12 @@ export type Fulfillment = "DINE_IN" | "TAKE_AWAY" | "SELF_CHECKOUT";
 
 export function AttractScreen({
   heroAsset,
+  invitation,
   onStart,
 }: {
   heroAsset: AssetRef | null;
+  /** What this brand says. One screen, four voices (ADR 047). */
+  invitation: Invitation;
   onStart: () => void;
 }) {
   return (
@@ -68,30 +73,25 @@ export function AttractScreen({
       <div className="k-attract__inner k-on-dark">
         <Brand large />
         <div className="k-attract__body">
-          <p className="k-eyebrow">Ordena · Paga · Recoge</p>
+          <p className="k-eyebrow">{invitation.eyebrow}</p>
           <h1 className="k-display">
-            Smash burgers
+            {invitation.headline[0]}
             <br />
-            hechas al momento
+            {invitation.headline[1]}
           </h1>
           <p className="k-body" style={{ fontSize: 23, maxWidth: "82%" }}>
-            Arma tu combo a tu gusto, paga aquí mismo y te avisamos cuando esté
-            listo.
+            {invitation.lead}
           </p>
           <div className="k-attract__cta">
-            <span aria-hidden>👆</span> Toca para comenzar
+            <span aria-hidden>👆</span> {invitation.cta}
           </div>
         </div>
         <div className="k-attract__foot">
-          <div className="k-perk">
-            <span aria-hidden>🔥</span> Recién hecho
-          </div>
-          <div className="k-perk">
-            <span aria-hidden>⚡</span> Listo en minutos
-          </div>
-          <div className="k-perk">
-            <span aria-hidden>💳</span> Pago sin contacto
-          </div>
+          {invitation.perks.map(([glyph, label]) => (
+            <div className="k-perk" key={label}>
+              <span aria-hidden>{glyph}</span> {label}
+            </div>
+          ))}
           <div style={{ flex: 1 }} />
           <PoweredBy />
         </div>
@@ -1043,6 +1043,81 @@ export function MethodScreen({
 }
 
 // ============================================================ cash payment
+
+/**
+ * Paying with real banknotes, on a kiosk with a note acceptor.
+ *
+ * Three numbers while the customer feeds notes in, and a fourth once they
+ * have covered it. All four are arithmetic over amounts the **core** computed
+ * and the device reported: this screen adds nothing up that matters and never
+ * decides the sale is paid — that is `PaymentComplete` from the device,
+ * followed by the core's own finalize.
+ */
+export function CashGenicScreen({
+  due,
+  status,
+  onCancel,
+}: {
+  due: Money;
+  status: CashGenicStatus | null;
+  /** Give the notes back and go. Absent once the amount is covered. */
+  onCancel?: () => void;
+}) {
+  const covered = status !== null && status.outstanding_minor === 0;
+  const offline = status !== null && !status.online;
+
+  return (
+    <div className="k-pay">
+      <Steps at={3} />
+      <p className="k-eyebrow">Paga con billetes</p>
+
+      <dl className="k-cg">
+        <div className="k-cg__row">
+          <dt>Total</dt>
+          <dd>
+            <Price money={due} />
+          </dd>
+        </div>
+        <div className="k-cg__row">
+          <dt>Depositado</dt>
+          <dd>${previewAmount(status?.deposited_minor ?? 0)}</dd>
+        </div>
+        {covered ? (
+          <div className="k-cg__row k-cg__row--change">
+            <dt>Cambio</dt>
+            <dd>${previewAmount(status?.change_minor ?? 0)}</dd>
+          </div>
+        ) : (
+          <div className="k-cg__row k-cg__row--due">
+            <dt>Falta</dt>
+            <dd>${previewAmount(status?.outstanding_minor ?? due.minor)}</dd>
+          </div>
+        )}
+      </dl>
+
+      <h1 className="k-h1">
+        {offline
+          ? "El cajero no responde"
+          : covered
+            ? "Listo — toma tu cambio"
+            : "Inserta tus billetes"}
+      </h1>
+      <p className="k-body">
+        {offline
+          ? (status?.detail ?? "Avisa a un miembro del equipo.")
+          : covered
+            ? "Tu ticket se está imprimiendo."
+            : "Puedes insertarlos de uno en uno."}
+      </p>
+
+      {onCancel && !covered ? (
+        <button type="button" className="k-btn k-btn--quiet" onClick={onCancel}>
+          Cancelar y devolver
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 export function CashScreen({
   due,

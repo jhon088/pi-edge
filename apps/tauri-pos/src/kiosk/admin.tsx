@@ -10,15 +10,23 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  closeDay,
+  dayTally,
   describe,
   fetchPrinterSettings,
-  resetDemo,
-  savePrinterSettings,
+  openDay,
   preferences,
+  probeCashGenic,
+  resetDemo,
+  saveCashGenic,
+  savePrinterSettings,
   setCameraPreview,
+  setIdentity,
+  setKioskOpen,
   setVertical,
   testPrint,
 } from "./api";
+import { BRANDS, brandOf } from "./brands";
 import { Brand, PoweredBy } from "./components";
 import {
   CameraPreview,
@@ -27,25 +35,21 @@ import {
   type CameraStatus,
 } from "./camera";
 import type {
+  CashGenicSettings,
+  CashGenicStatus,
+  DayTally,
   KioskPreferences,
   PrinterConfiguration,
   PrinterSettings,
   Vertical,
 } from "./types";
 
-/** What each lane is called, and what it is for. */
-const LANES: { id: Vertical; name: string; detail: string }[] = [
-  {
-    id: "RESTAURANT",
-    name: "Restaurante",
-    detail: "Menú, combos y opciones. El pedido se prepara en cocina.",
-  },
-  {
-    id: "RETAIL",
-    name: "Autoservicio",
-    detail: "El cliente escanea sus productos y paga en la caja.",
-  },
-];
+/** Minor units as a peso amount. Display only; the core owns every total. */
+function pesos(minor: number): string {
+  const sign = minor < 0 ? "-" : "";
+  const abs = Math.abs(minor);
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+}
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
 
@@ -70,6 +74,13 @@ export function AdminScreen({
   const [config, setConfig] = useState<PrinterConfiguration | null>(null);
   const [lane, setLane] = useState<KioskPreferences | null>(null);
   const [camera, setCamera] = useState<CameraStatus>("off");
+  const [day, setDay] = useState<DayTally | null>(null);
+  /** Identity as it is being typed, before it is saved. */
+  const [who, setWho] = useState({ branch: "", kiosk: "", cashier: "" });
+  const [cash, setCash] = useState<CashGenicSettings | null>(null);
+  const [acceptor, setAcceptor] = useState<CashGenicStatus | null>(null);
+  /** The figures shown before "cerrar día" is confirmed. */
+  const [closing, setClosing] = useState(false);
   const [draft, setDraft] = useState<PrinterSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note>(null);
@@ -90,9 +101,33 @@ export function AdminScreen({
 
   useEffect(() => {
     void preferences()
-      .then(setLane)
+      .then((stored) => {
+        setLane(stored);
+        setWho({
+          branch: stored.branch_id,
+          kiosk: stored.kiosk_id,
+          cashier: stored.cashier_id,
+        });
+        setCash(stored.cashgenic);
+      })
+      .catch((reason: unknown) => setNote({ tone: "bad", text: describe(reason) }));
+    void dayTally()
+      .then(setDay)
       .catch((reason: unknown) => setNote({ tone: "bad", text: describe(reason) }));
   }, []);
+
+  /** One place to run an Admin action and report what came back. */
+  const act = async (work: () => Promise<void>, done?: string) => {
+    setBusy(true);
+    try {
+      await work();
+      setNote(done ? { tone: "ok", text: done } : null);
+    } catch (reason) {
+      setNote({ tone: "bad", text: describe(reason) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /**
    * Find out whether the camera this box was told to use actually opens.
@@ -245,8 +280,7 @@ export function AdminScreen({
             <h2 className="k-h2">Tipo de negocio</h2>
             <span className="k-state k-state--idle">
               {lane
-                ? (LANES.find((entry) => entry.id === lane.vertical)?.name ??
-                  lane.vertical)
+                ? (brandOf(lane.vertical).name)
                 : "Cargando…"}
             </span>
           </div>
@@ -256,19 +290,19 @@ export function AdminScreen({
             muestra y lo que se puede vender aquí.
           </p>
           <div className="k-admin__lanes">
-            {LANES.map((entry) => (
+            {BRANDS.map((entry) => (
               <button
-                key={entry.id}
+                key={entry.vertical}
                 type="button"
                 className={`k-admin__lane${
-                  lane?.vertical === entry.id ? " k-admin__lane--on" : ""
+                  lane?.vertical === entry.vertical ? " k-admin__lane--on" : ""
                 }`}
                 disabled={busy || !lane}
-                onClick={() => void switchLane(entry.id)}
+                onClick={() => void switchLane(entry.vertical)}
               >
                 <span className="k-admin__lane-name">{entry.name}</span>
                 <span className="k-field__hint">{entry.detail}</span>
-                {lane?.vertical === entry.id ? (
+                {lane?.vertical === entry.vertical ? (
                   <span className="k-admin__lane-on">En uso</span>
                 ) : null}
               </button>
@@ -283,6 +317,339 @@ export function AdminScreen({
             <p className="k-admin__driver">
               Canal de venta: <code>{lane.channel_ref}</code>
             </p>
+          ) : null}
+        </section>
+
+        <section className="k-panel" style={{ marginTop: 22 }}>
+          <div className="k-panel__head">
+            <h2 className="k-h2">Identidad del kiosko</h2>
+            <span
+              className={`k-state ${
+                lane?.kiosk_open ? "k-state--ok" : "k-state--bad"
+              }`}
+            >
+              {lane?.kiosk_open ? "Abierto" : "Cerrado"}
+            </span>
+          </div>
+          <p className="k-field__hint" style={{ marginTop: 0 }}>
+            Cómo se identifica este equipo en el piso. Texto libre: se guarda
+            aquí y se publica en el estado que consulta la app de monitoreo.
+          </p>
+          <div className="k-admin__who">
+            <label className="k-field">
+              <span className="k-field__label"># Sucursal</span>
+              <input
+                className="k-input"
+                value={who.branch}
+                placeholder="001"
+                onChange={(event) =>
+                  setWho((current) => ({ ...current, branch: event.target.value }))
+                }
+              />
+            </label>
+            <label className="k-field">
+              <span className="k-field__label"># Kiosko</span>
+              <input
+                className="k-input"
+                value={who.kiosk}
+                placeholder="K01"
+                onChange={(event) =>
+                  setWho((current) => ({ ...current, kiosk: event.target.value }))
+                }
+              />
+            </label>
+            <label className="k-field">
+              <span className="k-field__label"># Cajero</span>
+              <input
+                className="k-input"
+                value={who.cashier}
+                placeholder="CAJERO01"
+                onChange={(event) =>
+                  setWho((current) => ({ ...current, cashier: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+          <div className="k-panel__foot">
+            <button
+              type="button"
+              className="k-btn k-btn--ghost"
+              disabled={busy || !lane}
+              onClick={() =>
+                void act(async () => {
+                  setLane(await setKioskOpen(!(lane?.kiosk_open ?? true)));
+                })
+              }
+            >
+              {lane?.kiosk_open ? "Cerrar kiosko" : "Abrir kiosko"}
+            </button>
+            <button
+              type="button"
+              className="k-btn k-btn--primary"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  setLane(await setIdentity(who.branch, who.kiosk, who.cashier));
+                }, "Identidad guardada.")
+              }
+            >
+              Guardar
+            </button>
+          </div>
+          {lane && !lane.kiosk_open ? (
+            <p className="k-field__hint">
+              La pantalla muestra «Kiosko temporalmente cerrado» y no inicia
+              ventas. La aplicación sigue abierta y esta pantalla sigue
+              disponible.
+            </p>
+          ) : null}
+        </section>
+
+        <section className="k-panel" style={{ marginTop: 22 }}>
+          <div className="k-panel__head">
+            <h2 className="k-h2">Día de operación</h2>
+            <span
+              className={`k-state ${
+                day?.state === "OPEN" ? "k-state--ok" : "k-state--idle"
+              }`}
+            >
+              {day ? (day.state === "OPEN" ? "Abierto" : "Cerrado") : "Cargando…"}
+            </span>
+          </div>
+          {day ? (
+            <dl className="k-admin__figures">
+              <div>
+                <dt>Sucursal</dt>
+                <dd>{lane?.branch_id || "—"}</dd>
+              </div>
+              <div>
+                <dt>Kiosko</dt>
+                <dd>{lane?.kiosk_id || "—"}</dd>
+              </div>
+              <div>
+                <dt>Cajero</dt>
+                <dd>{lane?.cashier_id || "—"}</dd>
+              </div>
+              <div>
+                <dt>Transacciones</dt>
+                <dd>{day.transaction_count}</dd>
+              </div>
+              <div>
+                <dt>Venta total</dt>
+                <dd>${pesos(day.sales_total_minor)}</dd>
+              </div>
+              <div>
+                <dt>Efectivo</dt>
+                <dd>${pesos(day.cash_total_minor)}</dd>
+              </div>
+              <div>
+                <dt>Tarjeta</dt>
+                <dd>${pesos(day.card_total_minor)}</dd>
+              </div>
+            </dl>
+          ) : null}
+          {closing ? (
+            <p className="k-admin__warn">
+              Se cerrará el día con estas cifras. El kiosko sigue funcionando;
+              para volver a vender abre un día nuevo.
+            </p>
+          ) : null}
+          <div className="k-panel__foot">
+            {day?.state === "OPEN" ? (
+              closing ? (
+                <>
+                  <button
+                    type="button"
+                    className="k-btn k-btn--ghost"
+                    disabled={busy}
+                    onClick={() => setClosing(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="k-btn k-btn--primary"
+                    disabled={busy}
+                    onClick={() =>
+                      void act(async () => {
+                        setDay(await closeDay());
+                        setClosing(false);
+                      }, "Día cerrado.")
+                    }
+                  >
+                    Confirmar cierre
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="k-btn k-btn--ghost"
+                  disabled={busy}
+                  onClick={() => setClosing(true)}
+                >
+                  Cerrar día
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                className="k-btn k-btn--primary"
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    setDay(await openDay());
+                  }, "Día nuevo abierto. Contadores en cero.")
+                }
+              >
+                Abrir nuevo día
+              </button>
+            )}
+          </div>
+        </section>
+
+        <section className="k-panel" style={{ marginTop: 22 }}>
+          <div className="k-panel__head">
+            <h2 className="k-h2">CashGenic</h2>
+            <span
+              className={`k-state ${
+                !cash?.enabled
+                  ? "k-state--idle"
+                  : acceptor?.online
+                    ? "k-state--ok"
+                    : "k-state--bad"
+              }`}
+            >
+              {!cash?.enabled
+                ? "Deshabilitado"
+                : acceptor
+                  ? acceptor.online
+                    ? `En línea · ${acceptor.state}`
+                    : "Sin conexión"
+                  : "Sin probar"}
+            </span>
+          </div>
+          <p className="k-field__hint" style={{ marginTop: 0 }}>
+            Aceptador de billetes para pagos en efectivo. Deshabilitado, el
+            efectivo usa el simulador de siempre.
+          </p>
+          {cash ? (
+            <>
+              <label className="k-field k-field--switch">
+                <input
+                  type="checkbox"
+                  checked={cash.enabled}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setCash({ ...cash, enabled: event.target.checked })
+                  }
+                />
+                <span>
+                  <span className="k-field__label">Habilitar CashGenic</span>
+                  <span className="k-field__hint">
+                    El pago en efectivo se cobra con el dispositivo real.
+                  </span>
+                </span>
+              </label>
+              <div className="k-admin__who">
+                <label className="k-field">
+                  <span className="k-field__label">IP</span>
+                  <input
+                    className="k-input"
+                    value={cash.host}
+                    placeholder="192.168.1.50"
+                    disabled={!cash.enabled}
+                    onChange={(event) => setCash({ ...cash, host: event.target.value })}
+                  />
+                </label>
+                <label className="k-field">
+                  <span className="k-field__label">Puerto</span>
+                  <input
+                    className="k-input"
+                    value={cash.port}
+                    inputMode="numeric"
+                    disabled={!cash.enabled}
+                    onChange={(event) =>
+                      setCash({ ...cash, port: Number(event.target.value) || 0 })
+                    }
+                  />
+                </label>
+                <label className="k-field">
+                  <span className="k-field__label">Usuario API</span>
+                  <input
+                    className="k-input"
+                    value={cash.username}
+                    disabled={!cash.enabled}
+                    onChange={(event) =>
+                      setCash({ ...cash, username: event.target.value })
+                    }
+                  />
+                </label>
+                <label className="k-field">
+                  <span className="k-field__label">Contraseña API</span>
+                  <input
+                    className="k-input"
+                    type="password"
+                    value={cash.password}
+                    disabled={!cash.enabled}
+                    onChange={(event) =>
+                      setCash({ ...cash, password: event.target.value })
+                    }
+                  />
+                </label>
+              </div>
+              <div className="k-panel__foot">
+                <button
+                  type="button"
+                  className="k-btn k-btn--ghost"
+                  disabled={busy || !cash.enabled}
+                  onClick={() =>
+                    void act(async () => {
+                      // Saved first, so the probe tests what is stored rather
+                      // than what is on screen.
+                      setLane(await saveCashGenic(cash));
+                      setAcceptor(await probeCashGenic());
+                    })
+                  }
+                >
+                  Probar conexión
+                </button>
+                <button
+                  type="button"
+                  className="k-btn k-btn--primary"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      setLane(await saveCashGenic(cash));
+                    }, "CashGenic guardado.")
+                  }
+                >
+                  Guardar
+                </button>
+              </div>
+              {acceptor ? (
+                <dl className="k-admin__figures">
+                  <div>
+                    <dt>Dispositivo</dt>
+                    <dd>{acceptor.device ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Estado</dt>
+                    <dd>{acceptor.state}</dd>
+                  </div>
+                  <div>
+                    <dt>Efectivo</dt>
+                    <dd>
+                      {acceptor.cash_total_minor === null
+                        ? "—"
+                        : `$${pesos(acceptor.cash_total_minor)}`}
+                    </dd>
+                  </div>
+                </dl>
+              ) : null}
+              {acceptor && !acceptor.online && acceptor.detail ? (
+                <p className="k-field__hint">{acceptor.detail}</p>
+              ) : null}
+            </>
           ) : null}
         </section>
 
@@ -472,6 +839,38 @@ export function AdminScreen({
                 </p>
               ) : null}
 
+              {(() => {
+                // What the chosen model can actually tell us. Shown because
+                // the status a floor monitor sees depends on it: a printer
+                // that reports nothing is honestly UNKNOWN, not OK.
+                const chosen = config.models.find(
+                  (model) => model.id === draft.model,
+                );
+                if (!chosen) {
+                  return null;
+                }
+                const can = [
+                  chosen.reports_online ? "en línea" : null,
+                  chosen.reports_paper ? "nivel de papel" : null,
+                  chosen.reports_jam ? "atasco / tapa abierta" : null,
+                ].filter(Boolean);
+                return (
+                  <dl className="k-admin__figures">
+                    <div>
+                      <dt>Reporta</dt>
+                      <dd style={{ fontSize: 17 }}>
+                        {can.length > 0 ? can.join(" · ") : "nada"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Estados de papel</dt>
+                      <dd style={{ fontSize: 17 }}>
+                        {chosen.paper_states.join(" / ")}
+                      </dd>
+                    </div>
+                  </dl>
+                );
+              })()}
               <p className="k-admin__driver">
                 Controlador en uso: <code>{config.driver}</code>
               </p>

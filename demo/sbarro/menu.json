@@ -1,0 +1,1704 @@
+{
+  "version": 1,
+  "vertical": "sbarro",
+  "channels": [
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "name": {
+        "default": "Sbarro",
+        "translations": {
+          "en": "Sbarro"
+        }
+      },
+      "default_availability": "OFFERED"
+    }
+  ],
+  "categories": [
+    {
+      "category_ref": "S-PIZZAS",
+      "name": {
+        "default": "Pizzas NY 14\"",
+        "translations": {
+          "en": "NY pizzas"
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:pizza-pepperoni",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "S-REBANADAS",
+      "name": {
+        "default": "Rebanadas",
+        "translations": {
+          "en": "Slices"
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:rebanada-pepperoni",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "S-ENSALADAS",
+      "name": {
+        "default": "Ensaladas y Acompañamientos",
+        "translations": {
+          "en": "Salads & sides"
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:ensalada-cesar",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "S-BEBIDAS",
+      "name": {
+        "default": "Bebidas",
+        "translations": {
+          "en": "Drinks"
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:bebida-coca",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    }
+  ],
+  "products": [
+    {
+      "product_ref": "S-PIZZA-PEPPERONI",
+      "sku": "S-PIZZA-PEPPERONI",
+      "name": "Pizza Pepperoni 14\"",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 38900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-QUESO",
+      "sku": "S-PIZZA-QUESO",
+      "name": "Pizza Queso 14\"",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 38900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-CARNE",
+      "sku": "S-PIZZA-CARNE",
+      "name": "Pizza Carne Suprema 14\"",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 38900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-HAWAIIAN",
+      "sku": "S-PIZZA-HAWAIIAN",
+      "name": "Pizza Hawaiian 14\"",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 38900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-CHAMP",
+      "sku": "S-PIZZA-CHAMP",
+      "name": "Pizza Champiñones 14\"",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 38900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-REB-PEPPERONI",
+      "sku": "S-REB-PEPPERONI",
+      "name": "Rebanada de Pepperoni",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 12900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-ENSALADA-CESAR",
+      "sku": "S-ENSALADA-CESAR",
+      "name": "Ensalada César",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 9900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-ENSALADA-GRIEGA",
+      "sku": "S-ENSALADA-GRIEGA",
+      "name": "Ensalada Griega",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 13900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-PAPAS",
+      "sku": "S-PAPAS",
+      "name": "Papas Sbarro",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-PAN-AJO",
+      "sku": "S-PAN-AJO",
+      "name": "Pan de Ajo",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 7900,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-BEB-COCA",
+      "sku": "S-BEB-COCA",
+      "name": "Coca-Cola 600 ml",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-BEB-COCA-ZERO",
+      "sku": "S-BEB-COCA-ZERO",
+      "name": "Coca-Cola Zero 600 ml",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-BEB-SPRITE",
+      "sku": "S-BEB-SPRITE",
+      "name": "Sprite 600 ml",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-BEB-FANTA",
+      "sku": "S-BEB-FANTA",
+      "name": "Fanta 600 ml",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-X-BEBIDA",
+      "sku": "S-X-BEBIDA",
+      "name": "Agrega una bebida",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-X-CHAMP",
+      "sku": "S-X-CHAMP",
+      "name": "Champiñones",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 2500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-X-COMBO",
+      "sku": "S-X-COMBO",
+      "name": "Combo: 2 bebidas y pan de ajo",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 9500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-X-PEPP",
+      "sku": "S-X-PEPP",
+      "name": "Pepperoni extra",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-X-QUESO",
+      "sku": "S-X-QUESO",
+      "name": "Queso extra",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3000,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "S-X-RELLENA",
+      "sku": "S-X-RELLENA",
+      "name": "Orilla rellena de queso",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 6000,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    }
+  ],
+  "selection_groups": [
+    {
+      "group_id": "G-S-MASA-S-PIZZA-QUESO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-QUESO",
+      "name": {
+        "default": "Masa",
+        "translations": {
+          "en": "Masa"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-S-MASA-S-PIZZA-CARNE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-CARNE",
+      "name": {
+        "default": "Masa",
+        "translations": {
+          "en": "Masa"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 1
+    },
+    {
+      "group_id": "G-S-MASA-S-PIZZA-CHAMP",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-CHAMP",
+      "name": {
+        "default": "Masa",
+        "translations": {
+          "en": "Masa"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 2
+    },
+    {
+      "group_id": "G-S-MASA-S-PIZZA-HAWAIIAN",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Masa",
+        "translations": {
+          "en": "Masa"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 3
+    },
+    {
+      "group_id": "G-S-MASA-S-PIZZA-PEPPERONI",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Masa",
+        "translations": {
+          "en": "Masa"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 4
+    },
+    {
+      "group_id": "G-S-EXTRAS-S-PIZZA-QUESO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-QUESO",
+      "name": {
+        "default": "Ingredientes extra",
+        "translations": {
+          "en": "Ingredientes extra"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 5
+    },
+    {
+      "group_id": "G-S-EXTRAS-S-PIZZA-CARNE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-CARNE",
+      "name": {
+        "default": "Ingredientes extra",
+        "translations": {
+          "en": "Ingredientes extra"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 6
+    },
+    {
+      "group_id": "G-S-EXTRAS-S-PIZZA-CHAMP",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-CHAMP",
+      "name": {
+        "default": "Ingredientes extra",
+        "translations": {
+          "en": "Ingredientes extra"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 7
+    },
+    {
+      "group_id": "G-S-EXTRAS-S-PIZZA-HAWAIIAN",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Ingredientes extra",
+        "translations": {
+          "en": "Ingredientes extra"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 8
+    },
+    {
+      "group_id": "G-S-EXTRAS-S-PIZZA-PEPPERONI",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Ingredientes extra",
+        "translations": {
+          "en": "Ingredientes extra"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 4,
+      "display_order": 9
+    },
+    {
+      "group_id": "G-S-COMBO-S-PIZZA-QUESO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-QUESO",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 10
+    },
+    {
+      "group_id": "G-S-COMBO-S-PIZZA-CARNE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-CARNE",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 11
+    },
+    {
+      "group_id": "G-S-COMBO-S-PIZZA-CHAMP",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-CHAMP",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 12
+    },
+    {
+      "group_id": "G-S-COMBO-S-PIZZA-HAWAIIAN",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 13
+    },
+    {
+      "group_id": "G-S-COMBO-S-PIZZA-PEPPERONI",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 14
+    },
+    {
+      "group_id": "G-S-EXTRAS-REB-S-REB-PEPPERONI",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-REB-PEPPERONI",
+      "name": {
+        "default": "Ingredientes extra",
+        "translations": {
+          "en": "Ingredientes extra"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 15
+    },
+    {
+      "group_id": "G-S-BEBIDA-S-REB-PEPPERONI",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-REB-PEPPERONI",
+      "name": {
+        "default": "¿Agregamos bebida?",
+        "translations": {
+          "en": "¿Agregamos bebida?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 16
+    },
+    {
+      "group_id": "G-S-ADEREZO-S-ENSALADA-CESAR",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-ENSALADA-CESAR",
+      "name": {
+        "default": "Aderezo",
+        "translations": {
+          "en": "Aderezo"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 17
+    },
+    {
+      "group_id": "G-S-ADEREZO-S-ENSALADA-GRIEGA",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-ENSALADA-GRIEGA",
+      "name": {
+        "default": "Aderezo",
+        "translations": {
+          "en": "Aderezo"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 18
+    },
+    {
+      "group_id": "G-S-SALSA-S-PAPAS",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PAPAS",
+      "name": {
+        "default": "Salsas",
+        "translations": {
+          "en": "Salsas"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 19
+    },
+    {
+      "group_id": "G-S-SALSA-S-PAN-AJO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "S-PAN-AJO",
+      "name": {
+        "default": "Salsas",
+        "translations": {
+          "en": "Salsas"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 20
+    }
+  ],
+  "selection_options": [
+    {
+      "option_id": "O-S-TRAD-S-PIZZA-QUESO",
+      "group_id": "G-S-MASA-S-PIZZA-QUESO",
+      "name": {
+        "default": "Tradicional",
+        "translations": {
+          "en": "Tradicional"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-DELGADA-S-PIZZA-QUESO",
+      "group_id": "G-S-MASA-S-PIZZA-QUESO",
+      "name": {
+        "default": "Delgada",
+        "translations": {
+          "en": "Delgada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RELLENA-S-PIZZA-QUESO",
+      "group_id": "G-S-MASA-S-PIZZA-QUESO",
+      "name": {
+        "default": "Orilla rellena de queso",
+        "translations": {
+          "en": "Orilla rellena de queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-RELLENA"
+    },
+    {
+      "option_id": "O-S-TRAD-S-PIZZA-CARNE",
+      "group_id": "G-S-MASA-S-PIZZA-CARNE",
+      "name": {
+        "default": "Tradicional",
+        "translations": {
+          "en": "Tradicional"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-DELGADA-S-PIZZA-CARNE",
+      "group_id": "G-S-MASA-S-PIZZA-CARNE",
+      "name": {
+        "default": "Delgada",
+        "translations": {
+          "en": "Delgada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RELLENA-S-PIZZA-CARNE",
+      "group_id": "G-S-MASA-S-PIZZA-CARNE",
+      "name": {
+        "default": "Orilla rellena de queso",
+        "translations": {
+          "en": "Orilla rellena de queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-RELLENA"
+    },
+    {
+      "option_id": "O-S-TRAD-S-PIZZA-CHAMP",
+      "group_id": "G-S-MASA-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Tradicional",
+        "translations": {
+          "en": "Tradicional"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-DELGADA-S-PIZZA-CHAMP",
+      "group_id": "G-S-MASA-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Delgada",
+        "translations": {
+          "en": "Delgada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RELLENA-S-PIZZA-CHAMP",
+      "group_id": "G-S-MASA-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Orilla rellena de queso",
+        "translations": {
+          "en": "Orilla rellena de queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-RELLENA"
+    },
+    {
+      "option_id": "O-S-TRAD-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-MASA-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Tradicional",
+        "translations": {
+          "en": "Tradicional"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-DELGADA-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-MASA-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Delgada",
+        "translations": {
+          "en": "Delgada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RELLENA-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-MASA-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Orilla rellena de queso",
+        "translations": {
+          "en": "Orilla rellena de queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-RELLENA"
+    },
+    {
+      "option_id": "O-S-TRAD-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-MASA-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Tradicional",
+        "translations": {
+          "en": "Tradicional"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-DELGADA-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-MASA-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Delgada",
+        "translations": {
+          "en": "Delgada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RELLENA-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-MASA-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Orilla rellena de queso",
+        "translations": {
+          "en": "Orilla rellena de queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-RELLENA"
+    },
+    {
+      "option_id": "O-S-PEPP-S-PIZZA-QUESO",
+      "group_id": "G-S-EXTRAS-S-PIZZA-QUESO",
+      "name": {
+        "default": "Pepperoni extra",
+        "translations": {
+          "en": "Pepperoni extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-PEPP"
+    },
+    {
+      "option_id": "O-S-QUESO-S-PIZZA-QUESO",
+      "group_id": "G-S-EXTRAS-S-PIZZA-QUESO",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Queso extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "S-X-QUESO"
+    },
+    {
+      "option_id": "O-S-CHAMP-S-PIZZA-QUESO",
+      "group_id": "G-S-EXTRAS-S-PIZZA-QUESO",
+      "name": {
+        "default": "Champiñones",
+        "translations": {
+          "en": "Champiñones"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-CHAMP"
+    },
+    {
+      "option_id": "O-S-PEPP-S-PIZZA-CARNE",
+      "group_id": "G-S-EXTRAS-S-PIZZA-CARNE",
+      "name": {
+        "default": "Pepperoni extra",
+        "translations": {
+          "en": "Pepperoni extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-PEPP"
+    },
+    {
+      "option_id": "O-S-QUESO-S-PIZZA-CARNE",
+      "group_id": "G-S-EXTRAS-S-PIZZA-CARNE",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Queso extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "S-X-QUESO"
+    },
+    {
+      "option_id": "O-S-CHAMP-S-PIZZA-CARNE",
+      "group_id": "G-S-EXTRAS-S-PIZZA-CARNE",
+      "name": {
+        "default": "Champiñones",
+        "translations": {
+          "en": "Champiñones"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-CHAMP"
+    },
+    {
+      "option_id": "O-S-PEPP-S-PIZZA-CHAMP",
+      "group_id": "G-S-EXTRAS-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Pepperoni extra",
+        "translations": {
+          "en": "Pepperoni extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-PEPP"
+    },
+    {
+      "option_id": "O-S-QUESO-S-PIZZA-CHAMP",
+      "group_id": "G-S-EXTRAS-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Queso extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "S-X-QUESO"
+    },
+    {
+      "option_id": "O-S-CHAMP-S-PIZZA-CHAMP",
+      "group_id": "G-S-EXTRAS-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Champiñones",
+        "translations": {
+          "en": "Champiñones"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-CHAMP"
+    },
+    {
+      "option_id": "O-S-PEPP-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-EXTRAS-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Pepperoni extra",
+        "translations": {
+          "en": "Pepperoni extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-PEPP"
+    },
+    {
+      "option_id": "O-S-QUESO-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-EXTRAS-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Queso extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "S-X-QUESO"
+    },
+    {
+      "option_id": "O-S-CHAMP-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-EXTRAS-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Champiñones",
+        "translations": {
+          "en": "Champiñones"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-CHAMP"
+    },
+    {
+      "option_id": "O-S-PEPP-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-EXTRAS-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Pepperoni extra",
+        "translations": {
+          "en": "Pepperoni extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-PEPP"
+    },
+    {
+      "option_id": "O-S-QUESO-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-EXTRAS-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Queso extra"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "S-X-QUESO"
+    },
+    {
+      "option_id": "O-S-CHAMP-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-EXTRAS-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Champiñones",
+        "translations": {
+          "en": "Champiñones"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "S-X-CHAMP"
+    },
+    {
+      "option_id": "O-S-COMBO-S-PIZZA-QUESO",
+      "group_id": "G-S-COMBO-S-PIZZA-QUESO",
+      "name": {
+        "default": "Agrega 2 bebidas y pan de ajo",
+        "translations": {
+          "en": "Agrega 2 bebidas y pan de ajo"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-COMBO"
+    },
+    {
+      "option_id": "O-S-COMBO-S-PIZZA-CARNE",
+      "group_id": "G-S-COMBO-S-PIZZA-CARNE",
+      "name": {
+        "default": "Agrega 2 bebidas y pan de ajo",
+        "translations": {
+          "en": "Agrega 2 bebidas y pan de ajo"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-COMBO"
+    },
+    {
+      "option_id": "O-S-COMBO-S-PIZZA-CHAMP",
+      "group_id": "G-S-COMBO-S-PIZZA-CHAMP",
+      "name": {
+        "default": "Agrega 2 bebidas y pan de ajo",
+        "translations": {
+          "en": "Agrega 2 bebidas y pan de ajo"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-COMBO"
+    },
+    {
+      "option_id": "O-S-COMBO-S-PIZZA-HAWAIIAN",
+      "group_id": "G-S-COMBO-S-PIZZA-HAWAIIAN",
+      "name": {
+        "default": "Agrega 2 bebidas y pan de ajo",
+        "translations": {
+          "en": "Agrega 2 bebidas y pan de ajo"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-COMBO"
+    },
+    {
+      "option_id": "O-S-COMBO-S-PIZZA-PEPPERONI",
+      "group_id": "G-S-COMBO-S-PIZZA-PEPPERONI",
+      "name": {
+        "default": "Agrega 2 bebidas y pan de ajo",
+        "translations": {
+          "en": "Agrega 2 bebidas y pan de ajo"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-COMBO"
+    },
+    {
+      "option_id": "O-S-PEPP-R-S-REB-PEPPERONI",
+      "group_id": "G-S-EXTRAS-REB-S-REB-PEPPERONI",
+      "name": {
+        "default": "Pepperoni extra",
+        "translations": {
+          "en": "Pepperoni extra"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-PEPP"
+    },
+    {
+      "option_id": "O-S-QUESO-R-S-REB-PEPPERONI",
+      "group_id": "G-S-EXTRAS-REB-S-REB-PEPPERONI",
+      "name": {
+        "default": "Queso extra",
+        "translations": {
+          "en": "Queso extra"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "S-X-QUESO"
+    },
+    {
+      "option_id": "O-S-BEBIDA-S-REB-PEPPERONI",
+      "group_id": "G-S-BEBIDA-S-REB-PEPPERONI",
+      "name": {
+        "default": "Agrega una bebida",
+        "translations": {
+          "en": "Agrega una bebida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "S-X-BEBIDA"
+    },
+    {
+      "option_id": "O-S-CESAR-S-ENSALADA-CESAR",
+      "group_id": "G-S-ADEREZO-S-ENSALADA-CESAR",
+      "name": {
+        "default": "César",
+        "translations": {
+          "en": "César"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-ITAL-S-ENSALADA-CESAR",
+      "group_id": "G-S-ADEREZO-S-ENSALADA-CESAR",
+      "name": {
+        "default": "Italiano",
+        "translations": {
+          "en": "Italiano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RANCH-S-ENSALADA-CESAR",
+      "group_id": "G-S-ADEREZO-S-ENSALADA-CESAR",
+      "name": {
+        "default": "Ranch",
+        "translations": {
+          "en": "Ranch"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2
+    },
+    {
+      "option_id": "O-S-CESAR-S-ENSALADA-GRIEGA",
+      "group_id": "G-S-ADEREZO-S-ENSALADA-GRIEGA",
+      "name": {
+        "default": "César",
+        "translations": {
+          "en": "César"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-ITAL-S-ENSALADA-GRIEGA",
+      "group_id": "G-S-ADEREZO-S-ENSALADA-GRIEGA",
+      "name": {
+        "default": "Italiano",
+        "translations": {
+          "en": "Italiano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-RANCH-S-ENSALADA-GRIEGA",
+      "group_id": "G-S-ADEREZO-S-ENSALADA-GRIEGA",
+      "name": {
+        "default": "Ranch",
+        "translations": {
+          "en": "Ranch"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2
+    },
+    {
+      "option_id": "O-S-MARINARA-S-PAPAS",
+      "group_id": "G-S-SALSA-S-PAPAS",
+      "name": {
+        "default": "Marinara",
+        "translations": {
+          "en": "Marinara"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-RANCH-D-S-PAPAS",
+      "group_id": "G-S-SALSA-S-PAPAS",
+      "name": {
+        "default": "Ranch",
+        "translations": {
+          "en": "Ranch"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-S-MARINARA-S-PAN-AJO",
+      "group_id": "G-S-SALSA-S-PAN-AJO",
+      "name": {
+        "default": "Marinara",
+        "translations": {
+          "en": "Marinara"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-S-RANCH-D-S-PAN-AJO",
+      "group_id": "G-S-SALSA-S-PAN-AJO",
+      "name": {
+        "default": "Ranch",
+        "translations": {
+          "en": "Ranch"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    }
+  ],
+  "presentation": [
+    {
+      "product_ref": "S-PIZZA-PEPPERONI",
+      "category_ref": "S-PIZZAS",
+      "display_name": {
+        "default": "Pizza Pepperoni 14\"",
+        "translations": {
+          "en": "Pizza Pepperoni 14\""
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:pizza-pepperoni",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-BEB-COCA",
+        "S-PAPAS",
+        "S-PAN-AJO"
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-QUESO",
+      "category_ref": "S-PIZZAS",
+      "display_name": {
+        "default": "Pizza Queso 14\"",
+        "translations": {
+          "en": "Pizza Queso 14\""
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:pizza-queso",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-BEB-COCA",
+        "S-PAN-AJO",
+        "S-ENSALADA-CESAR"
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-CARNE",
+      "category_ref": "S-PIZZAS",
+      "display_name": {
+        "default": "Pizza Carne Suprema 14\"",
+        "translations": {
+          "en": "Pizza Carne Suprema 14\""
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:pizza-carne-suprema",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-BEB-COCA-ZERO",
+        "S-PAPAS",
+        "S-ENSALADA-GRIEGA"
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-HAWAIIAN",
+      "category_ref": "S-PIZZAS",
+      "display_name": {
+        "default": "Pizza Hawaiian 14\"",
+        "translations": {
+          "en": "Pizza Hawaiian 14\""
+        }
+      },
+      "display_order": 4,
+      "image": {
+        "content_hash": "file:pizza-hawaiian",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-BEB-FANTA",
+        "S-PAPAS",
+        "S-PAN-AJO"
+      ]
+    },
+    {
+      "product_ref": "S-PIZZA-CHAMP",
+      "category_ref": "S-PIZZAS",
+      "display_name": {
+        "default": "Pizza Champiñones 14\"",
+        "translations": {
+          "en": "Pizza Champiñones 14\""
+        }
+      },
+      "display_order": 5,
+      "image": {
+        "content_hash": "file:pizza-champinones",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-BEB-SPRITE",
+        "S-ENSALADA-CESAR",
+        "S-PAN-AJO"
+      ]
+    },
+    {
+      "product_ref": "S-REB-PEPPERONI",
+      "category_ref": "S-REBANADAS",
+      "display_name": {
+        "default": "Rebanada de Pepperoni",
+        "translations": {
+          "en": "Rebanada de Pepperoni"
+        }
+      },
+      "display_order": 6,
+      "image": {
+        "content_hash": "file:rebanada-pepperoni",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-BEB-COCA",
+        "S-PAPAS",
+        "S-ENSALADA-CESAR"
+      ]
+    },
+    {
+      "product_ref": "S-ENSALADA-CESAR",
+      "category_ref": "S-ENSALADAS",
+      "display_name": {
+        "default": "Ensalada César",
+        "translations": {
+          "en": "Ensalada César"
+        }
+      },
+      "display_order": 7,
+      "image": {
+        "content_hash": "file:ensalada-cesar",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-PAN-AJO",
+        "S-BEB-SPRITE"
+      ]
+    },
+    {
+      "product_ref": "S-ENSALADA-GRIEGA",
+      "category_ref": "S-ENSALADAS",
+      "display_name": {
+        "default": "Ensalada Griega",
+        "translations": {
+          "en": "Ensalada Griega"
+        }
+      },
+      "display_order": 8,
+      "image": {
+        "content_hash": "file:ensalada-griega",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-PAN-AJO",
+        "S-BEB-COCA-ZERO"
+      ]
+    },
+    {
+      "product_ref": "S-PAPAS",
+      "category_ref": "S-ENSALADAS",
+      "display_name": {
+        "default": "Papas Sbarro",
+        "translations": {
+          "en": "Papas Sbarro"
+        }
+      },
+      "display_order": 9,
+      "image": {
+        "content_hash": "file:papas-sbarro",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-BEB-COCA",
+        "S-PAN-AJO"
+      ]
+    },
+    {
+      "product_ref": "S-PAN-AJO",
+      "category_ref": "S-ENSALADAS",
+      "display_name": {
+        "default": "Pan de Ajo",
+        "translations": {
+          "en": "Pan de Ajo"
+        }
+      },
+      "display_order": 10,
+      "image": {
+        "content_hash": "file:pan-de-ajo",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-PIZZA-QUESO",
+        "S-BEB-COCA"
+      ]
+    },
+    {
+      "product_ref": "S-BEB-COCA",
+      "category_ref": "S-BEBIDAS",
+      "display_name": {
+        "default": "Coca-Cola 600 ml",
+        "translations": {
+          "en": "Coca-Cola 600 ml"
+        }
+      },
+      "display_order": 11,
+      "image": {
+        "content_hash": "file:bebida-coca",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-PAPAS",
+        "S-PIZZA-PEPPERONI"
+      ]
+    },
+    {
+      "product_ref": "S-BEB-COCA-ZERO",
+      "category_ref": "S-BEBIDAS",
+      "display_name": {
+        "default": "Coca-Cola Zero 600 ml",
+        "translations": {
+          "en": "Coca-Cola Zero 600 ml"
+        }
+      },
+      "display_order": 12,
+      "image": {
+        "content_hash": "file:bebida-coca-zero",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-ENSALADA-CESAR",
+        "S-PAPAS"
+      ]
+    },
+    {
+      "product_ref": "S-BEB-SPRITE",
+      "category_ref": "S-BEBIDAS",
+      "display_name": {
+        "default": "Sprite 600 ml",
+        "translations": {
+          "en": "Sprite 600 ml"
+        }
+      },
+      "display_order": 13,
+      "image": {
+        "content_hash": "file:bebida-sprite",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-PAN-AJO",
+        "S-PIZZA-QUESO"
+      ]
+    },
+    {
+      "product_ref": "S-BEB-FANTA",
+      "category_ref": "S-BEBIDAS",
+      "display_name": {
+        "default": "Fanta 600 ml",
+        "translations": {
+          "en": "Fanta 600 ml"
+        }
+      },
+      "display_order": 14,
+      "image": {
+        "content_hash": "file:bebida-fanta",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "S-REB-PEPPERONI",
+        "S-PAPAS",
+        "S-PIZZA-HAWAIIAN"
+      ]
+    }
+  ],
+  "availability": [
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-BURGERS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-COMBOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-DRINKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-SIDES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-BEBIDAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-CARNES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-DESPENSA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-FRUTAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-HOGAR",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-LACTEOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-PANADERIA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-SNACKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-CAFE",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-DESAYUNO",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-FRIAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-SBARRO",
+      "target_kind": "CATEGORY",
+      "target_ref": "T-PANADERIA",
+      "state": "WITHHELD"
+    }
+  ]
+}

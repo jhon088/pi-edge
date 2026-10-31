@@ -1,4 +1,4 @@
-//! The retail lane's door to the core.
+//! The retail lane's door to the core, and which lane the screen wears.
 //!
 //! Retail is the same core with a different shell in front of it: the same
 //! catalog, the same sale, the same payment journey, the same receipt. What
@@ -10,124 +10,18 @@
 //!
 //! There is no retail pricing, no retail totalizer and no retail finalize
 //! here, and there is nowhere one could be added: a retail line is an ordinary
-//! line, and payment goes through `kiosk_pay` exactly as the restaurant's does.
+//! line, and payment goes through `kiosk_pay` exactly as every other lane's
+//! does. What this box *is* — brand, name, open sign, day — lives in
+//! `showroom`.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-
+use edge_client::EdgeClient;
 use edge_protocol::{
     AddItemRequestV1, ProductSelectorV1, RetailTransactionV1, SubmitScanRequestV1,
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::showroom::{self, KioskPreferencesV1, Vertical};
 use crate::{BridgeError, EdgeBridge};
-
-/// Which lane this installation opens in.
-///
-/// A presentation choice, not core state: it selects a shell and a channel to
-/// read the menu for, and changes nothing the core computes. Kept in the data
-/// directory rather than in the webview's storage so it survives a reinstall
-/// of the frontend and can be read by whoever is supporting the machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum Vertical {
-    Restaurant,
-    Retail,
-}
-
-impl Vertical {
-    /// The catalog channel this lane sells from.
-    ///
-    /// Both lanes read one active snapshot — a store may have exactly one —
-    /// and availability per channel decides which aisles each one shows
-    /// (ADR 044).
-    pub fn channel(self) -> &'static str {
-        match self {
-            Self::Restaurant => "KIOSK",
-            Self::Retail => "KIOSK-RETAIL",
-        }
-    }
-}
-
-/// What this box is set up as. Local, and only local.
-///
-/// Everything here chooses how the screen behaves, never what the core
-/// computes — so it is a file beside the database rather than a settings table
-/// and a protocol operation. Kept out of the webview's storage so it survives
-/// a reinstall of the frontend and can be read by whoever is supporting the
-/// machine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KioskPreferencesV1 {
-    pub vertical: Vertical,
-    /// So the shell never has to know the mapping; the host owns it.
-    pub channel_ref: String,
-    /// Whether the retail lane shows the customer their own camera.
-    ///
-    /// Off unless somebody turned it on: a kiosk must not reach for a camera
-    /// because it happened to be installed somewhere with one.
-    #[serde(default)]
-    pub camera_preview: bool,
-}
-
-impl KioskPreferencesV1 {
-    fn new(vertical: Vertical, camera_preview: bool) -> Self {
-        Self {
-            channel_ref: vertical.channel().to_owned(),
-            vertical,
-            camera_preview,
-        }
-    }
-}
-
-impl Default for KioskPreferencesV1 {
-    fn default() -> Self {
-        Self::new(Vertical::Restaurant, false)
-    }
-}
-
-fn setting_path(dir: &Path) -> PathBuf {
-    dir.join("preferences.json")
-}
-
-/// Read what is stored, defaulting to a restaurant with no camera.
-///
-/// Anything unreadable or unrecognised is the default rather than an error: a
-/// corrupt preferences file must not stop a kiosk from opening, and the
-/// default is a working screen. The default is also the *quiet* one — nothing
-/// here can turn a camera on by failing to parse.
-fn stored(dir: &Path) -> KioskPreferencesV1 {
-    fs::read_to_string(setting_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str::<KioskPreferencesV1>(&text).ok())
-        // The channel is the host's to decide, so it is recomputed rather
-        // than trusted: an edited file cannot point a lane at another's goods.
-        .map(|stored| KioskPreferencesV1::new(stored.vertical, stored.camera_preview))
-        .unwrap_or_default()
-}
-
-fn write(dir: &Path, preferences: &KioskPreferencesV1) -> Result<(), BridgeError> {
-    let body = serde_json::to_string_pretty(preferences).map_err(|error| BridgeError {
-        code: "PREFERENCES_ENCODE_FAILED".to_owned(),
-        message: error.to_string(),
-    })?;
-    fs::write(setting_path(dir), body).map_err(|error| BridgeError {
-        code: "PREFERENCES_WRITE_FAILED".to_owned(),
-        message: error.to_string(),
-    })
-}
-
-fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, BridgeError> {
-    crate::bootstrap::data_dir(app).map_err(|error| BridgeError {
-        code: "DATA_DIRECTORY_UNAVAILABLE".to_owned(),
-        message: error.to_string(),
-    })
-}
-
-#[tauri::command]
-pub fn kiosk_preferences(app: tauri::AppHandle) -> Result<KioskPreferencesV1, BridgeError> {
-    Ok(stored(&data_dir(&app)?))
-}
 
 /// Turn the customer-facing camera preview on or off.
 ///
@@ -139,31 +33,31 @@ pub fn set_camera_preview(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<KioskPreferencesV1, BridgeError> {
-    let dir = data_dir(&app)?;
-    let preferences = KioskPreferencesV1::new(stored(&dir).vertical, enabled);
-    write(&dir, &preferences)?;
+    let dir = showroom::data_dir(&app)?;
+    let mut preferences = showroom::stored(&dir);
+    preferences.camera_preview = enabled;
+    showroom::write(&dir, &preferences)?;
     Ok(preferences)
 }
 
 /// Switch lanes, abandoning whatever is open first.
 ///
-/// A basket half-built in one lane must not reappear in the other, so the
-/// open sale is cancelled here *deliberately* rather than left for the new
-/// shell to find. Everything else — the catalog, the photographs, the printer
-/// settings, the business day, the till session — is untouched: switching
-/// verticals is a change of channel, not a reinstallation.
+/// A basket half-built in one brand must not reappear in another, so the open
+/// sale is cancelled here *deliberately* rather than left for the new shell to
+/// find. Everything else — the catalog, the photographs, the printer settings,
+/// the identity, the day's tally, the business day — is untouched: switching
+/// brands is a change of channel, not a reinstallation (ADR 047).
 #[tauri::command]
 pub fn set_vertical_setting(
     app: tauri::AppHandle,
     bridge: tauri::State<'_, EdgeBridge>,
     vertical: Vertical,
 ) -> Result<KioskPreferencesV1, BridgeError> {
-    let dir = data_dir(&app)?;
-    // The camera choice belongs to the box, not to the lane: changing shops
-    // does not turn a camera on, and does not turn one off either. The shell
-    // stops the stream on its way out because the restaurant has no preview.
-    let preferences = KioskPreferencesV1::new(vertical, stored(&dir).camera_preview);
-    write(&dir, &preferences)?;
+    let dir = showroom::data_dir(&app)?;
+    let mut preferences = showroom::stored(&dir);
+    preferences.vertical = vertical;
+    preferences.channel_ref = vertical.channel().to_owned();
+    showroom::write(&dir, &preferences)?;
 
     abandon_open_sale(&bridge, "VERTICAL_SWITCH");
     Ok(preferences)
@@ -228,8 +122,6 @@ pub fn retail_add_item(
 
 // --------------------------------------------------------------- internals
 
-use edge_client::EdgeClient;
-
 /// Make sure a sale is open. Answers whether *this call* opened it.
 fn open_lane(bridge: &EdgeBridge) -> Result<bool, BridgeError> {
     match bridge
@@ -288,84 +180,5 @@ fn abandon_open_sale(bridge: &EdgeBridge, reason: &str) {
         if !message.contains("NO_ACTIVE_TRANSACTION") {
             tracing::warn!(%error, reason, "the open sale could not be abandoned");
         }
-    }
-}
-
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn each_lane_sells_from_its_own_channel() {
-        assert_eq!(Vertical::Restaurant.channel(), "KIOSK");
-        assert_eq!(Vertical::Retail.channel(), "KIOSK-RETAIL");
-    }
-
-    #[test]
-    fn an_installation_with_no_preference_opens_the_restaurant_with_no_camera() {
-        let dir = tempfile::tempdir().unwrap();
-        let preferences = stored(dir.path());
-        assert_eq!(preferences.vertical, Vertical::Restaurant);
-        assert!(
-            !preferences.camera_preview,
-            "a fresh installation reached for a camera on its own"
-        );
-    }
-
-    #[test]
-    fn a_stored_preference_comes_back_and_a_broken_one_does_not_stop_the_kiosk() {
-        let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), &KioskPreferencesV1::new(Vertical::Retail, true)).unwrap();
-
-        let back = stored(dir.path());
-        assert_eq!(back.vertical, Vertical::Retail);
-        assert!(back.camera_preview, "the camera choice did not survive");
-
-        fs::write(setting_path(dir.path()), "{ not json").unwrap();
-        let broken = stored(dir.path());
-        assert_eq!(
-            broken.vertical,
-            Vertical::Restaurant,
-            "a corrupt preference must not stop a kiosk from opening"
-        );
-        assert!(
-            !broken.camera_preview,
-            "an unreadable file turned a camera on"
-        );
-    }
-
-    /// An edited file cannot point a lane at the other lane's goods.
-    #[test]
-    fn the_channel_is_the_hosts_to_decide_and_is_recomputed_on_every_read() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            setting_path(dir.path()),
-            r#"{"vertical":"RETAIL","channel_ref":"KIOSK","camera_preview":false}"#,
-        )
-        .unwrap();
-        assert_eq!(stored(dir.path()).channel_ref, "KIOSK-RETAIL");
-    }
-
-    #[test]
-    fn the_setting_names_the_channel_so_the_shell_never_has_to() {
-        let json =
-            serde_json::to_string(&KioskPreferencesV1::new(Vertical::Retail, false)).unwrap();
-        assert!(json.contains("\"vertical\":\"RETAIL\""), "{json}");
-        assert!(json.contains("\"channel_ref\":\"KIOSK-RETAIL\""), "{json}");
-        assert!(json.contains("\"camera_preview\":false"), "{json}");
-    }
-
-    /// Changing shops is not a reason to change what the camera does.
-    #[test]
-    fn switching_vertical_keeps_the_camera_choice() {
-        let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), &KioskPreferencesV1::new(Vertical::Retail, true)).unwrap();
-        let kept = KioskPreferencesV1::new(Vertical::Restaurant, stored(dir.path()).camera_preview);
-        write(dir.path(), &kept).unwrap();
-
-        let back = stored(dir.path());
-        assert_eq!(back.vertical, Vertical::Restaurant);
-        assert!(back.camera_preview);
     }
 }

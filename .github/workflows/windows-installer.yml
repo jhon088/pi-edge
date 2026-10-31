@@ -242,12 +242,49 @@ jobs:
             if ($photo.Length -lt 4000) { throw "$($photo.Name) is $($photo.Length) bytes" }
           }
 
+          # ------------------------------------------------- the brand lanes
+          #
+          # Tim Hortons and Sbarro are two more channels of the same snapshot,
+          # declared as their own resources. An installer that shipped without
+          # them would look healthy until somebody switched brand on a stand.
+          foreach ($lane in @(
+            @{ slug = 'tim';    products = 13; photos = 13 },
+            @{ slug = 'sbarro'; products = 14; photos = 14 }
+          )) {
+            $folder = Join-Path $staged.Directory.FullName $lane.slug
+            if (-not (Test-Path $folder)) { throw "the $($lane.slug) lane did not ship" }
+            $menu = Join-Path $folder 'menu.json'
+            if (-not (Test-Path $menu)) { throw "no menu.json in $folder" }
+            $shelf = Get-Content $menu -Raw | ConvertFrom-Json
+            # Component products price a modifier and never appear on a menu,
+            # so the shelf is counted by what has presentation.
+            $onMenu = @($shelf.presentation).Count
+            $pictures = @(Get-ChildItem (Join-Path $folder 'assets') -Filter *.jpg)
+            Write-Host "$($lane.slug): $onMenu products, $($pictures.Count) photographs"
+            if ($onMenu -ne $lane.products) {
+              throw "expected $($lane.products) $($lane.slug) products, found $onMenu"
+            }
+            if ($pictures.Count -ne $lane.photos) {
+              throw "expected $($lane.photos) $($lane.slug) photographs, found $($pictures.Count)"
+            }
+            foreach ($picture in $pictures) {
+              if ($picture.Length -lt 4000) {
+                throw "$($picture.Name) is $($picture.Length) bytes"
+              }
+            }
+          }
+
           # ------------------------------------------- nothing points outside
           #
           # Source material, build machines and the network are all things this
           # installer must not need. A dataset that mentions any of them works
           # where it was built and nowhere else.
-          foreach ($dataset in @($staged.FullName, $retailMenu)) {
+          $datasets = @($staged.FullName, $retailMenu) + @(
+            'tim', 'sbarro' | ForEach-Object {
+              Join-Path (Join-Path $staged.Directory.FullName $_) 'menu.json'
+            }
+          )
+          foreach ($dataset in $datasets) {
             $text = Get-Content $dataset -Raw
             foreach ($forbidden in 'examples/', 'http://', 'https://', 'file://', '/Users/', 'C:\Users') {
               if ($text.Contains($forbidden)) {

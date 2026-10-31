@@ -1899,6 +1899,20 @@ pub struct PrinterModelV1 {
     pub label: String,
     pub paper_mm: i64,
     pub columns: i64,
+    /// What this model's firmware can report about itself.
+    ///
+    /// A status screen may only show what the chosen device can actually
+    /// answer; anything else is `UNKNOWN`. Declared per model because it
+    /// differs per model (ADR 035).
+    #[serde(default)]
+    pub reports_paper: bool,
+    #[serde(default)]
+    pub reports_jam: bool,
+    #[serde(default)]
+    pub reports_online: bool,
+    /// The paper states this model can produce, in order.
+    #[serde(default)]
+    pub paper_states: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

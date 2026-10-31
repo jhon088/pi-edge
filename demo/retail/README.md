@@ -18,7 +18,12 @@ demo/
     assets/            presentation, availability
 ```
 
-Delete `demo/retail/` and the restaurant seeds alone, unchanged. Nothing fails.
+The four datasets that ship — `demo/`, `demo/tim/`, `demo/sbarro/` and
+`demo/retail/` — are a **set**. Each one names the other lanes' aisles in its
+`availability`, so removing one leaves the others pointing at categories the
+snapshot no longer has, and the core refuses it. Regenerate with
+`scripts/brand-dataset.py` and `scripts/retail-dataset.py` after adding or
+removing a lane; `scripts/lanes.py` is the one matrix they all read.
 
 A store may have exactly one active catalog, so the two lanes are told apart by
 **channel availability**, not by swapping catalogs:

@@ -881,61 +881,61 @@
     {
       "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
+      "target_ref": "C-DRINKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-RETAIL",
+      "target_kind": "CATEGORY",
       "target_ref": "C-SIDES",
       "state": "WITHHELD"
     },
     {
       "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "C-DRINKS",
+      "target_ref": "S-BEBIDAS",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-BEBIDAS",
+      "target_ref": "S-ENSALADAS",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-SNACKS",
+      "target_ref": "S-PIZZAS",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-PANADERIA",
+      "target_ref": "S-REBANADAS",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-FRUTAS",
+      "target_ref": "T-CAFE",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-CARNES",
+      "target_ref": "T-DESAYUNO",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-LACTEOS",
+      "target_ref": "T-FRIAS",
       "state": "WITHHELD"
     },
     {
-      "channel_ref": "KIOSK",
+      "channel_ref": "KIOSK-RETAIL",
       "target_kind": "CATEGORY",
-      "target_ref": "R-DESPENSA",
-      "state": "WITHHELD"
-    },
-    {
-      "channel_ref": "KIOSK",
-      "target_kind": "CATEGORY",
-      "target_ref": "R-HOGAR",
+      "target_ref": "T-PANADERIA",
       "state": "WITHHELD"
     }
   ]

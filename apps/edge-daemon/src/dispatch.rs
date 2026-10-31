@@ -100,6 +100,15 @@ impl Dispatcher {
                 label: entry.label.to_owned(),
                 paper_mm: i64::from(entry.paper_mm),
                 columns: entry.columns as i64,
+                reports_paper: entry.reports.paper,
+                reports_jam: entry.reports.jam,
+                reports_online: entry.reports.online,
+                paper_states: entry
+                    .reports
+                    .paper_states()
+                    .iter()
+                    .map(|state| (*state).to_owned())
+                    .collect(),
             })
             .collect();
         // Whatever the host says, and nothing when it says nothing.

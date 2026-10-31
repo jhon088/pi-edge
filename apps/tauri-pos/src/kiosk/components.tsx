@@ -15,22 +15,29 @@ import type { AssetRef, Money } from "./types";
  * The PX mark: two chevrons closing into a square, which reads as "PX" at a
  * glance and still works at 30px on a header.
  */
+/**
+ * The PX symbol, as PX Commerce draws it.
+ *
+ * A `P` and a crossed `X` in PX blue on the night ground the brand uses. The
+ * stroke colour is the accent token rather than a literal, so a brand theme
+ * that repaints the kiosk repaints the mark with it — the ground stays the
+ * PX night blue either way, because that is the logo and not the theme.
+ */
 function PxMark() {
   return (
     <svg viewBox="0 0 48 48" fill="none" aria-hidden>
       <path
         d="M9 38V10h13.5c6 0 10 3.7 10 9.2S28.5 28.6 22.5 28.6H16"
-        stroke="#fff"
+        stroke="var(--px-blue)"
         strokeWidth="6.4"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       <path
         d="M27 38 41 22M41 38 27 22"
-        stroke="#fff"
+        stroke="var(--px-blue)"
         strokeWidth="6.4"
         strokeLinecap="round"
-        opacity="0.92"
       />
     </svg>
   );
@@ -211,6 +218,31 @@ export function Splash({ message }: { message: string }) {
       <p className="k-body" style={{ marginTop: 10 }}>
         {message}
       </p>
+    </div>
+  );
+}
+
+/**
+ * The sign on the door.
+ *
+ * Shown instead of the invitation when an operator has closed the kiosk. It
+ * does not stop the application, the business day or Admin — closing a kiosk
+ * on a showroom floor means "do not start a new order", and an operator has
+ * to be able to open it again from the same machine.
+ */
+export function ClosedScreen({ brandName }: { brandName: string }) {
+  return (
+    <div className="k-closed">
+      <Brand large />
+      <div className="k-closed__mark" aria-hidden>
+        ⏸
+      </div>
+      <h1 className="k-h1">Kiosko temporalmente cerrado</h1>
+      <p className="k-body">
+        {brandName} no está tomando pedidos en esta pantalla por el momento.
+      </p>
+      <p className="k-field__hint">Un miembro del equipo puede abrirlo de nuevo.</p>
+      <PoweredBy />
     </div>
   );
 }

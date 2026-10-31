@@ -30,6 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from lanes import rows_for
 from retail_imaging import as_png, read_png, write_png
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,10 +40,6 @@ DATASET = ROOT / "demo" / "retail" / "menu.json"
 BARCODES = ROOT / "demo" / "retail" / "barcodes.csv"
 
 CHANNEL = "KIOSK-RETAIL"
-# The restaurant's aisles, withheld from this lane. Named here because the
-# availability rule is a conjunction: a lane offers by default and withholds
-# the other lane's categories (ADR 047).
-RESTAURANT_CATEGORIES = ["C-BURGERS", "C-COMBOS", "C-SIDES", "C-DRINKS"]
 
 CATEGORIES = [
     ("R-BEBIDAS", "Bebidas", "Drinks"),
@@ -226,24 +223,9 @@ def main() -> None:
             }
             for index, (ref, _, name, category, _, stem, _, _) in enumerate(SHELF, start=1)
         ],
-        "availability": [
-            {
-                "channel_ref": CHANNEL,
-                "target_kind": "CATEGORY",
-                "target_ref": ref,
-                "state": "WITHHELD",
-            }
-            for ref in RESTAURANT_CATEGORIES
-        ]
-        + [
-            {
-                "channel_ref": "KIOSK",
-                "target_kind": "CATEGORY",
-                "target_ref": ref,
-                "state": "WITHHELD",
-            }
-            for ref, _, _ in CATEGORIES
-        ],
+        # What this lane does not sell. Every other lane's categories, from
+        # the one matrix all the datasets share (ADR 047).
+        "availability": rows_for(CHANNEL),
     }
     with DATASET.open("w", encoding="utf-8") as handle:
         json.dump(dataset, handle, ensure_ascii=False, indent=2)

@@ -52,12 +52,13 @@ body.kiosk {
   --on-dark-muted: #d8e2de;
   --on-dark-faint: #aebab5;
 
-  /* on a mint control */
-  --on-accent: #04352a;
+  /* on an accent control — the PX night blue, which is the logo's ground */
+  --on-accent: #0a0f1e;
 
-  /* mint as *text* on a light panel. The brand mint is a fill colour; at
-     1.9:1 it cannot carry a word. */
-  --mint-text: #0a7a5f;
+  /* The accent as *text* on a light panel. #00D4FF is a fill colour; at
+     1.6:1 on white it cannot carry a word, so text uses the deep end of the
+     same hue and reads about 5.9:1. */
+  --mint-text: #006d85;
 
   /* Kept as the names the rest of the sheet already uses. */
   --fg: var(--on-surface);
@@ -65,18 +66,28 @@ body.kiosk {
   --fg-3: var(--on-surface-faint);
 
   /* accent — one colour carries every control, selection and success state.
-     Change `--mint` and the whole kiosk follows. */
-  --mint: #19c39a;
-  --mint-2: #2ad9ae;
-  --mint-deep: #0e9c7a;
-  --mint-soft: #e8f8f3;
-  --mint-line: #a8e6d5;
-  /* Text on mint is dark, not white: white on this green is about 2.3:1 and
-     fails at any size, while this reads near 8:1. */
+     Change this block and the whole kiosk follows.
+
+     PX Commerce blue. The token names stay `--mint-*` because every rule in
+     this sheet and all four brand themes already read them: renaming them
+     would be a hundred-line diff that changes nothing on screen. What the
+     names mean is "the accent", and the accent is now #00D4FF. */
+  --mint: #00d4ff;
+  --mint-2: #4ce3ff;
+  --mint-deep: #0097b8;
+  --mint-soft: #e2f9ff;
+  --mint-line: #9ae6f7;
+  /* Text on the accent is dark, not white: white on this cyan is about 1.8:1
+     and fails at any size, while this reads near 9:1. */
   --mint-ink: var(--on-accent);
 
+  /* PX Commerce, as the logo uses them. The accent above is the same blue;
+     these two are the brand's own and never change with a theme. */
+  --px-blue: #00d4ff;
+  --px-night: #0a0f1e;
+
   --gold: #8a5a0e;
-  --green: #0e9c7a;
+  --green: #0097b8;
   --red: #b8333f;
   --red-soft: #fdeced;
 
@@ -97,7 +108,7 @@ body.kiosk {
   --sh-1: 0 2px 8px rgba(18, 38, 33, 0.06);
   --sh-card: 0 4px 16px rgba(18, 38, 33, 0.07);
   --sh-2: 0 12px 34px rgba(18, 38, 33, 0.12);
-  --sh-mint: 0 6px 20px rgba(14, 156, 122, 0.26);
+  --sh-mint: 0 6px 20px rgba(0, 151, 184, 0.28);
 
   /* The customer-facing preview, and the room the lane leaves for it. */
   --cam-w: clamp(180px, 17vw, 240px);
@@ -143,7 +154,7 @@ button {
   /* Off-white, with the faintest mint wash at the top so the page has a
      direction without having a colour. */
   background:
-    radial-gradient(120% 70% at 12% -18%, rgba(25, 195, 154, 0.07), transparent 60%),
+    radial-gradient(120% 70% at 12% -18%, rgba(0, 212, 255, 0.07), transparent 60%),
     linear-gradient(180deg, var(--bg-2), var(--bg) 42%);
   color: var(--fg);
 }
@@ -202,6 +213,9 @@ button {
   gap: 14px;
 }
 
+/* The PX lockup: the symbol in PX blue on the brand's night ground. The tile
+   keeps that ground in every theme, because it is the logo rather than the
+   kiosk's palette. */
 .k-brand__mark {
   position: relative;
   display: grid;
@@ -209,8 +223,8 @@ button {
   width: 52px;
   height: 52px;
   border-radius: 16px;
-  background: linear-gradient(145deg, var(--mint-2), var(--mint-deep));
-  box-shadow: 0 8px 22px rgba(25, 195, 154, 0.42);
+  background: var(--px-night);
+  box-shadow: 0 8px 22px rgba(10, 15, 30, 0.3);
   flex: 0 0 auto;
 }
 
@@ -546,11 +560,11 @@ button {
   0%,
   100% {
     transform: translateY(0);
-    box-shadow: 0 14px 38px rgba(25, 195, 154, 0.4);
+    box-shadow: 0 14px 38px rgba(0, 212, 255, 0.4);
   }
   50% {
     transform: translateY(-9px);
-    box-shadow: 0 32px 66px rgba(25, 195, 154, 0.5);
+    box-shadow: 0 32px 66px rgba(0, 212, 255, 0.5);
   }
 }
 
@@ -609,7 +623,7 @@ button {
 
 .k-choice:active {
   transform: scale(0.98);
-  border-color: rgba(25, 195, 154, 0.6);
+  border-color: rgba(0, 212, 255, 0.6);
   box-shadow: var(--sh-mint);
 }
 
@@ -619,7 +633,7 @@ button {
   width: 132px;
   height: 132px;
   border-radius: 40px;
-  background: linear-gradient(145deg, rgba(25, 195, 154, 0.26), rgba(169, 110, 18, 0.1));
+  background: linear-gradient(145deg, rgba(0, 212, 255, 0.26), rgba(169, 110, 18, 0.1));
   border: 1px solid var(--line);
   font-size: 62px;
 }
@@ -819,7 +833,7 @@ button {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--mint-ink);
-  box-shadow: 0 6px 16px rgba(25, 195, 154, 0.4);
+  box-shadow: 0 6px 16px rgba(0, 212, 255, 0.4);
 }
 
 .k-card__over {
@@ -884,7 +898,7 @@ button {
   font-size: 26px;
   font-weight: 400;
   line-height: 1;
-  box-shadow: 0 8px 20px rgba(25, 195, 154, 0.4);
+  box-shadow: 0 8px 20px rgba(0, 212, 255, 0.4);
 }
 
 /* ======================================================== product detail */
@@ -956,7 +970,7 @@ button {
 }
 
 .k-pill--done {
-  background: rgba(14, 156, 122, 0.15);
+  background: rgba(0, 151, 184, 0.15);
   color: var(--mint-text);
 }
 
@@ -989,7 +1003,7 @@ button {
 
 .k-option--on {
   border-color: var(--mint);
-  background: linear-gradient(110deg, rgba(25, 195, 154, 0.17), rgba(25, 195, 154, 0.05));
+  background: linear-gradient(110deg, rgba(0, 212, 255, 0.18), rgba(0, 212, 255, 0.06));
 }
 
 .k-option:disabled {
@@ -1222,8 +1236,8 @@ button {
 
 .k-chip--note {
   color: var(--mint-text);
-  border-color: rgba(25, 195, 154, 0.3);
-  background: rgba(25, 195, 154, 0.08);
+  border-color: rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.08);
 }
 
 .k-line__right {
@@ -1330,7 +1344,7 @@ button {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 2px solid rgba(25, 195, 154, 0.45);
+  border: 2px solid rgba(0, 212, 255, 0.45);
   animation: k-ping 2.1s var(--ease) infinite;
 }
 
@@ -1439,7 +1453,7 @@ button {
   color: var(--mint-ink);
   font-size: 64px;
   font-weight: 900;
-  box-shadow: 0 22px 56px rgba(14, 156, 122, 0.34);
+  box-shadow: 0 22px 56px rgba(0, 151, 184, 0.34);
   animation: k-pop 520ms cubic-bezier(0.2, 1.35, 0.4, 1);
 }
 
@@ -1718,7 +1732,7 @@ button {
   color: var(--mint-ink);
   font-size: 15px;
   font-weight: 740;
-  box-shadow: 0 6px 16px rgba(25, 195, 154, 0.36);
+  box-shadow: 0 6px 16px rgba(0, 212, 255, 0.36);
 }
 
 /* ======================================================== payment method */
@@ -1748,7 +1762,7 @@ button {
 
 .k-method__card:active {
   transform: scale(0.98);
-  border-color: rgba(25, 195, 154, 0.6);
+  border-color: rgba(0, 212, 255, 0.6);
   box-shadow: var(--sh-mint);
 }
 
@@ -1758,7 +1772,7 @@ button {
   width: 136px;
   height: 136px;
   border-radius: 42px;
-  background: linear-gradient(145deg, rgba(25, 195, 154, 0.24), rgba(169, 110, 18, 0.09));
+  background: linear-gradient(145deg, rgba(0, 212, 255, 0.24), rgba(169, 110, 18, 0.09));
   border: 1px solid var(--line);
   font-size: 64px;
 }
@@ -1856,7 +1870,7 @@ button {
 }
 
 .k-on-dark .k-brand__name em {
-  color: var(--mint-2);
+  color: var(--px-blue);
 }
 
 .k-on-dark .k-brand__tag {
@@ -2033,7 +2047,7 @@ button {
   margin-bottom: 18px;
   padding: 9px 18px;
   border-radius: var(--r-pill);
-  background: rgba(14, 156, 122, 0.14);
+  background: rgba(0, 151, 184, 0.14);
   color: var(--mint-text);
   font-size: 16px;
   font-weight: 680;
@@ -3072,4 +3086,176 @@ button {
   body.kiosk {
     --cam-w: 150px;
   }
+}
+
+/* ==================================================== brands and showroom
+ *
+ * One application wearing four signs. A brand is a palette and nothing more:
+ * the layout, the flow and the payment screens are the same in all of them,
+ * which is the whole point of a channel-and-a-shell (ADR 047).
+ *
+ * Stamped on the root element by `Shell`, so fixed furniture — the camera
+ * corner, the admin key, a toast — is dressed too.
+ */
+
+:root[data-brand="tim"] {
+  --mint: #c8102e;
+  --mint-2: #e4344f;
+  --mint-deep: #a00d25;
+  --mint-soft: #fdeef0;
+  --mint-line: #f3bcc4;
+  --mint-text: #a00d25;
+  --mint-ink: #ffffff;
+  --on-accent: #ffffff;
+  --gold: #8a5a0e;
+}
+
+:root[data-brand="sbarro"] {
+  --mint: #d7141a;
+  --mint-2: #ee2a2f;
+  --mint-deep: #a50f14;
+  --mint-soft: #fdecec;
+  --mint-line: #f4b9bb;
+  --mint-text: #a50f14;
+  --mint-ink: #ffffff;
+  --on-accent: #ffffff;
+  --bg: #faf7f4;
+  --gold: #8a5a0e;
+}
+
+/* --- the sign on the door --------------------------------------------- */
+
+.k-closed {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 12px;
+  height: 100%;
+  padding: 40px;
+  text-align: center;
+}
+
+.k-closed__mark {
+  display: grid;
+  place-items: center;
+  width: 108px;
+  height: 108px;
+  margin: 8px 0 4px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--fg-3);
+  font-size: 44px;
+}
+
+/* --- admin: identity, the day, the note acceptor ---------------------- */
+
+.k-admin__who {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  margin: 14px 0 4px;
+}
+
+.k-input {
+  width: 100%;
+  min-height: 54px;
+  padding: 0 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--on-surface);
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.k-input:disabled {
+  background: var(--surface-2);
+  color: var(--fg-3);
+}
+
+.k-admin__figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 20px;
+  margin: 16px 0 4px;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.k-admin__figures div {
+  display: grid;
+  gap: 2px;
+}
+
+.k-admin__figures dt {
+  color: var(--fg-3);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.k-admin__figures dd {
+  margin: 0;
+  color: var(--on-surface);
+  font-size: 21px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- paying with banknotes -------------------------------------------- */
+
+.k-cg {
+  display: grid;
+  gap: 2px;
+  width: min(560px, 86vw);
+  margin: 10px 0 18px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.k-cg__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 4px;
+}
+
+.k-cg__row dt {
+  color: var(--fg-2);
+  font-size: 20px;
+  font-weight: 620;
+}
+
+.k-cg__row dd {
+  margin: 0;
+  color: var(--on-surface);
+  font-size: 30px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* What is still owed is the number the customer is working against. */
+.k-cg__row--due dd {
+  color: var(--gold);
+}
+
+/* What they get back is the number they are waiting for. */
+.k-cg__row--change {
+  border-radius: var(--r-md);
+  background: var(--mint-soft);
+}
+
+.k-cg__row--change dt,
+.k-cg__row--change dd {
+  color: var(--mint-text);
+}
+
+.k-cg__row--change dd {
+  font-size: 34px;
 }

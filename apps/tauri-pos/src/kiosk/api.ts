@@ -10,6 +10,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   AssetRef,
+  CashGenicSettings,
+  CashGenicStatus,
+  DayTally,
   BridgeError,
   Menu,
   PrinterConfiguration,
@@ -156,6 +159,87 @@ export function preferences(): Promise<KioskPreferences> {
  */
 export function setVertical(vertical: Vertical): Promise<KioskPreferences> {
   return invoke<KioskPreferences>("set_vertical_setting", { vertical });
+}
+
+// ================================================================ showroom
+//
+// Demo surface: what this box is called, whether it is open, what it has sold
+// today, and the note acceptor. None of it is core state — the core owns the
+// money and the sale; these are the labels around them.
+
+/** Name this machine: which branch, which kiosk, which cashier. */
+export function setIdentity(
+  branchId: string,
+  kioskId: string,
+  cashierId: string,
+): Promise<KioskPreferences> {
+  return invoke<KioskPreferences>("set_identity", { branchId, kioskId, cashierId });
+}
+
+/**
+ * Open or close the kiosk to customers.
+ *
+ * Closed is a sign on the door: the screen will not start a sale, the
+ * application keeps running and Admin keeps working.
+ */
+export function setKioskOpen(open: boolean): Promise<KioskPreferences> {
+  return invoke<KioskPreferences>("set_kiosk_open", { open });
+}
+
+export function dayTally(): Promise<DayTally> {
+  return invoke<DayTally>("day_tally");
+}
+
+/**
+ * Add a finished sale to today's tally.
+ *
+ * Called once the core has finalized, never before and never instead of it.
+ * If it fails the sale is still a sale; only the showroom's counter is wrong.
+ */
+export function recordSale(
+  tenderType: string,
+  amountMinor: number,
+): Promise<DayTally> {
+  return invoke<DayTally>("record_sale", { tenderType, amountMinor });
+}
+
+export function closeDay(): Promise<DayTally> {
+  return invoke<DayTally>("close_day");
+}
+
+export function openDay(): Promise<DayTally> {
+  return invoke<DayTally>("open_day_command");
+}
+
+// --------------------------------------------------------- the note acceptor
+
+export function saveCashGenic(
+  settings: CashGenicSettings,
+): Promise<KioskPreferences> {
+  return invoke<KioskPreferences>("cashgenic_save", { settings });
+}
+
+/** The "probar conexión" button: ask the device who it is. */
+export function probeCashGenic(): Promise<CashGenicStatus> {
+  return invoke<CashGenicStatus>("cashgenic_probe");
+}
+
+/** What it is doing, against what is owed. Polled while a customer pays. */
+export function cashGenicStatus(dueMinor: number): Promise<CashGenicStatus> {
+  return invoke<CashGenicStatus>("cashgenic_status", { dueMinor });
+}
+
+/** Start taking notes towards an amount the core computed. */
+export function cashGenicPay(amountMinor: number): Promise<CashGenicStatus> {
+  return invoke<CashGenicStatus>("cashgenic_pay", { amountMinor });
+}
+
+export function cashGenicCancel(): Promise<void> {
+  return invoke("cashgenic_cancel");
+}
+
+export function cashGenicClose(): Promise<void> {
+  return invoke("cashgenic_close");
 }
 
 /**

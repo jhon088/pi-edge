@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AdminScreen } from "./admin";
+import { CameraCorner } from "./CameraCorner";
 import {
   addItem,
   activeTransaction,
@@ -30,10 +31,12 @@ import {
   startTransaction,
   totalize,
 } from "./api";
+import type { Invitation } from "./brands";
 import { Gate, screenAfterPick, type Origin, type Stage } from "./flow";
 import { usePaymentJourney } from "./payment";
 import {
   Brand,
+  ClosedScreen,
   ErrorBoundary,
   Header,
   Screen,
@@ -44,6 +47,7 @@ import {
 import {
   AttractScreen,
   CartScreen,
+  CashGenicScreen,
   CashScreen,
   ConfirmationScreen,
   FulfillmentScreen,
@@ -64,9 +68,6 @@ import type {
   RetailTransaction,
 } from "./types";
 import "./kiosk.css";
-
-/** The way of selling this screen is. The catalog decides what that offers. */
-const CHANNEL = "KIOSK";
 
 /** How long a screen may sit untouched before the order is abandoned. */
 const IDLE_MS = 75_000;
@@ -91,8 +92,26 @@ const CONFIRM_SECONDS = 4 satisfies 4;
  * itself lives in the core, so a remount picks it straight back up.
  */
 export default function KioskApp({
+  channel,
+  brandName,
+  kioskOpen,
+  cashGenic,
+  cameraPreview,
+  invitation,
   onLeave,
 }: {
+  /** The catalog channel this brand sells from. Chosen by the host. */
+  channel: string;
+  /** Whose menu this is, for the screens that say so. */
+  brandName: string;
+  /** Whether the kiosk is taking orders at all. */
+  kioskOpen: boolean;
+  /** Whether cash is taken by a real note acceptor. */
+  cashGenic: boolean;
+  /** Whether this box shows the customer their own camera. */
+  cameraPreview: boolean;
+  /** What this brand's attract screen says. */
+  invitation: Invitation;
   /** Called when an operator switched the installation to another vertical. */
   onLeave: () => void;
 }) {
@@ -102,12 +121,37 @@ export default function KioskApp({
       key={generation}
       onReset={() => setGeneration((value) => value + 1)}
     >
-      <Kiosk onLeave={onLeave} />
+      <Kiosk
+        channel={channel}
+        brandName={brandName}
+        kioskOpen={kioskOpen}
+        cashGenic={cashGenic}
+        cameraPreview={cameraPreview}
+        invitation={invitation}
+        onLeave={onLeave}
+      />
     </ErrorBoundary>
   );
 }
 
-function Kiosk({ onLeave }: { onLeave: () => void }) {
+function Kiosk({
+  channel,
+  brandName,
+  kioskOpen,
+  cashGenic,
+  cameraPreview,
+  invitation,
+  onLeave,
+}: {
+  channel: string;
+  brandName: string;
+  kioskOpen: boolean;
+  cashGenic: boolean;
+  cameraPreview: boolean;
+  invitation: Invitation;
+  onLeave: () => void;
+}) {
+  const CHANNEL = channel;
   const [stage, setStage] = useState<Stage>("loading");
   const [menu, setMenu] = useState<Menu | null>(null);
   const [fulfillment, setFulfillment] = useState<Fulfillment>("DINE_IN");
@@ -172,7 +216,7 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
     return () => {
       live = false;
     };
-  }, [complain]);
+  }, [CHANNEL, complain]);
 
   // --- does this kiosk print its own receipts? ---------------------------
   //
@@ -190,11 +234,13 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
   //
   // The journey itself is shared with the retail lane: one hook, one `pay`
   // call, one place where a tender becomes a finalized sale.
-  const { paying, reset: resetPaying } = usePaymentJourney({
+  const { paying, acceptor, reset: resetPaying, cancel: cancelCash } =
+    usePaymentJourney({
     active: stage === "payment",
     transaction,
     method,
     autoPrint,
+    cashGenic,
     onApproved: (finalized) => {
       setConfirmed({
         order: finalized.order_code,
@@ -285,6 +331,11 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
   // --- actions ------------------------------------------------------------
 
   const begin = () => {
+    // The closed sign is checked here as well as drawn: a tap that arrived
+    // while the screen was changing must not start an order either.
+    if (!kioskOpen) {
+      return;
+    }
     setStage("fulfillment");
   };
 
@@ -303,6 +354,23 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
       setBusy(false);
     }
   };
+
+  /**
+   * What the catalog says to offer alongside a dish just added.
+   *
+   * The list is the catalog's — `recommended_product_refs` — narrowed to what
+   * this menu shows and to what the basket does not already hold. Used by
+   * both add paths, so a lane with no configurable products gets the same
+   * cross-sell as one with them (ADR 046).
+   */
+  const offersFor = (added: MenuItem, sale: RetailTransaction) =>
+    menu
+      ? recommendationsFor(
+          menu,
+          [added.product_ref],
+          sale.lines.map((line) => line.product_ref),
+        )
+      : [];
 
   /** Put the screen where `flow.ts` says it goes, with what it needs. */
   const show = (screen: { stage: Stage; offer: boolean }, picked: MenuItem) => {
@@ -336,6 +404,15 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
       setTransaction(updated);
       setItem(null);
       setConfiguration(null);
+      if (from === "menu" && offersFor(picked, updated).length > 0) {
+        // A dish that needs no configuring still has things to offer
+        // alongside it. Lanes where *nothing* is configurable — a coffee
+        // shop, a pizza counter — would otherwise never see the offer screen
+        // at all, which is where the cross-sell lives.
+        setJustAdded(picked);
+        setStage("postadd");
+        return;
+      }
       show(screenAfterPick(from, "added"), picked);
     } catch (reason) {
       complain(reason);
@@ -365,11 +442,7 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
       setItem(null);
       setConfiguration(null);
       if (returnTo === "menu" && menu) {
-        const offers = recommendationsFor(
-          menu,
-          [added.product_ref],
-          updated.lines.map((line) => line.product_ref),
-        );
+        const offers = offersFor(added, updated);
         if (offers.length > 0) {
           // Offer once, between the dish and the basket. A dish the catalog
           // recommends nothing for skips the step rather than showing an
@@ -469,6 +542,16 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
     );
   }
 
+  // One element for every screen in this lane, so moving between them does
+  // not stop and restart the camera. Admin is not in this tree: the
+  // operator's screen has no customer to show.
+  const corner = (
+    <CameraCorner
+      enabled={cameraPreview}
+      hidden={stage === "product" || stage === "postadd"}
+    />
+  );
+
   if (stage === "attract") {
     // The flagship category's photograph doubles as the attract banner.
     const hero =
@@ -477,7 +560,16 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
       null;
     return (
       <div className="k-app">
-        <AttractScreen heroAsset={hero} onStart={begin} />
+        {kioskOpen ? (
+          <AttractScreen
+            heroAsset={hero}
+            invitation={invitation}
+            onStart={begin}
+          />
+        ) : (
+          <ClosedScreen brandName={brandName} />
+        )}
+        {corner}
         <button
           type="button"
           className="k-admin-key"
@@ -495,6 +587,7 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
 
   return (
     <div className="k-app">
+      {corner}
       {stage === "fulfillment" ? (
         <>
           <Header cartCount={0} onBack={() => void reset(true)} backLabel="Inicio" />
@@ -675,7 +768,18 @@ function Kiosk({ onLeave }: { onLeave: () => void }) {
           />
           <Screen>
             {method === "CASH" ? (
-              <CashScreen due={transaction.totals.grand_total} state={paying} />
+              cashGenic ? (
+                <CashGenicScreen
+                  due={transaction.totals.grand_total}
+                  status={acceptor}
+                  onCancel={() => {
+                    cancelCash();
+                    setStage("cart");
+                  }}
+                />
+              ) : (
+                <CashScreen due={transaction.totals.grand_total} state={paying} />
+              )
             ) : (
               <PaymentScreen transaction={transaction} state={paying} />
             )}

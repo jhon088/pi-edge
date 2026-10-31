@@ -32,6 +32,7 @@ import {
 import { CameraCorner } from "./CameraCorner";
 import {
   Brand,
+  ClosedScreen,
   ErrorBoundary,
   Header,
   Screen,
@@ -46,6 +47,7 @@ import {
   RetailTotalPanel,
 } from "./retail";
 import {
+  CashGenicScreen,
   CashScreen,
   ConfirmationScreen,
   MethodScreen,
@@ -74,12 +76,20 @@ type Stage =
 export default function RetailApp({
   channel,
   cameraPreview,
+  kioskOpen,
+  brandName,
+  cashGenic,
   onLeave,
 }: {
   /** The channel this lane sells from. Chosen by the host, not here. */
   channel: string;
   /** Whether this box shows the customer their own camera. */
   cameraPreview: boolean;
+  /** Whether the lane is taking customers at all. */
+  kioskOpen: boolean;
+  brandName: string;
+  /** Whether cash is taken by a real note acceptor. */
+  cashGenic: boolean;
   /** Called when an operator switched the installation to another vertical. */
   onLeave: () => void;
 }) {
@@ -92,6 +102,9 @@ export default function RetailApp({
       <Retail
         channel={channel}
         cameraPreview={cameraPreview}
+        kioskOpen={kioskOpen}
+        brandName={brandName}
+        cashGenic={cashGenic}
         onLeave={onLeave}
       />
     </ErrorBoundary>
@@ -101,10 +114,16 @@ export default function RetailApp({
 function Retail({
   channel,
   cameraPreview,
+  kioskOpen,
+  brandName,
+  cashGenic,
   onLeave,
 }: {
   channel: string;
   cameraPreview: boolean;
+  kioskOpen: boolean;
+  brandName: string;
+  cashGenic: boolean;
   onLeave: () => void;
 }) {
   const [stage, setStage] = useState<Stage>("loading");
@@ -173,11 +192,13 @@ function Retail({
   useEffect(refreshAutoPrint, [refreshAutoPrint]);
 
   // --- payment: the restaurant's journey, unchanged ----------------------
-  const { paying, reset: resetPaying } = usePaymentJourney({
+  const { paying, acceptor, reset: resetPaying, cancel: cancelCash } =
+    usePaymentJourney({
     active: stage === "payment",
     transaction,
     method,
     autoPrint,
+    cashGenic,
     onApproved: (finalized) => {
       setConfirmed({
         order: finalized.order_code,
@@ -270,7 +291,9 @@ function Retail({
   // Only the three shopping screens listen. A reader swiped over the glass
   // while the customer is paying must not quietly add a bar of chocolate to a
   // sale that is already being authorised.
-  const scanning = stage === "attract" || stage === "lane" || stage === "search";
+  const scanning =
+    kioskOpen &&
+    (stage === "attract" || stage === "lane" || stage === "search");
   const scanningRef = useRef(scanning);
   scanningRef.current = scanning;
 
@@ -351,7 +374,11 @@ function Retail({
 
   const browse = () => {
     // The shelf is browsable before anything is scanned: the first thing
-    // added opens the lane, whichever way it is added.
+    // added opens the lane, whichever way it is added. A closed lane browses
+    // nothing — there is no order to put it in.
+    if (!kioskOpen) {
+      return;
+    }
     setStage("search");
   };
 
@@ -404,8 +431,12 @@ function Retail({
   if (stage === "attract") {
     return (
       <div className="k-app">
-        <RetailAttractScreen onBrowse={browse} />
-        <CameraCorner enabled={cameraPreview} vertical="RETAIL" />
+        {kioskOpen ? (
+          <RetailAttractScreen onBrowse={browse} />
+        ) : (
+          <ClosedScreen brandName={brandName} />
+        )}
+        <CameraCorner enabled={cameraPreview} />
         <button
           type="button"
           className="k-admin-key"
@@ -423,11 +454,7 @@ function Retail({
       {/* One element for every screen in this lane, so moving between them
           does not stop and restart the camera. Admin is not in this tree:
           the operator's screen has no customer to show. */}
-      <CameraCorner
-        enabled={cameraPreview}
-        vertical="RETAIL"
-        hidden={stage === "search"}
-      />
+      <CameraCorner enabled={cameraPreview} hidden={stage === "search"} />
       {stage === "lane" ? (
         <>
           <Header
@@ -510,7 +537,18 @@ function Retail({
           />
           <Screen>
             {method === "CASH" ? (
-              <CashScreen due={transaction.totals.grand_total} state={paying} />
+              cashGenic ? (
+                <CashGenicScreen
+                  due={transaction.totals.grand_total}
+                  status={acceptor}
+                  onCancel={() => {
+                    cancelCash();
+                    setStage("lane");
+                  }}
+                />
+              ) : (
+                <CashScreen due={transaction.totals.grand_total} state={paying} />
+              )
             ) : (
               <PaymentScreen transaction={transaction} state={paying} />
             )}

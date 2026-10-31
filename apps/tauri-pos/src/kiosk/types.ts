@@ -152,7 +152,15 @@ export interface RetailTransaction {
  * One build, one core, one catalog: the vertical selects a shell and the
  * channel it reads the menu for, and nothing else (ADR 044).
  */
-export type Vertical = "RESTAURANT" | "RETAIL";
+export type Vertical = "RESTAURANT" | "TIM_HORTONS" | "SBARRO" | "RETAIL";
+
+export interface CashGenicSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
 
 export interface KioskPreferences {
   vertical: Vertical;
@@ -160,6 +168,36 @@ export interface KioskPreferences {
   channel_ref: string;
   /** Whether the retail lane shows the customer their own camera. */
   camera_preview: boolean;
+  /** What the stand calls this machine. Free text, typed in by an operator. */
+  branch_id: string;
+  kiosk_id: string;
+  cashier_id: string;
+  /** Whether the kiosk will take an order at all. */
+  kiosk_open: boolean;
+  cashgenic: CashGenicSettings;
+}
+
+/** What this screen has put through since the day was opened. */
+export interface DayTally {
+  state: "OPEN" | "CLOSED";
+  transaction_count: number;
+  sales_total_minor: number;
+  cash_total_minor: number;
+  card_total_minor: number;
+  opened_at: string | null;
+  closed_at: string | null;
+}
+
+/** What the note acceptor is doing, as the payment screen draws it. */
+export interface CashGenicStatus {
+  online: boolean;
+  device: string | null;
+  state: string;
+  deposited_minor: number;
+  outstanding_minor: number;
+  change_minor: number;
+  cash_total_minor: number | null;
+  detail: string | null;
 }
 
 export interface BridgeError {
@@ -182,6 +220,12 @@ export interface PrinterModel {
   label: string;
   paper_mm: number;
   columns: number;
+  /** What this model's firmware can report about itself. */
+  reports_paper: boolean;
+  reports_jam: boolean;
+  reports_online: boolean;
+  /** The paper states it can produce. `["UNKNOWN"]` when it reports nothing. */
+  paper_states: string[];
 }
 
 export interface PrinterQueue {

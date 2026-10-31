@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { preferences } from "./api";
+import { BRANDS, brandOf } from "./brands";
 import { Splash } from "./components";
 import KioskApp from "./KioskApp";
 import RetailApp from "./RetailApp";
@@ -32,11 +33,31 @@ export default function Shell() {
           vertical: "RESTAURANT",
           channel_ref: "KIOSK",
           camera_preview: false,
+          branch_id: "",
+          kiosk_id: "",
+          cashier_id: "",
+          kiosk_open: true,
+          cashgenic: {
+            enabled: false,
+            host: "",
+            port: 44333,
+            username: "",
+            password: "",
+          },
         }),
       );
   }, []);
 
   useEffect(read, [read]);
+
+  // The palette is a document-level attribute rather than a wrapper class, so
+  // fixed-position furniture — the camera corner, the admin key, a toast —
+  // picks the brand up too.
+  useEffect(() => {
+    const theme = lane ? brandOf(lane.vertical).theme : "px";
+    document.documentElement.setAttribute("data-brand", theme);
+    return () => document.documentElement.removeAttribute("data-brand");
+  }, [lane]);
 
   if (!lane) {
     return (
@@ -46,15 +67,30 @@ export default function Shell() {
     );
   }
 
-  if (lane.vertical === "RETAIL") {
+  const brand = brandOf(lane.vertical);
+  if (brand.retail) {
     return (
       <RetailApp
         key={lane.vertical}
         channel={lane.channel_ref}
         cameraPreview={lane.camera_preview}
+        kioskOpen={lane.kiosk_open}
+        brandName={brand.name}
+        cashGenic={lane.cashgenic.enabled}
         onLeave={read}
       />
     );
   }
-  return <KioskApp key={lane.vertical} onLeave={read} />;
+  return (
+    <KioskApp
+      key={lane.vertical}
+      channel={lane.channel_ref}
+      brandName={brand.name}
+      kioskOpen={lane.kiosk_open}
+      cashGenic={lane.cashgenic.enabled}
+      cameraPreview={lane.camera_preview}
+      invitation={brand.invitation ?? BRANDS[0]!.invitation!}
+      onLeave={read}
+    />
+  );
 }

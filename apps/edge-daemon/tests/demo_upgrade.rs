@@ -59,7 +59,19 @@ fn restaurant_only(into: &Path) -> PathBuf {
     let dataset = into.join("demo-old");
     let assets = dataset.join("assets");
     std::fs::create_dir_all(&assets).unwrap();
-    std::fs::copy(demo_dir().join("menu.json"), dataset.join("menu.json")).unwrap();
+    // The dataset as an earlier release shipped it: one lane, and therefore
+    // no availability at all. The rows the current one carries name the other
+    // brands' aisles, which an installation with only this dataset does not
+    // have — and the core is right to refuse a snapshot that points at
+    // categories it was never given.
+    let mut menu: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(demo_dir().join("menu.json")).unwrap()).unwrap();
+    menu["availability"] = serde_json::json!([]);
+    std::fs::write(
+        dataset.join("menu.json"),
+        serde_json::to_vec_pretty(&menu).unwrap(),
+    )
+    .unwrap();
     for entry in std::fs::read_dir(demo_dir().join("assets")).unwrap() {
         let path = entry.unwrap().path();
         if path.is_file() {

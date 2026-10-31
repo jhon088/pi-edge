@@ -47,6 +47,36 @@ fn seed(database: &std::path::Path) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("the CLI prints JSON")
 }
 
+/// How many distinct image files the shipped datasets hold, across every
+/// vertical. Category tiles and the attract banner reuse product stems, so
+/// they add none.
+fn shipped_stems() -> usize {
+    let mut found = std::collections::BTreeSet::new();
+    let mut scan = |folder: std::path::PathBuf| {
+        if !folder.is_dir() {
+            return;
+        }
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            let extension = path
+                .extension()
+                .map(|value| value.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp") {
+                found.insert(path.file_stem().unwrap().to_string_lossy().into_owned());
+            }
+        }
+    };
+    scan(demo_dir().join("assets"));
+    for entry in std::fs::read_dir(demo_dir()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() && path.file_name().is_some_and(|name| name != "assets") {
+            scan(path.join("assets"));
+        }
+    }
+    found.len()
+}
+
 fn demo_dir() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -71,12 +101,22 @@ fn the_demo_restaurant_seeds_itself_offline_and_serves_a_configured_sale() {
     assert_eq!(report["activated"], true);
     assert_eq!(report["session_opened"], true);
     assert_eq!(report["channel"], CHANNEL);
-    // One file per stem: twelve dishes plus three option photographs, and
-    // the twenty-two retail packshots, because one installation seeds both
-    // verticals into one snapshot and tells them apart by channel (ADR 044).
-    // Category tiles and the attract banner reuse product stems, so they add
-    // none.
-    assert_eq!(report["assets_imported"].as_i64().unwrap(), 15 + 22);
+    // One file per stem, across every vertical this installation ships:
+    // one snapshot carries all of them and channel availability tells the
+    // lanes apart (ADR 044, ADR 047). Counted from the datasets rather than
+    // written down, so adding a brand does not make this a puzzle — the point
+    // is that the seed imports exactly what the shipped artwork holds, with
+    // nothing missing and nothing invented.
+    //
+    // Imported *plus* already present: the store is content-addressed, so two
+    // brands that happen to ship identical bytes import once.
+    let stems = shipped_stems();
+    assert_eq!(
+        report["assets_imported"].as_i64().unwrap()
+            + report["assets_already_present"].as_i64().unwrap(),
+        stems as i64,
+        "the seed imported something other than the artwork on disk"
+    );
 
     let client = client(&database, "tauri-pos");
 

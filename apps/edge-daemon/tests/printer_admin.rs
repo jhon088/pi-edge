@@ -42,13 +42,50 @@ fn a_configured_printer_survives_a_restart_of_the_runtime() {
         assert_eq!(before.reachable, None, "nothing to probe is not `false`");
 
         // Every model the build offers is real and complete.
-        assert_eq!(before.models.len(), 3);
+        assert_eq!(before.models.len(), 6);
         for model in &before.models {
             assert!(!model.label.is_empty());
             assert!(model.columns >= 24 && model.paper_mm > 0);
+            // What a model can report decides what a status screen may show,
+            // so every one has to declare it — and a device that reports no
+            // paper level can only ever be `UNKNOWN` (ADR 035).
+            assert!(
+                !model.paper_states.is_empty(),
+                "{} declares no paper states",
+                model.id
+            );
+            if model.reports_paper {
+                assert!(
+                    model.paper_states.contains(&"OUT".to_owned()),
+                    "{} says it reads paper but cannot report OUT",
+                    model.id
+                );
+            } else {
+                assert_eq!(
+                    model.paper_states,
+                    vec!["UNKNOWN".to_owned()],
+                    "{} promises a paper state it cannot read",
+                    model.id
+                );
+                assert!(
+                    !model.reports_jam,
+                    "{} cannot report a jam either",
+                    model.id
+                );
+            }
         }
         let ids: Vec<&str> = before.models.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, vec!["RPT004", "RPT008", "RPT015"]);
+        assert_eq!(
+            ids,
+            vec![
+                "RPT004",
+                "RPT008",
+                "RPT015",
+                "EPSON-EU30",
+                "EPSON-TM-T88VI",
+                "EPSON-TM-T82III"
+            ]
+        );
 
         let after = client
             .set_printer_settings(settings("PX_RECEIPT", true), None)

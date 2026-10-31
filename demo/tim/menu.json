@@ -1,0 +1,1846 @@
+{
+  "version": 1,
+  "vertical": "tim",
+  "channels": [
+    {
+      "channel_ref": "KIOSK-TIM",
+      "name": {
+        "default": "Tim Hortons",
+        "translations": {
+          "en": "Tim Hortons"
+        }
+      },
+      "default_availability": "OFFERED"
+    }
+  ],
+  "categories": [
+    {
+      "category_ref": "T-DESAYUNO",
+      "name": {
+        "default": "Desayunos",
+        "translations": {
+          "en": "Breakfast"
+        }
+      },
+      "display_order": 0,
+      "image": {
+        "content_hash": "file:croissant-hashbrown",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "T-PANADERIA",
+      "name": {
+        "default": "Donas y Panadería",
+        "translations": {
+          "en": "Donuts & bakery"
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:dona-honey-dip",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "T-CAFE",
+      "name": {
+        "default": "Café",
+        "translations": {
+          "en": "Coffee"
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:cafe-dark-roast",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    },
+    {
+      "category_ref": "T-FRIAS",
+      "name": {
+        "default": "Bebidas Frías",
+        "translations": {
+          "en": "Cold drinks"
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:iced-capp",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      }
+    }
+  ],
+  "products": [
+    {
+      "product_ref": "T-CROISSANT-HASH",
+      "sku": "T-CROISSANT-HASH",
+      "name": "Croissant + Papa Hashbrown",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 10400,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-BISCUIT-JAMON",
+      "sku": "T-BISCUIT-JAMON",
+      "name": "Biscuit — Jamón, Huevo y Queso",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 9200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-CROISSANT-SALCH",
+      "sku": "T-CROISSANT-SALCH",
+      "name": "Croissant — Salchicha, Huevo y Queso",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 7200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-DONA-HONEY",
+      "sku": "T-DONA-HONEY",
+      "name": "Dona Honey Dip",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3100,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-TIMBITS-10",
+      "sku": "T-TIMBITS-10",
+      "name": "Timbits — Paquete de 10",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 9440,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-CAFE-DARK",
+      "sku": "T-CAFE-DARK",
+      "name": "Café Dark Roast",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4700,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-CAFE-MEXICANO",
+      "sku": "T-CAFE-MEXICANO",
+      "name": "Café Mexicano",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 4200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-LATTE",
+      "sku": "T-LATTE",
+      "name": "Latte",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3800,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-VANILLA-LATTE",
+      "sku": "T-VANILLA-LATTE",
+      "name": "French Vanilla Latte",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3800,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-ICED-CAPP",
+      "sku": "T-ICED-CAPP",
+      "name": "Iced Capp Original",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 7500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-FRAPPE-CHOCO",
+      "sku": "T-FRAPPE-CHOCO",
+      "name": "Frappé Chocolate",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 6920,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-REFRESHER-JAM",
+      "sku": "T-REFRESHER-JAM",
+      "name": "Refresher Tasty Jamaica",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 7500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-QUENCHER-MORA",
+      "sku": "T-QUENCHER-MORA",
+      "name": "Quencher Moratonic",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 7500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-COMBO",
+      "sku": "T-X-COMBO",
+      "name": "Combo: café y hashbrown",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 3500,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-CREMA",
+      "sku": "T-X-CREMA",
+      "name": "Crema batida",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1000,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-DESLAC",
+      "sku": "T-X-DESLAC",
+      "name": "Leche deslactosada",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 600,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-GRANDE",
+      "sku": "T-X-GRANDE",
+      "name": "Tamaño grande",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 800,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-GRANDE-FRIA",
+      "sku": "T-X-GRANDE-FRIA",
+      "name": "Tamaño grande",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1000,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-SHOT",
+      "sku": "T-X-SHOT",
+      "name": "Shot extra de espresso",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1400,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    },
+    {
+      "product_ref": "T-X-VEGETAL",
+      "sku": "T-X-VEGETAL",
+      "name": "Leche vegetal",
+      "tax_profile": "IVA16",
+      "barcodes": [],
+      "prices": [
+        {
+          "price_book": "BASE",
+          "amount_minor": 1200,
+          "price_mode": "TAX_EXCLUSIVE"
+        }
+      ]
+    }
+  ],
+  "selection_groups": [
+    {
+      "group_id": "G-T-SIZE-T-CAFE-DARK",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-DARK",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "group_id": "G-T-SIZE-T-CAFE-MEXICANO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-MEXICANO",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 1
+    },
+    {
+      "group_id": "G-T-SIZE-T-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-LATTE",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 2
+    },
+    {
+      "group_id": "G-T-SIZE-T-VANILLA-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-VANILLA-LATTE",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 3
+    },
+    {
+      "group_id": "G-T-MILK-T-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-LATTE",
+      "name": {
+        "default": "Leche",
+        "translations": {
+          "en": "Leche"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 4
+    },
+    {
+      "group_id": "G-T-MILK-T-VANILLA-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-VANILLA-LATTE",
+      "name": {
+        "default": "Leche",
+        "translations": {
+          "en": "Leche"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 5
+    },
+    {
+      "group_id": "G-T-MILK-T-CAFE-MEXICANO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-MEXICANO",
+      "name": {
+        "default": "Leche",
+        "translations": {
+          "en": "Leche"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 6
+    },
+    {
+      "group_id": "G-T-SUGAR-T-CAFE-DARK",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-DARK",
+      "name": {
+        "default": "Azúcar",
+        "translations": {
+          "en": "Azúcar"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 7
+    },
+    {
+      "group_id": "G-T-SUGAR-T-CAFE-MEXICANO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-MEXICANO",
+      "name": {
+        "default": "Azúcar",
+        "translations": {
+          "en": "Azúcar"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 8
+    },
+    {
+      "group_id": "G-T-SUGAR-T-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-LATTE",
+      "name": {
+        "default": "Azúcar",
+        "translations": {
+          "en": "Azúcar"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 9
+    },
+    {
+      "group_id": "G-T-SUGAR-T-VANILLA-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-VANILLA-LATTE",
+      "name": {
+        "default": "Azúcar",
+        "translations": {
+          "en": "Azúcar"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 10
+    },
+    {
+      "group_id": "G-T-EXTRAS-T-CAFE-DARK",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-DARK",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 11
+    },
+    {
+      "group_id": "G-T-EXTRAS-T-CAFE-MEXICANO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CAFE-MEXICANO",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 12
+    },
+    {
+      "group_id": "G-T-EXTRAS-T-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-LATTE",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 13
+    },
+    {
+      "group_id": "G-T-EXTRAS-T-VANILLA-LATTE",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-VANILLA-LATTE",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 3,
+      "display_order": 14
+    },
+    {
+      "group_id": "G-T-SIZE-F-T-ICED-CAPP",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-ICED-CAPP",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 15
+    },
+    {
+      "group_id": "G-T-SIZE-F-T-FRAPPE-CHOCO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-FRAPPE-CHOCO",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 16
+    },
+    {
+      "group_id": "G-T-SIZE-F-T-REFRESHER-JAM",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-REFRESHER-JAM",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 17
+    },
+    {
+      "group_id": "G-T-SIZE-F-T-QUENCHER-MORA",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-QUENCHER-MORA",
+      "name": {
+        "default": "Tamaño",
+        "translations": {
+          "en": "Tamaño"
+        }
+      },
+      "min_quantity": 1,
+      "max_quantity": 1,
+      "display_order": 18
+    },
+    {
+      "group_id": "G-T-EXTRAS-F-T-ICED-CAPP",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-ICED-CAPP",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 19
+    },
+    {
+      "group_id": "G-T-EXTRAS-F-T-FRAPPE-CHOCO",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-FRAPPE-CHOCO",
+      "name": {
+        "default": "Extras",
+        "translations": {
+          "en": "Extras"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 20
+    },
+    {
+      "group_id": "G-T-COMBO-T-CROISSANT-HASH",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CROISSANT-HASH",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 21
+    },
+    {
+      "group_id": "G-T-COMBO-T-BISCUIT-JAMON",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-BISCUIT-JAMON",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 22
+    },
+    {
+      "group_id": "G-T-COMBO-T-CROISSANT-SALCH",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CROISSANT-SALCH",
+      "name": {
+        "default": "¿Lo hacemos combo?",
+        "translations": {
+          "en": "¿Lo hacemos combo?"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 1,
+      "display_order": 23
+    },
+    {
+      "group_id": "G-T-REMOVE-T-CROISSANT-HASH",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CROISSANT-HASH",
+      "name": {
+        "default": "Quitar ingredientes",
+        "translations": {
+          "en": "Quitar ingredientes"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 24
+    },
+    {
+      "group_id": "G-T-REMOVE-T-BISCUIT-JAMON",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-BISCUIT-JAMON",
+      "name": {
+        "default": "Quitar ingredientes",
+        "translations": {
+          "en": "Quitar ingredientes"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 25
+    },
+    {
+      "group_id": "G-T-REMOVE-T-CROISSANT-SALCH",
+      "owner_kind": "PRODUCT",
+      "owner_ref": "T-CROISSANT-SALCH",
+      "name": {
+        "default": "Quitar ingredientes",
+        "translations": {
+          "en": "Quitar ingredientes"
+        }
+      },
+      "min_quantity": 0,
+      "max_quantity": 2,
+      "display_order": 26
+    }
+  ],
+  "selection_options": [
+    {
+      "option_id": "O-T-MED-T-CAFE-DARK",
+      "group_id": "G-T-SIZE-T-CAFE-DARK",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-T-CAFE-DARK",
+      "group_id": "G-T-SIZE-T-CAFE-DARK",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE"
+    },
+    {
+      "option_id": "O-T-MED-T-CAFE-MEXICANO",
+      "group_id": "G-T-SIZE-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-T-CAFE-MEXICANO",
+      "group_id": "G-T-SIZE-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE"
+    },
+    {
+      "option_id": "O-T-MED-T-LATTE",
+      "group_id": "G-T-SIZE-T-LATTE",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-T-LATTE",
+      "group_id": "G-T-SIZE-T-LATTE",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE"
+    },
+    {
+      "option_id": "O-T-MED-T-VANILLA-LATTE",
+      "group_id": "G-T-SIZE-T-VANILLA-LATTE",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-T-VANILLA-LATTE",
+      "group_id": "G-T-SIZE-T-VANILLA-LATTE",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE"
+    },
+    {
+      "option_id": "O-T-ENTERA-T-LATTE",
+      "group_id": "G-T-MILK-T-LATTE",
+      "name": {
+        "default": "Entera",
+        "translations": {
+          "en": "Entera"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-DESLAC-T-LATTE",
+      "group_id": "G-T-MILK-T-LATTE",
+      "name": {
+        "default": "Deslactosada",
+        "translations": {
+          "en": "Deslactosada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-DESLAC"
+    },
+    {
+      "option_id": "O-T-VEGETAL-T-LATTE",
+      "group_id": "G-T-MILK-T-LATTE",
+      "name": {
+        "default": "Vegetal",
+        "translations": {
+          "en": "Vegetal"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "T-X-VEGETAL"
+    },
+    {
+      "option_id": "O-T-ENTERA-T-VANILLA-LATTE",
+      "group_id": "G-T-MILK-T-VANILLA-LATTE",
+      "name": {
+        "default": "Entera",
+        "translations": {
+          "en": "Entera"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-DESLAC-T-VANILLA-LATTE",
+      "group_id": "G-T-MILK-T-VANILLA-LATTE",
+      "name": {
+        "default": "Deslactosada",
+        "translations": {
+          "en": "Deslactosada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-DESLAC"
+    },
+    {
+      "option_id": "O-T-VEGETAL-T-VANILLA-LATTE",
+      "group_id": "G-T-MILK-T-VANILLA-LATTE",
+      "name": {
+        "default": "Vegetal",
+        "translations": {
+          "en": "Vegetal"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "T-X-VEGETAL"
+    },
+    {
+      "option_id": "O-T-ENTERA-T-CAFE-MEXICANO",
+      "group_id": "G-T-MILK-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Entera",
+        "translations": {
+          "en": "Entera"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-DESLAC-T-CAFE-MEXICANO",
+      "group_id": "G-T-MILK-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Deslactosada",
+        "translations": {
+          "en": "Deslactosada"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-DESLAC"
+    },
+    {
+      "option_id": "O-T-VEGETAL-T-CAFE-MEXICANO",
+      "group_id": "G-T-MILK-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Vegetal",
+        "translations": {
+          "en": "Vegetal"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 2,
+      "component_product_ref": "T-X-VEGETAL"
+    },
+    {
+      "option_id": "O-T-SINAZ-T-CAFE-DARK",
+      "group_id": "G-T-SUGAR-T-CAFE-DARK",
+      "name": {
+        "default": "Sin azúcar",
+        "translations": {
+          "en": "Sin azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-POCA-T-CAFE-DARK",
+      "group_id": "G-T-SUGAR-T-CAFE-DARK",
+      "name": {
+        "default": "Poca azúcar",
+        "translations": {
+          "en": "Poca azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-T-SINAZ-T-CAFE-MEXICANO",
+      "group_id": "G-T-SUGAR-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Sin azúcar",
+        "translations": {
+          "en": "Sin azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-POCA-T-CAFE-MEXICANO",
+      "group_id": "G-T-SUGAR-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Poca azúcar",
+        "translations": {
+          "en": "Poca azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-T-SINAZ-T-LATTE",
+      "group_id": "G-T-SUGAR-T-LATTE",
+      "name": {
+        "default": "Sin azúcar",
+        "translations": {
+          "en": "Sin azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-POCA-T-LATTE",
+      "group_id": "G-T-SUGAR-T-LATTE",
+      "name": {
+        "default": "Poca azúcar",
+        "translations": {
+          "en": "Poca azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-T-SINAZ-T-VANILLA-LATTE",
+      "group_id": "G-T-SUGAR-T-VANILLA-LATTE",
+      "name": {
+        "default": "Sin azúcar",
+        "translations": {
+          "en": "Sin azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-POCA-T-VANILLA-LATTE",
+      "group_id": "G-T-SUGAR-T-VANILLA-LATTE",
+      "name": {
+        "default": "Poca azúcar",
+        "translations": {
+          "en": "Poca azúcar"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-T-SHOT-T-CAFE-DARK",
+      "group_id": "G-T-EXTRAS-T-CAFE-DARK",
+      "name": {
+        "default": "Shot extra de espresso",
+        "translations": {
+          "en": "Shot extra de espresso"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-SHOT"
+    },
+    {
+      "option_id": "O-T-CREMA-T-CAFE-DARK",
+      "group_id": "G-T-EXTRAS-T-CAFE-DARK",
+      "name": {
+        "default": "Crema batida",
+        "translations": {
+          "en": "Crema batida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-CREMA"
+    },
+    {
+      "option_id": "O-T-SHOT-T-CAFE-MEXICANO",
+      "group_id": "G-T-EXTRAS-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Shot extra de espresso",
+        "translations": {
+          "en": "Shot extra de espresso"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-SHOT"
+    },
+    {
+      "option_id": "O-T-CREMA-T-CAFE-MEXICANO",
+      "group_id": "G-T-EXTRAS-T-CAFE-MEXICANO",
+      "name": {
+        "default": "Crema batida",
+        "translations": {
+          "en": "Crema batida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-CREMA"
+    },
+    {
+      "option_id": "O-T-SHOT-T-LATTE",
+      "group_id": "G-T-EXTRAS-T-LATTE",
+      "name": {
+        "default": "Shot extra de espresso",
+        "translations": {
+          "en": "Shot extra de espresso"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-SHOT"
+    },
+    {
+      "option_id": "O-T-CREMA-T-LATTE",
+      "group_id": "G-T-EXTRAS-T-LATTE",
+      "name": {
+        "default": "Crema batida",
+        "translations": {
+          "en": "Crema batida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-CREMA"
+    },
+    {
+      "option_id": "O-T-SHOT-T-VANILLA-LATTE",
+      "group_id": "G-T-EXTRAS-T-VANILLA-LATTE",
+      "name": {
+        "default": "Shot extra de espresso",
+        "translations": {
+          "en": "Shot extra de espresso"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-SHOT"
+    },
+    {
+      "option_id": "O-T-CREMA-T-VANILLA-LATTE",
+      "group_id": "G-T-EXTRAS-T-VANILLA-LATTE",
+      "name": {
+        "default": "Crema batida",
+        "translations": {
+          "en": "Crema batida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-CREMA"
+    },
+    {
+      "option_id": "O-T-MED-F-T-ICED-CAPP",
+      "group_id": "G-T-SIZE-F-T-ICED-CAPP",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-F-T-ICED-CAPP",
+      "group_id": "G-T-SIZE-F-T-ICED-CAPP",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE-FRIA"
+    },
+    {
+      "option_id": "O-T-MED-F-T-FRAPPE-CHOCO",
+      "group_id": "G-T-SIZE-F-T-FRAPPE-CHOCO",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-F-T-FRAPPE-CHOCO",
+      "group_id": "G-T-SIZE-F-T-FRAPPE-CHOCO",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE-FRIA"
+    },
+    {
+      "option_id": "O-T-MED-F-T-REFRESHER-JAM",
+      "group_id": "G-T-SIZE-F-T-REFRESHER-JAM",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-F-T-REFRESHER-JAM",
+      "group_id": "G-T-SIZE-F-T-REFRESHER-JAM",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE-FRIA"
+    },
+    {
+      "option_id": "O-T-MED-F-T-QUENCHER-MORA",
+      "group_id": "G-T-SIZE-F-T-QUENCHER-MORA",
+      "name": {
+        "default": "Mediano",
+        "translations": {
+          "en": "Mediano"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 1,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-GDE-F-T-QUENCHER-MORA",
+      "group_id": "G-T-SIZE-F-T-QUENCHER-MORA",
+      "name": {
+        "default": "Grande",
+        "translations": {
+          "en": "Grande"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-GRANDE-FRIA"
+    },
+    {
+      "option_id": "O-T-SHOT-F-T-ICED-CAPP",
+      "group_id": "G-T-EXTRAS-F-T-ICED-CAPP",
+      "name": {
+        "default": "Shot extra de espresso",
+        "translations": {
+          "en": "Shot extra de espresso"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-SHOT"
+    },
+    {
+      "option_id": "O-T-CREMA-F-T-ICED-CAPP",
+      "group_id": "G-T-EXTRAS-F-T-ICED-CAPP",
+      "name": {
+        "default": "Crema batida",
+        "translations": {
+          "en": "Crema batida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-CREMA"
+    },
+    {
+      "option_id": "O-T-SHOT-F-T-FRAPPE-CHOCO",
+      "group_id": "G-T-EXTRAS-F-T-FRAPPE-CHOCO",
+      "name": {
+        "default": "Shot extra de espresso",
+        "translations": {
+          "en": "Shot extra de espresso"
+        }
+      },
+      "max_quantity": 2,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-SHOT"
+    },
+    {
+      "option_id": "O-T-CREMA-F-T-FRAPPE-CHOCO",
+      "group_id": "G-T-EXTRAS-F-T-FRAPPE-CHOCO",
+      "name": {
+        "default": "Crema batida",
+        "translations": {
+          "en": "Crema batida"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1,
+      "component_product_ref": "T-X-CREMA"
+    },
+    {
+      "option_id": "O-T-COMBO-T-CROISSANT-HASH",
+      "group_id": "G-T-COMBO-T-CROISSANT-HASH",
+      "name": {
+        "default": "Agrega café y hashbrown",
+        "translations": {
+          "en": "Agrega café y hashbrown"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-COMBO"
+    },
+    {
+      "option_id": "O-T-COMBO-T-BISCUIT-JAMON",
+      "group_id": "G-T-COMBO-T-BISCUIT-JAMON",
+      "name": {
+        "default": "Agrega café y hashbrown",
+        "translations": {
+          "en": "Agrega café y hashbrown"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-COMBO"
+    },
+    {
+      "option_id": "O-T-COMBO-T-CROISSANT-SALCH",
+      "group_id": "G-T-COMBO-T-CROISSANT-SALCH",
+      "name": {
+        "default": "Agrega café y hashbrown",
+        "translations": {
+          "en": "Agrega café y hashbrown"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0,
+      "component_product_ref": "T-X-COMBO"
+    },
+    {
+      "option_id": "O-T-NOQUESO-T-CROISSANT-HASH",
+      "group_id": "G-T-REMOVE-T-CROISSANT-HASH",
+      "name": {
+        "default": "Sin queso",
+        "translations": {
+          "en": "Sin queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-NOSALSA-T-CROISSANT-HASH",
+      "group_id": "G-T-REMOVE-T-CROISSANT-HASH",
+      "name": {
+        "default": "Sin salsa",
+        "translations": {
+          "en": "Sin salsa"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-T-NOQUESO-T-BISCUIT-JAMON",
+      "group_id": "G-T-REMOVE-T-BISCUIT-JAMON",
+      "name": {
+        "default": "Sin queso",
+        "translations": {
+          "en": "Sin queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-NOSALSA-T-BISCUIT-JAMON",
+      "group_id": "G-T-REMOVE-T-BISCUIT-JAMON",
+      "name": {
+        "default": "Sin salsa",
+        "translations": {
+          "en": "Sin salsa"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    },
+    {
+      "option_id": "O-T-NOQUESO-T-CROISSANT-SALCH",
+      "group_id": "G-T-REMOVE-T-CROISSANT-SALCH",
+      "name": {
+        "default": "Sin queso",
+        "translations": {
+          "en": "Sin queso"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 0
+    },
+    {
+      "option_id": "O-T-NOSALSA-T-CROISSANT-SALCH",
+      "group_id": "G-T-REMOVE-T-CROISSANT-SALCH",
+      "name": {
+        "default": "Sin salsa",
+        "translations": {
+          "en": "Sin salsa"
+        }
+      },
+      "max_quantity": 1,
+      "default_quantity": 0,
+      "display_order": 1
+    }
+  ],
+  "presentation": [
+    {
+      "product_ref": "T-CROISSANT-HASH",
+      "category_ref": "T-DESAYUNO",
+      "display_name": {
+        "default": "Croissant + Papa Hashbrown",
+        "translations": {
+          "en": "Croissant + Papa Hashbrown"
+        }
+      },
+      "display_order": 1,
+      "image": {
+        "content_hash": "file:croissant-hashbrown",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-CAFE-DARK",
+        "T-DONA-HONEY",
+        "T-ICED-CAPP"
+      ]
+    },
+    {
+      "product_ref": "T-BISCUIT-JAMON",
+      "category_ref": "T-DESAYUNO",
+      "display_name": {
+        "default": "Biscuit — Jamón, Huevo y Queso",
+        "translations": {
+          "en": "Biscuit — Jamón, Huevo y Queso"
+        }
+      },
+      "display_order": 2,
+      "image": {
+        "content_hash": "file:biscuit-jamon",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-CAFE-MEXICANO",
+        "T-DONA-HONEY",
+        "T-TIMBITS-10"
+      ]
+    },
+    {
+      "product_ref": "T-CROISSANT-SALCH",
+      "category_ref": "T-DESAYUNO",
+      "display_name": {
+        "default": "Croissant — Salchicha, Huevo y Queso",
+        "translations": {
+          "en": "Croissant — Salchicha, Huevo y Queso"
+        }
+      },
+      "display_order": 3,
+      "image": {
+        "content_hash": "file:croissant-salchicha",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-LATTE",
+        "T-DONA-HONEY",
+        "T-FRAPPE-CHOCO"
+      ]
+    },
+    {
+      "product_ref": "T-DONA-HONEY",
+      "category_ref": "T-PANADERIA",
+      "display_name": {
+        "default": "Dona Honey Dip",
+        "translations": {
+          "en": "Dona Honey Dip"
+        }
+      },
+      "display_order": 4,
+      "image": {
+        "content_hash": "file:dona-honey-dip",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-CAFE-DARK",
+        "T-LATTE",
+        "T-ICED-CAPP"
+      ]
+    },
+    {
+      "product_ref": "T-TIMBITS-10",
+      "category_ref": "T-PANADERIA",
+      "display_name": {
+        "default": "Timbits — Paquete de 10",
+        "translations": {
+          "en": "Timbits — Paquete de 10"
+        }
+      },
+      "display_order": 5,
+      "image": {
+        "content_hash": "file:timbits-10",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-CAFE-DARK",
+        "T-CAFE-MEXICANO",
+        "T-FRAPPE-CHOCO"
+      ]
+    },
+    {
+      "product_ref": "T-CAFE-DARK",
+      "category_ref": "T-CAFE",
+      "display_name": {
+        "default": "Café Dark Roast",
+        "translations": {
+          "en": "Café Dark Roast"
+        }
+      },
+      "display_order": 6,
+      "image": {
+        "content_hash": "file:cafe-dark-roast",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-CROISSANT-HASH",
+        "T-TIMBITS-10"
+      ]
+    },
+    {
+      "product_ref": "T-CAFE-MEXICANO",
+      "category_ref": "T-CAFE",
+      "display_name": {
+        "default": "Café Mexicano",
+        "translations": {
+          "en": "Café Mexicano"
+        }
+      },
+      "display_order": 7,
+      "image": {
+        "content_hash": "file:cafe-mexicano",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-BISCUIT-JAMON",
+        "T-TIMBITS-10"
+      ]
+    },
+    {
+      "product_ref": "T-LATTE",
+      "category_ref": "T-CAFE",
+      "display_name": {
+        "default": "Latte",
+        "translations": {
+          "en": "Latte"
+        }
+      },
+      "display_order": 8,
+      "image": {
+        "content_hash": "file:latte",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-CROISSANT-SALCH",
+        "T-TIMBITS-10"
+      ]
+    },
+    {
+      "product_ref": "T-VANILLA-LATTE",
+      "category_ref": "T-CAFE",
+      "display_name": {
+        "default": "French Vanilla Latte",
+        "translations": {
+          "en": "French Vanilla Latte"
+        }
+      },
+      "display_order": 9,
+      "image": {
+        "content_hash": "file:french-vanilla-latte",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-CROISSANT-HASH",
+        "T-TIMBITS-10"
+      ]
+    },
+    {
+      "product_ref": "T-ICED-CAPP",
+      "category_ref": "T-FRIAS",
+      "display_name": {
+        "default": "Iced Capp Original",
+        "translations": {
+          "en": "Iced Capp Original"
+        }
+      },
+      "display_order": 10,
+      "image": {
+        "content_hash": "file:iced-capp",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-TIMBITS-10",
+        "T-CROISSANT-HASH"
+      ]
+    },
+    {
+      "product_ref": "T-FRAPPE-CHOCO",
+      "category_ref": "T-FRIAS",
+      "display_name": {
+        "default": "Frappé Chocolate",
+        "translations": {
+          "en": "Frappé Chocolate"
+        }
+      },
+      "display_order": 11,
+      "image": {
+        "content_hash": "file:frappe-chocolate",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-TIMBITS-10",
+        "T-BISCUIT-JAMON"
+      ]
+    },
+    {
+      "product_ref": "T-REFRESHER-JAM",
+      "category_ref": "T-FRIAS",
+      "display_name": {
+        "default": "Refresher Tasty Jamaica",
+        "translations": {
+          "en": "Refresher Tasty Jamaica"
+        }
+      },
+      "display_order": 12,
+      "image": {
+        "content_hash": "file:refresher-jamaica",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-CROISSANT-HASH",
+        "T-TIMBITS-10"
+      ]
+    },
+    {
+      "product_ref": "T-QUENCHER-MORA",
+      "category_ref": "T-FRIAS",
+      "display_name": {
+        "default": "Quencher Moratonic",
+        "translations": {
+          "en": "Quencher Moratonic"
+        }
+      },
+      "display_order": 13,
+      "image": {
+        "content_hash": "file:quencher-moratonic",
+        "media_type": "image/jpeg",
+        "byte_size": 0
+      },
+      "recommended_product_refs": [
+        "T-DONA-HONEY",
+        "T-BISCUIT-JAMON",
+        "T-TIMBITS-10"
+      ]
+    }
+  ],
+  "availability": [
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-BURGERS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-COMBOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-DRINKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "C-SIDES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-BEBIDAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-CARNES",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-DESPENSA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-FRUTAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-HOGAR",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-LACTEOS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-PANADERIA",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "R-SNACKS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-BEBIDAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-ENSALADAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-PIZZAS",
+      "state": "WITHHELD"
+    },
+    {
+      "channel_ref": "KIOSK-TIM",
+      "target_kind": "CATEGORY",
+      "target_ref": "S-REBANADAS",
+      "state": "WITHHELD"
+    }
+  ]
+}

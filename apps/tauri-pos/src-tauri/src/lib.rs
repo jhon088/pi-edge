@@ -29,9 +29,12 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 mod bootstrap;
+mod cashgenic;
 mod kiosk;
 mod retail;
 mod scanner;
+mod showroom;
+mod status_endpoint;
 
 /// Event name the webview listens on.
 const STATE_CHANGED_EVENT: &str = "edge://state-changed";
@@ -399,6 +402,12 @@ pub fn run() {
                 endpoint = %bridge.client.connection().endpoint,
                 "PX Kiosk starting"
             );
+            // The floor monitor's endpoint, sharing this one client. Started
+            // before the bridge is handed over, because `manage` moves it.
+            status_endpoint::serve(app.handle().clone(), Arc::clone(&bridge.client));
+            // Health of the note acceptor, checked off the request path so a
+            // status poll never waits on a peripheral.
+            cashgenic::watch(app.handle().clone());
             app.manage(bridge);
             forward_core_events(app.handle());
             Ok(())
@@ -443,7 +452,19 @@ pub fn run() {
             kiosk::kiosk_pay,
             kiosk::kiosk_receipt,
             kiosk::kiosk_asset,
-            retail::kiosk_preferences,
+            showroom::kiosk_preferences,
+            showroom::set_identity,
+            showroom::set_kiosk_open,
+            showroom::day_tally,
+            showroom::record_sale,
+            showroom::close_day,
+            showroom::open_day_command,
+            cashgenic::cashgenic_save,
+            cashgenic::cashgenic_probe,
+            cashgenic::cashgenic_status,
+            cashgenic::cashgenic_pay,
+            cashgenic::cashgenic_cancel,
+            cashgenic::cashgenic_close,
             retail::set_vertical_setting,
             retail::set_camera_preview,
             retail::retail_scan_key,

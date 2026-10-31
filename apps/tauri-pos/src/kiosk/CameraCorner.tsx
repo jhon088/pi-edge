@@ -16,18 +16,16 @@ import {
   shouldStream,
   type CameraStatus,
   type OpenCamera,
+  type PreviewStream,
 } from "./camera";
 
 export function CameraCorner({
   enabled,
-  vertical,
   hidden = false,
   open,
   onStatus,
 }: {
   enabled: boolean;
-  /** The lane this screen is. Only retail has a preview. */
-  vertical: string;
   /**
    * Out of sight on screens it would sit on top of — the product grid, where
    * a corner panel would cover something for sale. The stream is **not**
@@ -41,12 +39,23 @@ export function CameraCorner({
 }) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState<CameraStatus>("off");
+  /**
+   * The stream, held in state rather than written straight to the element.
+   *
+   * This is the whole reason the preview used to come up blank: `start()`
+   * resolves, the status is set, and the `<video>` does not exist yet —
+   * React has not re-rendered. Assigning `srcObject` in that same tick wrote
+   * to a `null` ref and the stream was never attached. So the stream becomes
+   * state, the element renders, and a second effect connects the two.
+   */
+  const [stream, setStream] = useState<PreviewStream | null>(null);
 
   useEffect(() => {
-    if (!shouldStream(enabled, vertical)) {
+    if (!shouldStream(enabled)) {
       // Nothing is requested — so no permission is asked for — when the
-      // preview is off or this is not the lane that has one.
+      // preview is off or this is not a lane that has one.
       setStatus("off");
+      setStream(null);
       onStatus?.("off");
       return;
     }
@@ -54,27 +63,36 @@ export function CameraCorner({
     let live = true;
     void preview.start().then((answer) => {
       if (!live) {
-        // Unmounted while the permission prompt was up: `start` already closed
-        // what arrived, and this only keeps the screen from reacting to it.
+        // Unmounted while the permission prompt was up: `start` already
+        // closed what arrived, and this only keeps the screen from reacting.
         return;
       }
       setStatus(answer);
+      setStream(preview.current());
       onStatus?.(answer);
-      const element = video.current;
-      const stream = preview.current();
-      if (element && stream) {
-        element.srcObject = stream as unknown as MediaStream;
-      }
     });
     return () => {
       live = false;
-      // Every way out of this lane ends here: disabled, switched to the
-      // restaurant, or the window closing. Stopping the tracks is what puts
-      // the camera light out; the element is being unmounted with it, so
-      // there is nothing to detach the stream from.
+      setStream(null);
+      // Every way out ends here: disabled, switched lane, or the window
+      // closing. Stopping the tracks is what puts the camera light out.
       preview.stop();
     };
-  }, [enabled, vertical, open, onStatus]);
+  }, [enabled, open, onStatus]);
+
+  // The element exists by now, because the render that created it is the one
+  // that put the stream in state.
+  useEffect(() => {
+    const element = video.current;
+    if (!element) {
+      return;
+    }
+    element.srcObject = (stream as MediaStream | null) ?? null;
+    if (stream) {
+      // Autoplay is best-effort: a refusal leaves a still frame, not a crash.
+      void element.play().catch(() => undefined);
+    }
+  }, [stream]);
 
   if (status !== "live" && status !== "starting") {
     // A refused or missing camera is not an error a customer should see: the

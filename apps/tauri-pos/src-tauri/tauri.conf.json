@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
+      "csp": "default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
     }
   },
   "bundle": {
@@ -40,7 +40,11 @@
       "../../../demo/menu.json": "demo/menu.json",
       "../../../demo/assets/": "demo/assets/",
       "../../../demo/retail/menu.json": "demo/retail/menu.json",
-      "../../../demo/retail/assets/": "demo/retail/assets/"
+      "../../../demo/retail/assets/": "demo/retail/assets/",
+      "../../../demo/tim/menu.json": "demo/tim/menu.json",
+      "../../../demo/tim/assets/": "demo/tim/assets/",
+      "../../../demo/sbarro/menu.json": "demo/sbarro/menu.json",
+      "../../../demo/sbarro/assets/": "demo/sbarro/assets/"
     },
     "targets": "all"
   }
