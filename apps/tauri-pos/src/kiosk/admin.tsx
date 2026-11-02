@@ -19,6 +19,7 @@ import {
   probeCashGenic,
   resetDemo,
   saveCashGenic,
+  printerStatus,
   savePrinterSettings,
   setCameraPreview,
   setIdentity,
@@ -41,6 +42,7 @@ import type {
   KioskPreferences,
   PrinterConfiguration,
   PrinterSettings,
+  PrinterStatus,
   Vertical,
 } from "./types";
 
@@ -82,6 +84,8 @@ export function AdminScreen({
   /** The figures shown before "cerrar día" is confirmed. */
   const [closing, setClosing] = useState(false);
   const [draft, setDraft] = useState<PrinterSettings | null>(null);
+  /** What the printer last said about itself. */
+  const [paper, setPaper] = useState<PrinterStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note>(null);
 
@@ -92,6 +96,15 @@ export function AdminScreen({
       setDraft(value.settings);
     } catch (reason) {
       setNote({ tone: "bad", text: describe(reason) });
+    }
+    // The cached answer: the core refreshes it every fifteen seconds, and an
+    // operator who wants it asked *now* has a button for that.
+    try {
+      setPaper(await printerStatus(false));
+    } catch {
+      // A runtime that drives no printer cannot answer, and the panel says
+      // "sin canal de estado" rather than showing an error for it.
+      setPaper(null);
     }
   }, []);
 
@@ -226,6 +239,29 @@ export function AdminScreen({
     } finally {
       setBusy(false);
       void load();
+    }
+  };
+
+  /** Ask the printer itself, now. The "revisar impresora" button. */
+  const askThePrinter = async () => {
+    setBusy(true);
+    try {
+      const fresh = await printerStatus(true);
+      setPaper(fresh);
+      setNote(
+        fresh.blocks_payment
+          ? {
+              tone: "bad",
+              text:
+                fresh.status_error ??
+                "La impresora no está lista; el kiosko no cobrará.",
+            }
+          : { tone: "ok", text: "La impresora está lista." },
+      );
+    } catch (reason) {
+      setNote({ tone: "bad", text: describe(reason) });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -793,6 +829,114 @@ export function AdminScreen({
                 </select>
               </div>
 
+              {(() => {
+                // Which of the three status channels this printer is on, and
+                // what each one can actually tell us. Offered as a choice
+                // rather than a free-text address because "does my printer
+                // have a bidirectional channel" is not a question to put to
+                // whoever is setting up a stand — the host already knows
+                // which USB devices are readable.
+                const channel = draft.status_channel.trim();
+                const kind = channel === ""
+                  ? "spooler"
+                  : channel.startsWith("usb")
+                    ? "usb"
+                    : "net";
+                const devices = config.status_devices;
+                const picked = kind === "usb"
+                  ? (channel.startsWith("usb:") ? channel.slice(4) : "")
+                  : "";
+                return (
+                  <>
+                    <div className="k-field">
+                      <span className="k-field__label">Estado de la impresora</span>
+                      <select
+                        className="k-select"
+                        value={kind}
+                        disabled={!draft.enabled}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          edit({
+                            status_channel:
+                              next === "usb" ? "usb" : next === "net" ? "" : "",
+                          });
+                          // "Red" starts empty on purpose: an address has to
+                          // be typed, and an empty one is the spooler — so
+                          // the hint below says so until it is filled in.
+                        }}
+                      >
+                        <option value="spooler">
+                          Windows (cola de impresión) — sin DLE EOT
+                        </option>
+                        <option value="usb">USB directo — DLE EOT</option>
+                        <option value="net">Red — DLE EOT</option>
+                      </select>
+                      <span className="k-field__hint">
+                        {kind === "usb"
+                          ? devices.length === 0
+                            ? "Este equipo no expone ninguna impresora USB legible. Conéctala y vuelve a abrir Admin."
+                            : `${devices.length} impresora(s) USB legible(s). Se le pregunta a la impresora directamente.`
+                          : kind === "net"
+                            ? "Se le pregunta a la impresora por su propio socket, el mismo por el que imprime."
+                            : "Windows avisa de papel agotado, tapa abierta y fuera de línea, pero no de papel por acabarse. Una cola de impresión no puede devolver un byte DLE EOT."}
+                      </span>
+                    </div>
+
+                    {kind === "usb" && devices.length > 1 ? (
+                      <div className="k-field">
+                        <span className="k-field__label">¿Cuál USB?</span>
+                        <select
+                          className="k-select"
+                          value={picked}
+                          disabled={!draft.enabled}
+                          onChange={(event) =>
+                            edit({
+                              status_channel: event.target.value
+                                ? `usb:${event.target.value}`
+                                : "usb",
+                            })
+                          }
+                        >
+                          <option value="">Selecciona una…</option>
+                          {devices.map((device) => (
+                            <option key={device} value={device}>
+                              {device}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="k-field__hint">
+                          Hay más de una. Con dos impresoras y ninguna elegida
+                          no se adivina: se reportaría el papel de la otra.
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {kind === "net" ? (
+                      <div className="k-field">
+                        <span className="k-field__label">Dirección</span>
+                        <input
+                          className="k-input"
+                          type="text"
+                          inputMode="url"
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder="192.168.88.50:9100"
+                          value={channel.startsWith("usb") ? "" : channel}
+                          disabled={!draft.enabled}
+                          onChange={(event) =>
+                            edit({ status_channel: event.target.value })
+                          }
+                        />
+                        <span className="k-field__hint">
+                          `host` o `host:puerto`. Sin puerto se usa 9100.
+                        </span>
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
+
               <label className="k-field k-field--switch">
                 <input
                   type="checkbox"
@@ -811,6 +955,14 @@ export function AdminScreen({
               </label>
 
               <div className="k-panel__foot">
+                <button
+                  type="button"
+                  className="k-btn k-btn--ghost"
+                  disabled={busy || !config.settings.enabled}
+                  onClick={() => void askThePrinter()}
+                >
+                  Revisar impresora
+                </button>
                 <button
                   type="button"
                   className="k-btn k-btn--ghost"
@@ -838,6 +990,96 @@ export function AdminScreen({
                   {note.text}
                 </p>
               ) : null}
+
+              {(() => {
+                // What the printer itself says, and what the kiosk will do
+                // about it. Shown here because this is the screen somebody is
+                // standing at when a lane has stopped taking money.
+                const LEVELS: Record<string, string> = {
+                  OK: "Papel OK",
+                  NEAR_END: "Papel por acabarse",
+                  END: "Sin papel",
+                  UNKNOWN: "Papel desconocido",
+                };
+                const STATES: Record<string, string> = {
+                  ONLINE: "En línea",
+                  OFFLINE: "Fuera de línea",
+                  ERROR: "Con error",
+                  NO_RESPONSE: "No responde",
+                  UNKNOWN: "Sin respuesta todavía",
+                };
+                const SOURCES: Record<string, string> = {
+                  DLE_EOT: "la impresora (DLE EOT)",
+                  SPOOLER: "Windows (cola de impresión)",
+                  NONE: "nadie",
+                };
+                const faults = paper
+                  ? [
+                      paper.cover_open ? "tapa abierta" : null,
+                      paper.jammed ? "atasco" : null,
+                      paper.cutter_error ? "cutter" : null,
+                      paper.unrecoverable_error ? "error no recuperable" : null,
+                    ].filter(Boolean)
+                  : [];
+                return (
+                  <>
+                    <dl className="k-admin__figures">
+                      <div>
+                        <dt>Estado</dt>
+                        <dd style={{ fontSize: 17 }}>
+                          {paper ? (STATES[paper.state] ?? paper.state) : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Papel</dt>
+                        <dd style={{ fontSize: 17 }}>
+                          {paper ? (LEVELS[paper.paper] ?? paper.paper) : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Lo reporta</dt>
+                        <dd style={{ fontSize: 17 }}>
+                          {paper
+                            ? (SOURCES[paper.status_source] ??
+                              paper.status_source)
+                            : "nadie"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cobro</dt>
+                        <dd style={{ fontSize: 17 }}>
+                          {paper?.blocks_payment ? "BLOQUEADO" : "permitido"}
+                        </dd>
+                      </div>
+                    </dl>
+                    {faults.length > 0 ? (
+                      <p className="k-admin__note k-admin__note--bad">
+                        {faults.join(" · ")}
+                        {paper?.status_error ? ` — ${paper.status_error}` : ""}
+                      </p>
+                    ) : null}
+                    {paper?.blocks_payment ? (
+                      <p className="k-admin__note k-admin__note--bad">
+                        El kiosko no iniciará un cobro hasta que esto se
+                        resuelva: nadie debe pagar por un ticket que no va a
+                        salir.
+                      </p>
+                    ) : null}
+                    {paper && paper.paper === "NEAR_END" ? (
+                      <p className="k-admin__note">
+                        Queda poco papel. Las ventas siguen; cambia el rollo
+                        cuando puedas.
+                      </p>
+                    ) : null}
+                    {paper && paper.status_source === "NONE" ? (
+                      <p className="k-field__hint">
+                        Esta impresora no puede informar de su estado, así que
+                        el kiosko no bloqueará ningún cobro por ella.
+                      </p>
+                    ) : null}
+                  </>
+                );
+              })()}
 
               {(() => {
                 // What the chosen model can actually tell us. Shown because

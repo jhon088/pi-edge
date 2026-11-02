@@ -5,11 +5,31 @@
 //! empty, no age verification, no device administration — a demo takes notes
 //! and gives change, and everything else is somebody's production problem.
 //!
-//! The device sits on the local network and speaks plain HTTP, so this is a
-//! few lines of `std::net` rather than a dependency: one request, one
-//! response, a read timeout, and `serde_json` for the body. Nothing is
-//! retried. If the machine does not answer, cash is simply not available and
-//! the screen says so.
+//! The device sits on the local network and serves its API **over TLS** on
+//! 44333 with a certificate it signed itself, which is why the first version
+//! of this module never worked on the stand: it wrote plain HTTP bytes at a
+//! TLS listener and read back a handshake it could not parse. So the request
+//! is still written by hand — one request, one response, a read timeout — but
+//! it goes through `rustls`, and **only** through `rustls`: the unit on the
+//! bench serves HTTPS on 44333, so there is no plain-HTTP path to keep working
+//! for a device nobody has.
+//!
+//! ```text
+//! POST /token                    form-urlencoded, OAuth2 password grant
+//! GET  /system                   Bearer
+//! GET  /status?eventVersion=2    Bearer
+//! POST /PayAmount                Bearer, JSON
+//! POST /CancelPayment            Bearer, JSON
+//! POST /CloseSession             Bearer, JSON
+//! ```
+//!
+//! The certificate is accepted without being verified. That is a real
+//! decision and it is confined to [`AcceptTheDeviceOnTheBench`] in this
+//! module: the acceptor is a box on a showroom LAN whose certificate names
+//! nothing and is signed by nobody, there is no cardholder data on the wire,
+//! and the alternative is a demo that cannot take a banknote. Nothing else in
+//! this repository opens a TLS connection, and nothing else may use this
+//! verifier.
 //!
 //! **No cardholder data passes through here, and none can**: the device
 //! accepts banknotes, and what comes back is an amount in minor units.
@@ -165,15 +185,30 @@ impl<'a> CashGenic<'a> {
     /// A bearer token. Asked for on every call rather than cached: a demo
     /// makes a handful of requests a minute, and a cache that goes stale
     /// mid-payment is worse than a round trip.
+    ///
+    /// An **OAuth2 password grant**, `application/x-www-form-urlencoded`:
+    ///
+    /// ```text
+    /// POST /token
+    /// Content-Type: application/x-www-form-urlencoded
+    ///
+    /// grant_type=password&username=ApiUserOne&password=1234
+    /// ```
+    ///
+    /// Not JSON. The first version of this module sent
+    /// `{"username":…,"password":…}` and the device refused it, which is why
+    /// the body shape is pinned by a test rather than left to read like a
+    /// detail.
     fn token(&self) -> Result<String, BridgeError> {
         let body = self.call(
             "POST",
             "/token",
             None,
-            Some(json!({
-                "username": self.settings.username,
-                "password": self.settings.password,
-            })),
+            Some(Body::Form(vec![
+                ("grant_type", "password".to_owned()),
+                ("username", self.settings.username.clone()),
+                ("password", self.settings.password.clone()),
+            ])),
         )?;
         body.get("token")
             .or_else(|| body.get("access_token"))
@@ -192,9 +227,14 @@ impl<'a> CashGenic<'a> {
     }
 
     /// What it is doing right now, including any payment in progress.
+    ///
+    /// `eventVersion=2` is the shape this firmware answers with — 2.1.49 on
+    /// the unit on the bench — and asking without it is asking for the older
+    /// one. The query string is part of the path because that is all this
+    /// hand-written client needs it to be.
     pub fn status(&self) -> Result<Value, BridgeError> {
         let token = self.token()?;
-        self.call("GET", "/status", Some(&token), None)
+        self.call("GET", "/status?eventVersion=2", Some(&token), None)
     }
 
     /// Start taking notes towards an amount.
@@ -204,29 +244,49 @@ impl<'a> CashGenic<'a> {
             "POST",
             "/PayAmount",
             Some(&token),
-            Some(json!({ "amount": minor_to_major(amount_minor) })),
+            Some(Body::Json(
+                json!({ "amount": minor_to_major(amount_minor) }),
+            )),
         )
     }
 
     /// Stop taking notes and give back what was taken.
     pub fn cancel_payment(&self) -> Result<Value, BridgeError> {
         let token = self.token()?;
-        self.call("POST", "/CancelPayment", Some(&token), Some(json!({})))
+        self.call(
+            "POST",
+            "/CancelPayment",
+            Some(&token),
+            Some(Body::Json(json!({}))),
+        )
     }
 
     /// Finish with the device so the next sale starts clean.
     pub fn close_session(&self) -> Result<Value, BridgeError> {
         let token = self.token()?;
-        self.call("POST", "/CloseSession", Some(&token), Some(json!({})))
+        self.call(
+            "POST",
+            "/CloseSession",
+            Some(&token),
+            Some(Body::Json(json!({}))),
+        )
     }
 
-    /// One HTTP request, by hand.
+    /// One request, written by hand, over TLS.
+    ///
+    /// There is no plain-HTTP path and no scheme probing. The unit on the
+    /// bench serves HTTPS on 44333 and that is the only thing this talks to —
+    /// a fallback for a configuration nobody has would be a second transport
+    /// to keep working for no device.
+    ///
+    /// `Connection: close` is in every request, so "read to the end" is the
+    /// whole response and no chunk decoder or content-length walk is needed.
     fn call(
         &self,
         method: &str,
         path: &str,
         token: Option<&str>,
-        body: Option<Value>,
+        body: Option<Body>,
     ) -> Result<Value, BridgeError> {
         let host = self.settings.host.trim();
         if host.is_empty() {
@@ -236,6 +296,8 @@ impl<'a> CashGenic<'a> {
             });
         }
         let address = format!("{host}:{}", self.settings.port);
+        let request = request_bytes(method, path, &address, token, body);
+
         let resolved = address
             .to_socket_addrs()
             .map_err(|error| offline(&address, error))?
@@ -245,38 +307,209 @@ impl<'a> CashGenic<'a> {
                 message: format!("{address} resolves to nothing"),
             })?;
 
-        let mut stream = TcpStream::connect_timeout(&resolved, self.timeout)
-            .map_err(|e| offline(&address, e))?;
-        stream
+        let socket = TcpStream::connect_timeout(&resolved, self.timeout)
+            .map_err(|error| offline(&address, error))?;
+        socket
             .set_read_timeout(Some(self.timeout))
-            .and_then(|()| stream.set_write_timeout(Some(self.timeout)))
-            .map_err(|e| offline(&address, e))?;
+            .and_then(|()| socket.set_write_timeout(Some(self.timeout)))
+            .map_err(|error| offline(&address, error))?;
 
-        let payload = body.map(|value| value.to_string()).unwrap_or_default();
-        let mut request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
-             Accept: application/json\r\n"
-        );
-        if let Some(token) = token {
-            request.push_str(&format!("Authorization: Bearer {token}\r\n"));
-        }
-        if !payload.is_empty() {
-            request.push_str(&format!(
-                "Content-Type: application/json\r\nContent-Length: {}\r\n",
-                payload.len()
-            ));
-        }
-        request.push_str("\r\n");
-        request.push_str(&payload);
-
-        stream
-            .write_all(request.as_bytes())
-            .map_err(|e| offline(&address, e))?;
-        let mut raw = Vec::new();
-        stream
-            .read_to_end(&mut raw)
-            .map_err(|e| offline(&address, e))?;
+        let connection = tls_connection(host).map_err(|detail| BridgeError {
+            code: "CASHGENIC_UNREACHABLE".to_owned(),
+            message: format!("{address}: {detail}"),
+        })?;
+        let raw = round_trip(
+            rustls::StreamOwned::new(connection, socket),
+            &request,
+            &address,
+        )?;
         parse(&raw)
+    }
+}
+
+/// What a request carries, and therefore what its `Content-Type` is.
+///
+/// Two shapes, because the device wants two. `/token` is an OAuth2 password
+/// grant and takes `application/x-www-form-urlencoded`; everything else takes
+/// JSON. Sending JSON to `/token` is what the first version of this module
+/// did, and the device refuses it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Body {
+    /// `application/x-www-form-urlencoded`, in the order given — a form body
+    /// is an ordered list, not a map, and the order is part of what a test
+    /// can pin.
+    Form(Vec<(&'static str, String)>),
+    Json(Value),
+}
+
+impl Body {
+    fn content_type(&self) -> &'static str {
+        match self {
+            Self::Form(_) => "application/x-www-form-urlencoded",
+            Self::Json(_) => "application/json",
+        }
+    }
+
+    fn encode(&self) -> String {
+        match self {
+            Self::Form(fields) => fields
+                .iter()
+                .map(|(name, value)| format!("{name}={}", form_encode(value)))
+                .collect::<Vec<_>>()
+                .join("&"),
+            Self::Json(value) => value.to_string(),
+        }
+    }
+}
+
+/// Percent-encode one form value.
+///
+/// Written here rather than pulled in: it is twelve lines and the only place
+/// in the repository that needs it. Unreserved characters pass; a space is
+/// `+`, as `application/x-www-form-urlencoded` requires; everything else is
+/// `%XX`. It matters because the credential is typed by whoever set the kiosk
+/// up, and an operator whose password contains `&` must not end up sending
+/// two fields.
+fn form_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            b' ' => out.push('+'),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+/// Write the request and read the whole answer off one stream.
+fn round_trip(
+    mut stream: impl Read + Write,
+    request: &[u8],
+    address: &str,
+) -> Result<Vec<u8>, BridgeError> {
+    stream
+        .write_all(request)
+        .and_then(|()| stream.flush())
+        .map_err(|error| offline(address, error))?;
+    let mut raw = Vec::new();
+    match stream.read_to_end(&mut raw) {
+        Ok(_) => Ok(raw),
+        // A server that closes without a TLS `close_notify` is ordinary in
+        // embedded firmware, and what it already sent is still the answer.
+        Err(error) if !raw.is_empty() => {
+            tracing::debug!(%error, address, "the device closed the stream abruptly");
+            Ok(raw)
+        }
+        Err(error) => Err(offline(address, error)),
+    }
+}
+
+/// An HTTP/1.1 request as bytes.
+fn request_bytes(
+    method: &str,
+    path: &str,
+    address: &str,
+    token: Option<&str>,
+    body: Option<Body>,
+) -> Vec<u8> {
+    let encoded = body.as_ref().map(|body| body.encode());
+    let mut request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+         Accept: application/json\r\n"
+    );
+    if let Some(token) = token {
+        request.push_str(&format!("Authorization: Bearer {token}\r\n"));
+    }
+    if let (Some(body), Some(encoded)) = (body.as_ref(), encoded.as_ref()) {
+        request.push_str(&format!(
+            "Content-Type: {}\r\nContent-Length: {}\r\n",
+            body.content_type(),
+            encoded.len()
+        ));
+    }
+    request.push_str("\r\n");
+    if let Some(encoded) = encoded {
+        request.push_str(&encoded);
+    }
+    request.into_bytes()
+}
+
+/// A TLS client for one connection to the acceptor.
+fn tls_connection(host: &str) -> Result<rustls::ClientConnection, String> {
+    // An IP address is the normal case here and `ServerName` handles it: the
+    // name is only used for SNI, which is omitted for a literal address.
+    let name = rustls_pki_types::ServerName::try_from(host.to_owned())
+        .map_err(|error| format!("`{host}` is not a usable server name: {error}"))?;
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| error.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptTheDeviceOnTheBench))
+        .with_no_client_auth();
+    rustls::ClientConnection::new(std::sync::Arc::new(config), name)
+        .map_err(|error| error.to_string())
+}
+
+/// Accepts the acceptor's self-signed certificate without checking it.
+///
+/// **Read the module header before reusing this.** It verifies nothing: not
+/// the name, not the chain, not the expiry. It exists because a CashGenic
+/// presents a certificate it signed itself, naming nothing, on a showroom
+/// LAN, to carry an amount of pesos and no cardholder data. On anything
+/// carrying a customer's money or identity this would be a vulnerability, and
+/// the reason it is a named type rather than a closure is so that it has to
+/// be read before it is used again.
+#[derive(Debug)]
+struct AcceptTheDeviceOnTheBench;
+
+impl rustls::client::danger::ServerCertVerifier for AcceptTheDeviceOnTheBench {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -305,9 +538,17 @@ fn parse(raw: &[u8]) -> Result<Value, BridgeError> {
         .and_then(|code| code.parse::<u16>().ok())
         .unwrap_or(0);
     if !(200..300).contains(&status) {
+        // The body too, trimmed: on a stand "the device answered 401" sends
+        // somebody to read a manual, and "401: bad credentials" does not.
+        // Safe to echo — this API carries amounts, never cardholder data.
+        let said: String = body.trim().chars().take(200).collect();
         return Err(BridgeError {
             code: "CASHGENIC_REFUSED".to_owned(),
-            message: format!("the device answered {status}"),
+            message: if said.is_empty() {
+                format!("the device answered {status}")
+            } else {
+                format!("the device answered {status}: {said}")
+            },
         });
     }
 
@@ -441,9 +682,18 @@ pub fn progress(status: &Value, due_minor: i64) -> CashGenicStatusV1 {
         .get("state")
         .or_else(|| status.get("State"))
         .or_else(|| status.get("status"))
+        .or_else(|| status.get("Status"))
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN")
         .to_owned();
+    // The firmware reports `errorCondition: "None"` when all is well. Only
+    // anything else is worth putting in front of a person.
+    let fault = status
+        .get("errorCondition")
+        .or_else(|| status.get("ErrorCondition"))
+        .and_then(Value::as_str)
+        .filter(|condition| !condition.eq_ignore_ascii_case("none"))
+        .map(str::to_owned);
 
     // The arithmetic the customer is watching. Computed here rather than
     // trusted from the device, because the amount owed is the core's number
@@ -463,7 +713,7 @@ pub fn progress(status: &Value, due_minor: i64) -> CashGenicStatusV1 {
         outstanding_minor: outstanding,
         change_minor: change,
         cash_total_minor: pick(&["cashTotal", "CashTotal", "stored", "cashAvailable"]),
-        detail: None,
+        detail: fault,
     }
 }
 
@@ -519,15 +769,60 @@ fn probe_with(settings: &CashGenicSettingsV1, timeout: Duration) -> CashGenicSta
                 .get("device")
                 .or_else(|| system.get("model"))
                 .or_else(|| system.get("name"))
+                // What the unit on the bench answers with: `systemVersion`,
+                // "2.1.49". A version is not a model, so it is prefixed
+                // rather than printed as if it were a name.
                 .and_then(Value::as_str)
                 .map(str::to_owned)
+                .or_else(|| {
+                    system
+                        .get("systemVersion")
+                        .or_else(|| system.get("SystemVersion"))
+                        .and_then(Value::as_str)
+                        .map(|version| format!("CashGenic {version}"))
+                })
                 .or(status.device);
             if status.cash_total_minor.is_none() {
                 status.cash_total_minor = amount_minor(system.get("cashTotal"));
             }
+            // A unit whose bill or coin module is disconnected answers every
+            // call and still cannot take money, so it is reported rather than
+            // left looking healthy.
+            if let Some(disconnected) = disconnected_modules(&system) {
+                status.detail = Some(disconnected);
+            }
             status
         }
         Err(error) => CashGenicStatusV1::offline(error.message),
+    }
+}
+
+/// Which of the device's own modules say they are not connected.
+///
+/// `/system` reports a `connected` flag per module. Absent means the firmware
+/// did not say, which is not the same as "not connected" and is left alone.
+fn disconnected_modules(system: &Value) -> Option<String> {
+    let mut out = Vec::new();
+    for (field, label) in [("bills", "billetes"), ("coins", "monedas")] {
+        let module = system
+            .get(field)
+            .or_else(|| system.get(capitalised(field).as_str()))?;
+        let connected = module
+            .get("connected")
+            .or_else(|| module.get("Connected"))
+            .and_then(Value::as_bool);
+        if connected == Some(false) {
+            out.push(label);
+        }
+    }
+    (!out.is_empty()).then(|| format!("el módulo de {} no está conectado", out.join(" y ")))
+}
+
+fn capitalised(field: &str) -> String {
+    let mut chars = field.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }
 
@@ -549,11 +844,20 @@ pub fn cashgenic_status(
     }
 }
 
+/// Start the acceptor taking notes towards an amount the core computed.
+///
+/// Gated on the printer for the same reason `kiosk_pay` is, and separately:
+/// this is the point at which a customer physically puts a banknote into a
+/// machine, and getting it back out is a conversation with a member of staff.
+/// Cash is the one tender where letting the payment start and failing
+/// afterwards costs somebody their afternoon.
 #[tauri::command]
 pub fn cashgenic_pay(
     app: tauri::AppHandle,
+    bridge: tauri::State<'_, crate::EdgeBridge>,
     amount_minor: i64,
 ) -> Result<CashGenicStatusV1, BridgeError> {
+    crate::kiosk::require_a_printer_that_can_follow_through(&bridge)?;
     let preferences = crate::showroom::stored(&crate::showroom::data_dir(&app)?);
     let device = CashGenic::new(&preferences.cashgenic);
     device.pay_amount(amount_minor)?;
@@ -581,6 +885,7 @@ pub fn cashgenic_close(app: tauri::AppHandle) -> Result<(), BridgeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn amounts_leave_as_pesos_and_come_back_as_minor_units() {
@@ -661,6 +966,354 @@ mod tests {
         let error = parse(raw).unwrap_err();
         assert_eq!(error.code, "CASHGENIC_REFUSED");
         assert!(error.message.contains("401"), "{}", error.message);
+
+        // And what it said, so a stand does not have to read a manual.
+        let told = b"HTTP/1.1 401 Unauthorized\r\n\r\n{\"error\":\"bad credentials\"}";
+        let error = parse(told).unwrap_err();
+        assert!(
+            error.message.contains("bad credentials"),
+            "{}",
+            error.message
+        );
+    }
+
+    /// The `/token` request, byte for byte.
+    ///
+    /// Pinned because getting it wrong is what kept cash unavailable on the
+    /// stand: the device wants an OAuth2 password grant as a form body, and
+    /// answers JSON with a refusal. The assertions are deliberately exact —
+    /// the header, the order of the fields, and the length — because "nearly
+    /// right" here looks identical to a dead device.
+    #[test]
+    fn the_token_request_is_a_form_encoded_password_grant() {
+        let settings = CashGenicSettingsV1 {
+            enabled: true,
+            host: "192.168.88.240".to_owned(),
+            port: 44_333,
+            username: "ApiUserOne".to_owned(),
+            password: "1234".to_owned(),
+        };
+        // Built through the very call the client makes, so the test cannot
+        // drift from it.
+        let raw = request_bytes(
+            "POST",
+            "/token",
+            "192.168.88.240:44333",
+            None,
+            Some(Body::Form(vec![
+                ("grant_type", "password".to_owned()),
+                ("username", settings.username.clone()),
+                ("password", settings.password.clone()),
+            ])),
+        );
+        let text = String::from_utf8(raw).unwrap();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap();
+
+        assert!(head.starts_with("POST /token HTTP/1.1\r\n"), "{head}");
+        assert!(
+            head.contains("Content-Type: application/x-www-form-urlencoded"),
+            "the device refuses anything but a form body here: {head}"
+        );
+        // `Accept: application/json` stays — the *answer* is JSON. What must
+        // not appear is a JSON `Content-Type`, which is what was sent before.
+        assert!(
+            !head.contains("Content-Type: application/json"),
+            "`/token` was sent as JSON: {head}"
+        );
+        assert_eq!(
+            body,
+            "grant_type=password&username=ApiUserOne&password=1234"
+        );
+        assert!(head.contains(&format!("Content-Length: {}", body.len())));
+        // No bearer on the call that asks for the bearer.
+        assert!(!head.contains("Authorization"), "{head}");
+    }
+
+    /// A credential with punctuation in it still arrives as one field.
+    #[test]
+    fn a_password_with_punctuation_cannot_become_a_second_field() {
+        let body = Body::Form(vec![
+            ("grant_type", "password".to_owned()),
+            ("username", "api user".to_owned()),
+            ("password", "p&a=s s/w?rd+1".to_owned()),
+        ]);
+        assert_eq!(
+            body.encode(),
+            "grant_type=password&username=api+user&password=p%26a%3Ds+s%2Fw%3Frd%2B1"
+        );
+        // Unreserved characters are left alone, so an ordinary credential is
+        // still readable in a packet capture.
+        assert_eq!(form_encode("ApiUserOne-1_2.3~4"), "ApiUserOne-1_2.3~4");
+    }
+
+    /// Everything that is not `/token` is JSON with a bearer.
+    #[test]
+    fn every_other_call_is_json_with_the_bearer() {
+        let raw = request_bytes(
+            "POST",
+            "/PayAmount",
+            "192.168.88.240:44333",
+            Some("tok"),
+            Some(Body::Json(json!({ "amount": "187.50" }))),
+        );
+        let text = String::from_utf8(raw).unwrap();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap();
+        assert!(head.starts_with("POST /PayAmount HTTP/1.1\r\n"), "{head}");
+        assert!(head.contains("Host: 192.168.88.240:44333"));
+        assert!(head.contains("Authorization: Bearer tok"));
+        assert!(head.contains("Content-Type: application/json"));
+        assert!(head.contains(&format!("Content-Length: {}", body.len())));
+        assert!(head.contains("Connection: close"));
+        assert_eq!(body, r#"{"amount":"187.50"}"#);
+
+        // A GET carries no body and therefore no length and no type.
+        let get = String::from_utf8(request_bytes(
+            "GET",
+            "/status?eventVersion=2",
+            "host:1",
+            Some("tok"),
+            None,
+        ))
+        .unwrap();
+        assert!(get.starts_with("GET /status?eventVersion=2 HTTP/1.1"));
+        assert!(!get.contains("Content-Length"), "{get}");
+        assert!(!get.contains("Content-Type"), "{get}");
+    }
+
+    // ------------------------------------------------- against a real listener
+    //
+    // A TLS server, with a certificate it signed itself, standing in for the
+    // acceptor. It is here because the bug that shipped was not in the logic
+    // — it was in the transport, and a unit test of the request bytes would
+    // not have caught it. This proves the three things that failed: that
+    // `AcceptTheDeviceOnTheBench` lets a self-signed certificate through,
+    // that the handshake completes, and that the whole `/token` → `/system`
+    // → `/status` conversation comes back parsed.
+
+    /// The bench certificate, generated once and checked in. Valid until
+    /// 2126; it secures nothing and never leaves a test.
+    const BENCH_CERT: &[u8] = include_bytes!("../tests/fixtures/bench-cert.der");
+    const BENCH_KEY: &[u8] = include_bytes!("../tests/fixtures/bench-key.der");
+
+    /// What each path answered, so a test can read the conversation back.
+    #[derive(Debug, Default)]
+    struct Heard {
+        token_request: Mutex<String>,
+        paths: Mutex<Vec<String>>,
+        bearers: Mutex<Vec<String>>,
+    }
+
+    /// Serve TLS on loopback until the test drops it.
+    fn bench_acceptor(heard: Arc<Heard>) -> std::net::SocketAddr {
+        let certificate = rustls_pki_types::CertificateDer::from(BENCH_CERT.to_vec());
+        let key = rustls_pki_types::PrivateKeyDer::Pkcs8(
+            rustls_pki_types::PrivatePkcs8KeyDer::from(BENCH_KEY.to_vec()),
+        );
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = Arc::new(
+            rustls::ServerConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate], key)
+                .unwrap(),
+        );
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for incoming in listener.incoming() {
+                let Ok(socket) = incoming else { continue };
+                let Ok(connection) = rustls::ServerConnection::new(Arc::clone(&config)) else {
+                    continue;
+                };
+                let mut stream = rustls::StreamOwned::new(connection, socket);
+                let mut buffer = [0_u8; 2048];
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
+
+                let first = request.lines().next().unwrap_or_default().to_owned();
+                if let Ok(mut paths) = heard.paths.lock() {
+                    paths.push(first.clone());
+                }
+                if let Some(bearer) = request
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Authorization: Bearer "))
+                {
+                    if let Ok(mut bearers) = heard.bearers.lock() {
+                        bearers.push(bearer.trim().to_owned());
+                    }
+                }
+
+                let body = if first.contains("/token") {
+                    if let Ok(mut seen) = heard.token_request.lock() {
+                        *seen = request.clone();
+                    }
+                    // Only a correctly-shaped grant gets a token, exactly as
+                    // the device behaves.
+                    let correct = request
+                        .contains("Content-Type: application/x-www-form-urlencoded")
+                        && request.contains("grant_type=password")
+                        && request.contains("username=ApiUserOne")
+                        && request.contains("password=1234");
+                    if !correct {
+                        let refusal = r#"{"error":"unsupported_grant_type"}"#;
+                        let _ = stream.write_all(
+                            format!(
+                                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n{refusal}",
+                                refusal.len()
+                            )
+                            .as_bytes(),
+                        );
+                        let _ = stream.flush();
+                        continue;
+                    }
+                    r#"{"access_token":"bench-token","token_type":"bearer"}"#.to_owned()
+                } else if first.contains("/system") {
+                    r#"{"systemVersion":"2.1.49","currency":"MXN","bills":{"connected":true},"coins":{"connected":true}}"#.to_owned()
+                } else {
+                    r#"{"state":"Idle","errorCondition":"None","deposited":0}"#.to_owned()
+                };
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        address
+    }
+
+    /// The whole conversation, over TLS, against a self-signed certificate.
+    #[test]
+    fn the_acceptor_is_reached_over_tls_with_a_certificate_it_signed_itself() {
+        let heard = Arc::new(Heard::default());
+        let address = bench_acceptor(Arc::clone(&heard));
+        let settings = CashGenicSettingsV1 {
+            enabled: true,
+            host: address.ip().to_string(),
+            port: address.port(),
+            username: "ApiUserOne".to_owned(),
+            password: "1234".to_owned(),
+        };
+
+        let status = probe(&settings);
+        assert!(
+            status.online,
+            "the handshake or the grant failed: {:?}",
+            status.detail
+        );
+        assert_eq!(status.state, "Idle");
+        assert_eq!(status.device.as_deref(), Some("CashGenic 2.1.49"));
+        assert_eq!(status.detail, None);
+
+        // The grant the device accepted, read back off the wire.
+        let token_request = heard.token_request.lock().unwrap().clone();
+        assert!(
+            token_request.contains("Content-Type: application/x-www-form-urlencoded"),
+            "{token_request}"
+        );
+        assert!(
+            token_request.ends_with("grant_type=password&username=ApiUserOne&password=1234"),
+            "{token_request}"
+        );
+
+        // And the order the client asks in: a grant, then the two reads, each
+        // carrying the token the grant returned.
+        let paths = heard.paths.lock().unwrap().clone();
+        assert_eq!(
+            paths
+                .iter()
+                .map(|line| line
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" "))
+                .collect::<Vec<_>>(),
+            vec![
+                "POST /token",
+                "GET /system",
+                "POST /token",
+                "GET /status?eventVersion=2",
+            ],
+            "the conversation was not the one the firmware documents"
+        );
+        let bearers = heard.bearers.lock().unwrap().clone();
+        assert_eq!(bearers, vec!["bench-token", "bench-token"]);
+    }
+
+    /// And a payment goes the same way, with the amount in pesos.
+    #[test]
+    fn a_payment_starts_over_tls_with_the_amount_in_pesos() {
+        let heard = Arc::new(Heard::default());
+        let address = bench_acceptor(Arc::clone(&heard));
+        let settings = CashGenicSettingsV1 {
+            enabled: true,
+            host: address.ip().to_string(),
+            port: address.port(),
+            username: "ApiUserOne".to_owned(),
+            password: "1234".to_owned(),
+        };
+        let device = CashGenic::new(&settings);
+        device
+            .pay_amount(18_750)
+            .expect("the device took the amount");
+        let paths = heard.paths.lock().unwrap().clone();
+        assert!(
+            paths.iter().any(|line| line.contains("POST /PayAmount")),
+            "{paths:?}"
+        );
+    }
+
+    /// What the unit on the bench reports when a module is unplugged.
+    #[test]
+    fn a_disconnected_module_is_reported_rather_than_left_looking_healthy() {
+        assert_eq!(
+            disconnected_modules(&json!({
+                "bills": { "connected": false },
+                "coins": { "connected": true },
+            }))
+            .as_deref(),
+            Some("el módulo de billetes no está conectado")
+        );
+        assert_eq!(
+            disconnected_modules(&json!({
+                "bills": { "connected": false },
+                "coins": { "connected": false },
+            }))
+            .as_deref(),
+            Some("el módulo de billetes y monedas no está conectado")
+        );
+        // Healthy, and firmware that does not say, are both "nothing to
+        // report" — never "not connected".
+        assert_eq!(
+            disconnected_modules(&json!({
+                "bills": { "connected": true },
+                "coins": { "connected": true },
+            })),
+            None
+        );
+        assert_eq!(
+            disconnected_modules(&json!({ "systemVersion": "2.1.49" })),
+            None
+        );
+    }
+
+    /// `errorCondition` is the field that says the device cannot take money.
+    #[test]
+    fn an_error_condition_reaches_the_screen_and_none_does_not() {
+        let jammed = progress(
+            &json!({ "state": "Idle", "errorCondition": "BillJam" }),
+            5_000,
+        );
+        assert_eq!(jammed.detail.as_deref(), Some("BillJam"));
+        let healthy = progress(&json!({ "state": "Idle", "errorCondition": "None" }), 5_000);
+        assert_eq!(healthy.detail, None);
     }
 
     #[test]

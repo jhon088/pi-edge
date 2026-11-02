@@ -13,9 +13,14 @@ use std::io::Write;
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
+use std::io::Read;
+
 use crate::drawer::{CashDrawerPort, DrawerOpenReason};
 use crate::error::HardwareError;
-use crate::printer::{PrintAlign, PrintDocument, PrintLine, PrinterPort};
+use crate::printer::{
+    PaperLevel, PrintAlign, PrintDocument, PrintLine, PrinterPort, PrinterState, PrinterStatus,
+    PrinterStatusPort, StatusSource,
+};
 
 /// Where a printer is and how long to wait for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +56,7 @@ const ESC: u8 = 0x1B;
 const GS: u8 = 0x1D;
 const DLE: u8 = 0x10;
 const DC4: u8 = 0x14;
+const EOT: u8 = 0x04;
 
 /// Turn a canonical document into ESC/POS bytes.
 ///
@@ -228,6 +234,221 @@ impl PrinterPort for EscPosTcpPrinter {
     }
 }
 
+// ------------------------------------------------------------- the status wire
+//
+// `DLE EOT n` — real-time status transmission. The printer answers a single
+// byte *immediately*, ahead of whatever is in its own buffer, which is what
+// makes it usable as a health check and what makes it dangerous to send in
+// the middle of a document: the reply is a byte on the same wire the receipt
+// is travelling down. Serialising the two is the caller's job and is done
+// once, in the composition root.
+//
+// Four questions, one byte each. Every answer carries four fixed bits —
+// bit 1 and bit 4 set, bit 0 and bit 7 clear — which is the only way to tell
+// a status byte from an echo, a stale buffer or line noise.
+
+/// Which of the four status bytes to ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusQuery {
+    /// Online or offline, and the drawer pin.
+    Printer,
+    /// *Why* it is offline: the cover, a feed button, paper having run out.
+    OfflineCause,
+    /// The cutter, a recoverable error, an unrecoverable one.
+    Error,
+    /// The roll sensors: near-end and end.
+    PaperSensor,
+}
+
+impl StatusQuery {
+    /// Every question, in the order a full read asks them.
+    pub const ALL: [Self; 4] = [
+        Self::Printer,
+        Self::OfflineCause,
+        Self::Error,
+        Self::PaperSensor,
+    ];
+
+    const fn n(self) -> u8 {
+        match self {
+            Self::Printer => 1,
+            Self::OfflineCause => 2,
+            Self::Error => 3,
+            Self::PaperSensor => 4,
+        }
+    }
+
+    /// `DLE EOT n`. The request, as bytes.
+    pub const fn request(self) -> [u8; 3] {
+        [DLE, EOT, self.n()]
+    }
+}
+
+/// The bits every `DLE EOT` reply has fixed, and what they are fixed to.
+///
+/// Bit 1 and bit 4 are always set; bit 0 and bit 7 are always clear. A byte
+/// that disagrees is not a status byte, and accepting it would turn noise on
+/// a serial line into "the cover is open" — which, under the rule that stops
+/// a payment, would close the lane.
+const FIXED_MASK: u8 = 0b1001_0011;
+const FIXED_BITS: u8 = 0b0001_0010;
+
+/// Whether this byte can be a `DLE EOT` reply at all.
+pub const fn is_status_byte(byte: u8) -> bool {
+    byte & FIXED_MASK == FIXED_BITS
+}
+
+/// The four replies, folded into one status.
+///
+/// A question nobody answered contributes nothing rather than a default: that
+/// is why each argument is an `Option` and why a read with no `Printer` byte
+/// is `NO_RESPONSE` instead of a healthy printer.
+pub fn read_status(
+    printer: Option<u8>,
+    offline_cause: Option<u8>,
+    error: Option<u8>,
+    paper: Option<u8>,
+) -> PrinterStatus {
+    let Some(printer) = printer else {
+        return PrinterStatus::no_response(
+            StatusSource::DleEot,
+            "the printer did not answer DLE EOT 1",
+        );
+    };
+
+    // n=1: bit 3 set means the device has taken itself offline.
+    let offline = printer & 0b0000_1000 != 0;
+
+    // n=2: why.
+    let cover_open = offline_cause.is_some_and(|byte| byte & 0b0000_0100 != 0);
+    let stopped_for_paper = offline_cause.is_some_and(|byte| byte & 0b0010_0000 != 0);
+    let offline_error = offline_cause.is_some_and(|byte| byte & 0b0100_0000 != 0);
+
+    // n=3: which error. A receipt printer calls a jam and a lifted head the
+    // same thing — a *recoverable* error — so that is what `jammed` carries,
+    // and the doc comment on the field says so rather than inventing a
+    // sensor the firmware does not have.
+    let jammed = error.is_some_and(|byte| byte & 0b0000_0100 != 0);
+    let cutter_error = error.is_some_and(|byte| byte & 0b0000_1000 != 0);
+    let unrecoverable = error.is_some_and(|byte| byte & 0b0010_0000 != 0);
+    let overheated = error.is_some_and(|byte| byte & 0b0100_0000 != 0);
+
+    // n=4: the roll. Both sensors report with two bits, set together.
+    let paper_level = match paper {
+        None => PaperLevel::Unknown,
+        Some(byte) if byte & 0b0110_0000 != 0 => PaperLevel::End,
+        Some(byte) if byte & 0b0000_1100 != 0 => PaperLevel::NearEnd,
+        Some(_) => PaperLevel::Ok,
+    };
+    // A device that stopped *because* the paper ran out has no paper, whatever
+    // a sensor it does not have would have said.
+    let paper_level = if stopped_for_paper && paper_level == PaperLevel::Unknown {
+        PaperLevel::End
+    } else {
+        paper_level
+    };
+
+    let faulted = jammed || cutter_error || unrecoverable || overheated || offline_error;
+    let state = if offline || cover_open || paper_level == PaperLevel::End {
+        PrinterState::Offline
+    } else if faulted {
+        PrinterState::Error
+    } else {
+        PrinterState::Online
+    };
+
+    PrinterStatus {
+        state,
+        online: state == PrinterState::Online,
+        cover_open,
+        paper: paper_level,
+        cutter_error,
+        jammed,
+        unrecoverable_error: unrecoverable,
+        source: StatusSource::DleEot,
+        // What a person on a stand can act on, in the order it stops them.
+        error: if cover_open {
+            Some("the cover is open".to_owned())
+        } else if paper_level == PaperLevel::End {
+            Some("the paper has run out".to_owned())
+        } else if jammed {
+            Some("the paper is jammed or the head is lifted".to_owned())
+        } else if cutter_error {
+            Some("the cutter is stuck".to_owned())
+        } else if unrecoverable {
+            Some("the printer reports an error it cannot clear".to_owned())
+        } else if overheated {
+            Some("the print head is too hot; it will recover".to_owned())
+        } else if offline {
+            Some("the printer has taken itself offline".to_owned())
+        } else {
+            None
+        },
+    }
+}
+
+/// An ESC/POS printer's status, read over the socket it prints on.
+///
+/// The same address as the print path, deliberately: a status channel that
+/// points somewhere else is a status channel that can report a different
+/// printer's paper. It is a separate adapter because a status read and a
+/// print are separate capabilities, not because they are separate devices.
+#[derive(Debug, Clone)]
+pub struct EscPosTcpStatus {
+    printer: EscPosTcpPrinter,
+}
+
+impl EscPosTcpStatus {
+    pub fn new(printer: EscPosTcpPrinter) -> Self {
+        Self { printer }
+    }
+
+    /// Ask one question and read one byte.
+    ///
+    /// Each question is its own connection. A receipt printer's socket is
+    /// single-session and firmware differs on whether it will pipeline four
+    /// real-time requests; four short connections always work and cost
+    /// milliseconds on a LAN.
+    fn ask(&self, query: StatusQuery) -> Option<u8> {
+        let mut stream = self.printer.connect("printer").ok()?;
+        stream
+            .set_read_timeout(Some(STATUS_READ_TIMEOUT))
+            .ok()
+            .and_then(|()| {
+                stream
+                    .write_all(&query.request())
+                    .and_then(|()| stream.flush())
+                    .ok()
+            })?;
+        // Small, because the answer is one byte and anything else on the wire
+        // is something this read has no business consuming.
+        let mut buffer = [0_u8; 8];
+        let read = stream.read(&mut buffer).unwrap_or(0);
+        let _ = stream.shutdown(Shutdown::Both);
+        // The first byte that can be a reply. Firmware occasionally prefixes
+        // a `DLE` or leaves a stale byte, and a reply is recognisable.
+        buffer[..read]
+            .iter()
+            .copied()
+            .find(|byte| is_status_byte(*byte))
+    }
+}
+
+/// Long enough for firmware to turn a real-time request around on a LAN,
+/// short enough that four of them never hold a payment up.
+const STATUS_READ_TIMEOUT: Duration = Duration::from_millis(900);
+
+impl PrinterStatusPort for EscPosTcpStatus {
+    fn source(&self) -> StatusSource {
+        StatusSource::DleEot
+    }
+
+    fn read(&self) -> Result<PrinterStatus, HardwareError> {
+        let [printer, offline_cause, error, paper] = StatusQuery::ALL.map(|query| self.ask(query));
+        Ok(read_status(printer, offline_cause, error, paper))
+    }
+}
+
 /// A drawer wired to an ESC/POS printer's DK port, opened by a pulse.
 ///
 /// A **real** adapter for that topology, and a different one from a drawer wired
@@ -381,5 +602,205 @@ mod tests {
 
     fn window(haystack: &[u8], needle: &[u8]) -> bool {
         haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    // ----------------------------------------------------------- DLE EOT
+    //
+    // The bytes in these tests are the ones the spec defines, written as
+    // binary so the bit under test is visible. `0b0001_0010` is the
+    // all-clear reply: the four fixed bits and nothing else.
+
+    /// A healthy printer, by the book.
+    const IDLE: u8 = 0b0001_0010;
+
+    #[test]
+    fn each_question_is_dle_eot_with_its_own_number() {
+        assert_eq!(StatusQuery::Printer.request(), [DLE, EOT, 1]);
+        assert_eq!(StatusQuery::OfflineCause.request(), [DLE, EOT, 2]);
+        assert_eq!(StatusQuery::Error.request(), [DLE, EOT, 3]);
+        assert_eq!(StatusQuery::PaperSensor.request(), [DLE, EOT, 4]);
+        assert_eq!(StatusQuery::ALL.len(), 4);
+    }
+
+    /// The fixed bits are the only defence against reading noise as a fault.
+    #[test]
+    fn only_a_byte_with_the_fixed_bits_is_a_reply() {
+        assert!(is_status_byte(IDLE));
+        assert!(is_status_byte(0b0111_0110), "every variable bit set");
+        // bit 1 clear, bit 4 clear, bit 0 set, bit 7 set: each disqualifies.
+        assert!(!is_status_byte(0b0001_0000));
+        assert!(!is_status_byte(0b0000_0010));
+        assert!(!is_status_byte(0b0001_0011));
+        assert!(!is_status_byte(0b1001_0010));
+        assert!(!is_status_byte(0x00));
+        assert!(!is_status_byte(0xFF));
+    }
+
+    #[test]
+    fn a_printer_with_nothing_wrong_reads_online_with_paper() {
+        let status = read_status(Some(IDLE), Some(IDLE), Some(IDLE), Some(IDLE));
+        assert_eq!(status.state, PrinterState::Online);
+        assert!(status.online);
+        assert!(!status.cover_open);
+        assert_eq!(status.paper, PaperLevel::Ok);
+        assert!(!status.jammed && !status.cutter_error && !status.unrecoverable_error);
+        assert_eq!(status.source, StatusSource::DleEot);
+        assert_eq!(status.error, None);
+        assert!(!status.blocks_payment(), "a healthy printer blocked a sale");
+    }
+
+    /// No first byte is no printer. Not an online one.
+    #[test]
+    fn a_printer_that_says_nothing_is_no_response_and_stops_a_payment() {
+        let status = read_status(None, None, None, None);
+        assert_eq!(status.state, PrinterState::NoResponse);
+        assert!(!status.online);
+        assert_eq!(status.paper, PaperLevel::Unknown);
+        assert!(status.error.is_some());
+        assert!(status.blocks_payment());
+    }
+
+    /// n=2 bit 2: the cover.
+    #[test]
+    fn an_open_cover_is_offline_and_stops_a_payment() {
+        let status = read_status(
+            Some(IDLE | 0b0000_1000),
+            Some(IDLE | 0b0000_0100),
+            Some(IDLE),
+            Some(IDLE),
+        );
+        assert!(status.cover_open);
+        assert_eq!(status.state, PrinterState::Offline);
+        assert!(!status.online);
+        assert!(status.blocks_payment());
+        assert_eq!(status.error.as_deref(), Some("the cover is open"));
+    }
+
+    /// n=4 bits 5-6: the roll has run out.
+    #[test]
+    fn paper_at_its_end_stops_a_payment() {
+        let status = read_status(
+            Some(IDLE),
+            Some(IDLE | 0b0010_0000),
+            Some(IDLE),
+            Some(IDLE | 0b0110_0000),
+        );
+        assert_eq!(status.paper, PaperLevel::End);
+        assert_eq!(status.state, PrinterState::Offline);
+        assert!(status.blocks_payment());
+        assert_eq!(status.error.as_deref(), Some("the paper has run out"));
+    }
+
+    /// n=4 bits 2-3: near the end, which is a warning and nothing more.
+    #[test]
+    fn paper_near_its_end_warns_and_still_sells() {
+        let status = read_status(Some(IDLE), Some(IDLE), Some(IDLE), Some(IDLE | 0b0000_1100));
+        assert_eq!(status.paper, PaperLevel::NearEnd);
+        assert_eq!(status.state, PrinterState::Online);
+        assert!(status.online);
+        assert!(
+            !status.blocks_payment(),
+            "a low roll refused a customer who could have been served"
+        );
+    }
+
+    /// n=3, bit by bit.
+    #[test]
+    fn the_error_byte_separates_a_jam_a_cutter_and_something_unclearable() {
+        let jam = read_status(Some(IDLE), Some(IDLE), Some(IDLE | 0b0000_0100), Some(IDLE));
+        assert!(jam.jammed && !jam.cutter_error && !jam.unrecoverable_error);
+        assert_eq!(jam.state, PrinterState::Error);
+
+        let cutter = read_status(Some(IDLE), Some(IDLE), Some(IDLE | 0b0000_1000), Some(IDLE));
+        assert!(cutter.cutter_error && !cutter.jammed);
+        assert_eq!(cutter.state, PrinterState::Error);
+        assert_eq!(cutter.error.as_deref(), Some("the cutter is stuck"));
+
+        let dead = read_status(Some(IDLE), Some(IDLE), Some(IDLE | 0b0010_0000), Some(IDLE));
+        assert!(dead.unrecoverable_error);
+        assert_eq!(dead.state, PrinterState::Error);
+    }
+
+    /// An error is not a reason to refuse money — a cover, no paper and
+    /// silence are. The rule is written once and this is it, stated as a
+    /// table so a change to it has to be deliberate.
+    #[test]
+    fn only_a_cover_no_paper_or_no_answer_stops_a_payment() {
+        let jam = read_status(Some(IDLE), Some(IDLE), Some(IDLE | 0b0000_0100), Some(IDLE));
+        assert!(
+            !jam.blocks_payment(),
+            "a jam is cleared by hand in seconds; the rule names three things"
+        );
+
+        for (what, status) in [
+            (
+                "an open cover",
+                read_status(Some(IDLE), Some(IDLE | 0b0000_0100), Some(IDLE), Some(IDLE)),
+            ),
+            (
+                "no paper",
+                read_status(Some(IDLE), Some(IDLE), Some(IDLE), Some(IDLE | 0b0110_0000)),
+            ),
+            ("no answer", read_status(None, None, None, None)),
+            (
+                "a printer that took itself offline",
+                read_status(Some(IDLE | 0b0000_1000), None, None, Some(IDLE)),
+            ),
+        ] {
+            assert!(status.blocks_payment(), "{what} did not stop a payment");
+        }
+    }
+
+    /// A printer whose roll sensor says nothing, that stopped because the
+    /// paper ran out, has no paper. The 58mm kiosk units are like this.
+    #[test]
+    fn a_stop_for_paper_end_is_no_paper_even_with_no_roll_sensor() {
+        let status = read_status(
+            Some(IDLE | 0b0000_1000),
+            Some(IDLE | 0b0010_0000),
+            Some(IDLE),
+            None,
+        );
+        assert_eq!(status.paper, PaperLevel::End);
+        assert!(status.blocks_payment());
+    }
+
+    /// A partial answer is a partial answer, not a healthy printer.
+    #[test]
+    fn a_printer_that_answers_only_the_first_question_claims_nothing_else() {
+        let status = read_status(Some(IDLE), None, None, None);
+        assert_eq!(status.state, PrinterState::Online);
+        assert_eq!(status.paper, PaperLevel::Unknown, "paper was invented");
+        assert!(!status.cover_open, "a cover state was invented");
+        assert!(!status.blocks_payment());
+    }
+
+    /// Every state and level has a stable wire spelling: `/demo/status`
+    /// publishes these and a floor app matches on them.
+    #[test]
+    fn the_published_spellings_are_the_ones_the_contract_names() {
+        assert_eq!(PaperLevel::Ok.as_str(), "OK");
+        assert_eq!(PaperLevel::NearEnd.as_str(), "NEAR_END");
+        assert_eq!(PaperLevel::End.as_str(), "END");
+        assert_eq!(PaperLevel::Unknown.as_str(), "UNKNOWN");
+        assert_eq!(PrinterState::Online.as_str(), "ONLINE");
+        assert_eq!(PrinterState::Offline.as_str(), "OFFLINE");
+        assert_eq!(PrinterState::Error.as_str(), "ERROR");
+        assert_eq!(PrinterState::NoResponse.as_str(), "NO_RESPONSE");
+        assert_eq!(PrinterState::Unknown.as_str(), "UNKNOWN");
+        assert_eq!(StatusSource::DleEot.as_str(), "DLE_EOT");
+        assert_eq!(StatusSource::Spooler.as_str(), "SPOOLER");
+        assert_eq!(StatusSource::None.as_str(), "NONE");
+    }
+
+    /// Nothing asked is not a working printer, and does not stop a sale
+    /// either: an installation with no status channel knows nothing.
+    #[test]
+    fn an_unasked_printer_is_unknown_and_neither_blocks_nor_reassures() {
+        let status = PrinterStatus::unknown();
+        assert_eq!(status.state, PrinterState::Unknown);
+        assert!(!status.online);
+        assert_eq!(status.source, StatusSource::None);
+        assert!(!status.blocks_payment());
     }
 }

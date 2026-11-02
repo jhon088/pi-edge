@@ -13,7 +13,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { Gate, screenAfterPick, type Origin, type Pick } from "./flow.ts";
+import {
+  Gate,
+  screenAfterPick,
+  showsClosedSign,
+  type Origin,
+  type Pick,
+} from "./flow.ts";
 
 const ORIGINS: Origin[] = ["menu", "cart", "postadd"];
 const OUTCOMES: Pick[] = ["configure", "added", "failed"];
@@ -147,5 +153,74 @@ describe("recommendation_double_tap_is_safe", () => {
       gate.leave();
     }
     assert.equal(gate.enter(), true, "a failed pick locked the screen out");
+  });
+});
+
+describe("the closed sign", () => {
+  /** Every stage the counter lanes can be on. */
+  const COUNTER = [
+    "loading",
+    "attract",
+    "fulfillment",
+    "menu",
+    "product",
+    "postadd",
+    "cart",
+    "admin",
+    "method",
+    "payment",
+    "done",
+  ];
+  /** And every stage the retail lane can be on. */
+  const RETAIL = [
+    "loading",
+    "attract",
+    "lane",
+    "search",
+    "admin",
+    "method",
+    "payment",
+    "done",
+  ];
+
+  it("is never drawn while the kiosk is open", () => {
+    for (const stage of [...COUNTER, ...RETAIL]) {
+      assert.equal(
+        showsClosedSign(true, stage),
+        false,
+        `an open kiosk showed the closed sign on \`${stage}\``,
+      );
+    }
+  });
+
+  it("is drawn only where a new order would begin", () => {
+    for (const stage of [...COUNTER, ...RETAIL]) {
+      assert.equal(
+        showsClosedSign(false, stage),
+        stage === "attract",
+        `the closed sign on \`${stage}\` is wrong`,
+      );
+    }
+  });
+
+  /**
+   * The requirement that is easy to break: closing the kiosk while somebody
+   * is mid-order must not take the order away from them.
+   */
+  it("never interrupts an order already in progress", () => {
+    for (const stage of ["menu", "product", "cart", "method", "payment", "done"]) {
+      assert.equal(
+        showsClosedSign(false, stage),
+        false,
+        `closing the kiosk threw a customer off \`${stage}\``,
+      );
+    }
+    // And once they are done and the lane returns to attract, it is closed.
+    assert.equal(showsClosedSign(false, "attract"), true);
+  });
+
+  /** Admin has to stay reachable: it is the only way to open it again. */
+  it("is never drawn over Admin", () => {
+    assert.equal(showsClosedSign(false, "admin"), false);
   });
 });

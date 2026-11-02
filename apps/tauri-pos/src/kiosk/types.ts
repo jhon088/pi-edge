@@ -213,6 +213,41 @@ export interface PrinterSettings {
   queue: string;
   columns: number;
   auto_print: boolean;
+  /**
+   * Where to ask this printer how it is. Empty, `usb`, `usb:<fragment>`, or
+   * `host[:port]`.
+   *
+   * A separate channel from the queue that prints, because a spooler queue is
+   * write-only: there is no way to get a `DLE EOT` reply back out of one.
+   * `usb` and an address are the real bidirectional channels — the firmware's
+   * own answer, including paper near its end. Empty falls back to what the
+   * host spooler reports, which is less but is not nothing.
+   */
+  status_channel: string;
+}
+
+/**
+ * How the printer is, right now.
+ *
+ * Every field is something that answered, or the `UNKNOWN` that says nothing
+ * did. `blocks_payment` is the core's own answer and the screen renders it
+ * rather than re-deriving it from the flags.
+ */
+export interface PrinterStatus {
+  online: boolean;
+  state: "ONLINE" | "OFFLINE" | "ERROR" | "NO_RESPONSE" | "UNKNOWN";
+  cover_open: boolean;
+  paper: "OK" | "NEAR_END" | "END" | "UNKNOWN";
+  cutter_error: boolean;
+  /** A recoverable error: on a receipt printer, a jam or a lifted head. */
+  jammed: boolean;
+  unrecoverable_error: boolean;
+  /** Which source can answer for this printer, not which one answered last. */
+  status_source: "DLE_EOT" | "SPOOLER" | "NONE";
+  /** `null` until the first read. */
+  status_checked_at: string | null;
+  status_error: string | null;
+  blocks_payment: boolean;
 }
 
 export interface PrinterModel {
@@ -241,4 +276,11 @@ export interface PrinterConfiguration {
   driver: string;
   /** `null` when nothing is configured, so "unreachable" is not implied. */
   reachable: boolean | null;
+  /**
+   * USB printers this host exposes a **readable** interface for.
+   *
+   * What a `status_channel` of `usb` can be pointed at. Empty where the host
+   * has none, or where the platform has no such interface at all.
+   */
+  status_devices: string[];
 }

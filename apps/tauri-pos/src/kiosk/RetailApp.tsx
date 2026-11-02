@@ -21,6 +21,7 @@ import {
   cancelTransaction,
   changeQuantity,
   describe,
+  isBridgeError,
   fetchMenu,
   fetchPrinterSettings,
   removeItem,
@@ -28,6 +29,7 @@ import {
   scanBarcode,
   scanKey,
   totalize,
+  paymentAllowed,
 } from "./api";
 import { CameraCorner } from "./CameraCorner";
 import {
@@ -38,7 +40,9 @@ import {
   Screen,
   Splash,
   Toast,
+  PrinterBlockedScreen,
 } from "./components";
+import { showsClosedSign } from "./flow";
 import { usePaymentJourney } from "./payment";
 import {
   RetailAttractScreen,
@@ -132,6 +136,13 @@ function Retail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<Method>("CARD");
+  /**
+   * Why the printer is stopping this sale, when it is.
+   *
+   * Held rather than thrown: the customer is standing there and the lane has
+   * to say what is wrong and offer to look again, not fail a tender choice.
+   */
+  const [printerBlock, setPrinterBlock] = useState<string | null>(null);
   const [autoPrint, setAutoPrint] = useState(false);
   const [adminFrom, setAdminFrom] = useState<Stage>("attract");
   const [confirmed, setConfirmed] = useState<{
@@ -229,6 +240,7 @@ function Retail({
       setConfirmed(null);
       resetPaying();
       setMethod("CARD");
+      setPrinterBlock(null);
       setStage("attract");
     },
     [resetPaying],
@@ -364,9 +376,57 @@ function Retail({
     try {
       setTransaction(await totalize());
       resetPaying();
+      // Asked again on the way in, by `choosePayment`. A notice left over
+      // from the last attempt would hide a printer somebody has since fixed.
+      setPrinterBlock(null);
       setStage("method");
     } catch (reason) {
       complain(reason);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Take the customer to the payment screen — unless the printer cannot
+   * follow it with a receipt.
+   *
+   * The same rule the counter lanes follow, asked of the same host command:
+   * nobody reaches a payment screen for a ticket that cannot come out. At a
+   * self-checkout it matters more, because there is nobody behind the lane to
+   * notice.
+   */
+  const choosePayment = async (picked: Method) => {
+    setBusy(true);
+    try {
+      await paymentAllowed();
+      setMethod(picked);
+      setPrinterBlock(null);
+      resetPaying();
+      setStage("payment");
+    } catch (reason) {
+      if (isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE") {
+        setPrinterBlock(reason.message);
+      } else {
+        complain(reason);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Look again, after somebody has closed the cover or changed the roll. */
+  const recheckPrinter = async () => {
+    setBusy(true);
+    try {
+      await paymentAllowed();
+      setPrinterBlock(null);
+    } catch (reason) {
+      setPrinterBlock(
+        isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE"
+          ? reason.message
+          : describe(reason),
+      );
     } finally {
       setBusy(false);
     }
@@ -406,6 +466,8 @@ function Retail({
             setConfirmed(null);
             resetPaying();
             setMethod("CARD");
+            setPrinterBlock(null);
+      setPrinterBlock(null);
             refreshAutoPrint();
             setStage("attract");
           }}
@@ -431,10 +493,10 @@ function Retail({
   if (stage === "attract") {
     return (
       <div className="k-app">
-        {kioskOpen ? (
-          <RetailAttractScreen onBrowse={browse} />
-        ) : (
+        {showsClosedSign(kioskOpen, stage) ? (
           <ClosedScreen brandName={brandName} />
+        ) : (
+          <RetailAttractScreen onBrowse={browse} />
         )}
         <CameraCorner enabled={cameraPreview} />
         <button
@@ -516,14 +578,18 @@ function Retail({
             onBack={() => setStage("lane")}
           />
           <Screen>
-            <MethodScreen
-              due={transaction.totals.grand_total}
-              onPick={(picked) => {
-                setMethod(picked);
-                resetPaying();
-                setStage("payment");
-              }}
-            />
+            {printerBlock ? (
+              <PrinterBlockedScreen
+                message={printerBlock}
+                busy={busy}
+                onRetry={() => void recheckPrinter()}
+              />
+            ) : (
+              <MethodScreen
+                due={transaction.totals.grand_total}
+                onPick={(picked) => void choosePayment(picked)}
+              />
+            )}
           </Screen>
         </>
       ) : null}

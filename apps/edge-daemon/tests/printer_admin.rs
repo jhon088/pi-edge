@@ -17,6 +17,7 @@ fn settings(queue: &str, auto_print: bool) -> PrinterSettingsV1 {
         queue: queue.to_owned(),
         columns: 48,
         auto_print,
+        status_channel: String::new(),
     }
 }
 
@@ -271,6 +272,7 @@ fn whatever_printers_the_host_has_are_offered_by_name() {
                     queue: queue.name.clone(),
                     columns: 48,
                     auto_print: false,
+                    status_channel: String::new(),
                 },
                 None,
             )
@@ -313,6 +315,7 @@ fn whatever_printers_the_host_has_are_offered_by_name() {
                     queue: name.to_owned(),
                     columns: 48,
                     auto_print: false,
+                    status_channel: String::new(),
                 },
                 None,
             )
@@ -333,6 +336,7 @@ fn whatever_printers_the_host_has_are_offered_by_name() {
                 queue: hostile.to_owned(),
                 columns: 48,
                 auto_print: false,
+                status_channel: String::new(),
             },
             None,
         );
@@ -400,5 +404,260 @@ fn resetting_the_demo_keeps_the_printer_configuration() {
         admin.printer_settings().unwrap().settings,
         configured,
         "the printer configuration must survive a demo reset"
+    );
+}
+
+// ======================================================= how the printer is
+//
+// The rule the brief exists for: a customer must not put money in for a
+// receipt that cannot come out. These walk it end to end over the protocol,
+// against a real daemon and no hardware at all — a TCP port nothing listens
+// on is a printer that does not answer, which is one of the three conditions
+// that stop a payment.
+
+/// Nothing configured knows nothing, and knowing nothing stops no sale.
+#[test]
+fn a_kiosk_with_no_printer_reports_unknown_and_refuses_no_customer() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    let status = client.printer_status(true).unwrap();
+    assert_eq!(status.state, "UNKNOWN");
+    assert_eq!(status.status_source, "NONE");
+    assert_eq!(status.paper, "UNKNOWN");
+    assert!(!status.online);
+    assert!(
+        !status.blocks_payment,
+        "an installation that cannot ask closed the lane"
+    );
+    // Every field the contract promises is present, and none of them is null
+    // except the two that mean "nothing to say".
+    assert!(!status.cover_open && !status.jammed && !status.cutter_error);
+    assert!(!status.unrecoverable_error);
+    assert_eq!(status.status_error, None);
+}
+
+/// A printer configured without a status channel falls back to the host
+/// spooler, which is the normal case for a USB receipt printer.
+#[test]
+fn a_printer_with_no_status_channel_is_read_through_the_host_spooler() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    client
+        .set_printer_settings(settings("PX_RECEIPT", false), None)
+        .unwrap();
+    let status = client.printer_status(true).unwrap();
+    assert_eq!(status.status_source, "SPOOLER");
+    assert!(status.status_checked_at.is_some(), "nothing was asked");
+    // `PX_RECEIPT` is not a queue any test host has, so the spooler says the
+    // printer is not there — which stops a payment, and should.
+    assert_eq!(status.state, "NO_RESPONSE");
+    assert!(status.blocks_payment);
+    assert!(status.status_error.is_some());
+}
+
+/// The third condition: a status channel that answers nothing.
+///
+/// Port 1 on loopback has nothing listening on any machine, so the `DLE EOT`
+/// read gets no byte back. That is `NO_RESPONSE`, and `NO_RESPONSE` stops a
+/// payment — which is the whole rule, proved without a printer.
+#[test]
+fn a_printer_that_does_not_answer_dle_eot_stops_a_payment() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    client
+        .set_printer_settings(
+            PrinterSettingsV1 {
+                status_channel: "127.0.0.1:1".to_owned(),
+                ..settings("PX_RECEIPT", false)
+            },
+            None,
+        )
+        .unwrap();
+
+    let status = client.printer_status(true).unwrap();
+    assert_eq!(status.status_source, "DLE_EOT");
+    assert_eq!(status.state, "NO_RESPONSE");
+    assert!(!status.online);
+    assert!(
+        status.blocks_payment,
+        "a printer that said nothing let a customer pay"
+    );
+    assert!(status.status_error.is_some());
+}
+
+/// The channel is a stored choice like the queue, and comes back after a
+/// restart: a kiosk reconfigured on a stand must not lose the one setting
+/// that decides whether it will take money.
+#[test]
+fn the_status_channel_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+
+    {
+        let _daemon = DaemonProcess::start(&database);
+        let client = client(&database, "edge-cli");
+        client
+            .set_printer_settings(
+                PrinterSettingsV1 {
+                    status_channel: "printer.local:9100".to_owned(),
+                    ..settings("PX_RECEIPT", true)
+                },
+                None,
+            )
+            .unwrap();
+    }
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+    let back = client.printer_settings().unwrap();
+    assert_eq!(back.settings.status_channel, "printer.local:9100");
+    assert_eq!(
+        client.printer_status(false).unwrap().status_source,
+        "DLE_EOT"
+    );
+}
+
+/// A malformed channel is refused on the way in rather than read as a
+/// printer that is not answering — which would stop every sale on the kiosk.
+#[test]
+fn a_status_channel_that_is_not_an_address_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    for bad in [
+        "printer.local:notaport",
+        ":9100",
+        "has a space:9100",
+        "usbprint",
+    ] {
+        let refused = client.set_printer_settings(
+            PrinterSettingsV1 {
+                status_channel: bad.to_owned(),
+                ..settings("PX_RECEIPT", false)
+            },
+            None,
+        );
+        assert!(refused.is_err(), "`{bad}` was accepted as an address");
+    }
+    // And empty is not malformed: it selects the spooler fallback.
+    client
+        .set_printer_settings(settings("PX_RECEIPT", false), None)
+        .unwrap();
+}
+
+/// The cached answer and a fresh one are both available, and a poll does not
+/// have to pay for a read.
+#[test]
+fn the_status_can_be_read_from_cache_or_asked_for_fresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    client
+        .set_printer_settings(settings("PX_RECEIPT", false), None)
+        .unwrap();
+    // Saving refreshes, so the cache already holds the new printer's answer.
+    let cached = client.printer_status(false).unwrap();
+    assert!(cached.status_checked_at.is_some());
+    let fresh = client.printer_status(true).unwrap();
+    assert_eq!(fresh.state, cached.state);
+    assert_eq!(fresh.status_source, cached.status_source);
+}
+
+/// The USB channel is a real `DLE EOT` channel, and says so.
+///
+/// On a runner with no readable USB printer it reports `NO_RESPONSE` — on
+/// Windows because the host exposes no USBPRINT device, on anything else
+/// because reading one is a Windows path. Both are the honest answer, and
+/// both are the one the rule acts on: a printer that cannot be asked about
+/// through the channel it was pointed at does not get a customer's money.
+///
+/// What this pins is that it never silently becomes `SPOOLER`. A channel that
+/// claimed `DLE_EOT` and quietly served queue flags is the exact confusion
+/// ADR 048 exists to prevent.
+#[test]
+fn the_usb_channel_reports_dle_eot_and_never_falls_back_to_queue_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    for channel in ["usb", "usb:vid_0519"] {
+        client
+            .set_printer_settings(
+                PrinterSettingsV1 {
+                    status_channel: channel.to_owned(),
+                    ..settings("PX_RECEIPT", false)
+                },
+                None,
+            )
+            .unwrap_or_else(|error| panic!("`{channel}` was refused: {error:?}"));
+
+        let status = client.printer_status(true).unwrap();
+        assert_eq!(status.status_source, "DLE_EOT", "`{channel}`");
+        assert_ne!(
+            status.status_source, "SPOOLER",
+            "`{channel}` quietly became queue flags"
+        );
+        assert_eq!(status.state, "NO_RESPONSE", "`{channel}`");
+        assert!(status.blocks_payment, "`{channel}`");
+        assert!(status.status_error.is_some(), "`{channel}` said nothing");
+    }
+}
+
+/// The three channels are offered, and the host says which USB devices it has.
+#[test]
+fn the_configuration_offers_whatever_readable_usb_printers_the_host_has() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+
+    let configuration = client.printer_settings().unwrap();
+    // Whatever the host reports, including nothing — never a guess and never
+    // an invented device. Every entry has to be something `usb:` can match.
+    for device in &configuration.status_devices {
+        assert!(!device.trim().is_empty(), "an empty USB device path");
+    }
+}
+
+/// A USB channel survives a restart like any other stored choice.
+#[test]
+fn the_usb_channel_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("pi-edge.db");
+    {
+        let _daemon = DaemonProcess::start(&database);
+        let client = client(&database, "edge-cli");
+        client
+            .set_printer_settings(
+                PrinterSettingsV1 {
+                    status_channel: "usb".to_owned(),
+                    ..settings("PX_RECEIPT", true)
+                },
+                None,
+            )
+            .unwrap();
+    }
+    let _daemon = DaemonProcess::start(&database);
+    let client = client(&database, "edge-cli");
+    assert_eq!(
+        client.printer_settings().unwrap().settings.status_channel,
+        "usb"
+    );
+    assert_eq!(
+        client.printer_status(false).unwrap().status_source,
+        "DLE_EOT"
     );
 }

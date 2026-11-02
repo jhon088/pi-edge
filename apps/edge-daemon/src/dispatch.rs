@@ -27,9 +27,9 @@ use edge_protocol::{
     CoreInfoV1, DeviceV1, EdgeStateV1, ErrorV1, HardwareStatusV1, InventoryBootstrapV1,
     InventoryMovementV1, InventoryPositionV1, JournalEventV1, MenuV1, OperationV1, PaymentResultV1,
     PendingOutboxV1, PrinterConfigurationV1, PrinterModelV1, PrinterQueueV1, PrinterSettingsV1,
-    ProductConfigurationV1, ProductLookupV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
-    RefundV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1,
-    RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
+    PrinterStatusV1, ProductConfigurationV1, ProductLookupV1, ReceiptV1, RecentSalesV1,
+    RefundEligibilityV1, RefundV1, RegisterSessionV1, RequestEnvelopeV1, ResponseEnvelopeV1,
+    ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
     SnapshotAssetsV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, MAX_ASSET_CHUNK_BYTES,
     PROTOCOL_VERSION,
 };
@@ -132,6 +132,7 @@ impl Dispatcher {
                 queue: settings.queue.clone(),
                 columns: settings.columns as i64,
                 auto_print: settings.auto_print,
+                status_channel: settings.status_channel.clone(),
             },
             models,
             available,
@@ -140,7 +141,56 @@ impl Dispatcher {
                 .as_ref()
                 .map(|control| control.driver().to_owned())
                 .unwrap_or_else(|| edge_hardware::UNCONFIGURED.to_owned()),
+            // Whatever the host says, and nothing when it says nothing.
+            status_devices: edge_hardware::readable_usb_printers(),
             reachable: self.printer.as_ref().and_then(|c| c.reachable()),
+        }
+    }
+
+    /// How the printer is, as the protocol publishes it.
+    ///
+    /// `None` for a runtime composed without a printer handle — a harness,
+    /// not a kiosk. A kiosk with a handle and nothing configured answers
+    /// `UNKNOWN`, which is a different thing and does not stop a sale.
+    fn printer_status(&self, refresh: bool) -> Option<PrinterStatusV1> {
+        let control = self.printer.as_ref()?;
+        let cached = if refresh {
+            control.refresh_status()
+        } else {
+            control.cached_status()
+        };
+        let status = &cached.status;
+        Some(PrinterStatusV1 {
+            online: status.online,
+            state: status.state.as_str().to_owned(),
+            cover_open: status.cover_open,
+            paper: status.paper.as_str().to_owned(),
+            cutter_error: status.cutter_error,
+            jammed: status.jammed,
+            unrecoverable_error: status.unrecoverable_error,
+            // Who can answer, from the channel installed — not who answered
+            // last, which is `NONE` until the first read and would make a
+            // working printer look mute.
+            status_source: control.status_source().as_str().to_owned(),
+            status_checked_at: cached.checked_at.map(|at| at.to_rfc3339()),
+            status_error: status.error.clone(),
+            blocks_payment: status.blocks_payment(),
+        })
+    }
+
+    /// Ask the printer how it is now that a document has gone through it.
+    ///
+    /// The third of the three occasions the rule names, and the one that
+    /// catches the roll running out *on* a receipt: the paper was there when
+    /// the payment started and is not there now, and the next customer must
+    /// be stopped rather than discover it. Off the answer's critical path —
+    /// the print already happened, and its result is not this.
+    fn reread_printer(&self) {
+        if let Some(control) = self.printer.as_ref() {
+            let refreshed = control.clone();
+            std::thread::spawn(move || {
+                refreshed.refresh_status();
+            });
         }
     }
 
@@ -443,6 +493,7 @@ impl Dispatcher {
             }
             OperationV1::PrintTestPage => {
                 let view = self.core.print_test_page().map_err(|e| self.app_error(e))?;
+                self.reread_printer();
                 Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
             }
             OperationV1::GetPrinterSettings => {
@@ -463,6 +514,7 @@ impl Dispatcher {
                     queue: payload.queue,
                     columns: usize::try_from(payload.columns).unwrap_or(48),
                     auto_print: payload.auto_print,
+                    status_channel: payload.status_channel,
                 };
                 control.apply(&settings).map_err(|detail| {
                     ErrorV1::new(error_codes::HARDWARE_INVALID_CONFIGURATION, detail)
@@ -475,6 +527,15 @@ impl Dispatcher {
                 );
                 Ok(ResultV1::PrinterConfiguration(self.printer_configuration()))
             }
+            OperationV1::GetPrinterStatus(payload) => {
+                let status = self.printer_status(payload.refresh).ok_or_else(|| {
+                    ErrorV1::new(
+                        error_codes::HARDWARE_NOT_CONFIGURED,
+                        "this runtime drives no printer",
+                    )
+                })?;
+                Ok(ResultV1::PrinterStatus(status))
+            }
             OperationV1::PrintTransaction(payload) => {
                 let command = payload
                     .into_command(Some(request_id))
@@ -483,6 +544,7 @@ impl Dispatcher {
                     .core
                     .print_transaction(command)
                     .map_err(|e| self.app_error(e))?;
+                self.reread_printer();
                 Ok(ResultV1::HardwareStatus(HardwareStatusV1::from(&view)))
             }
             OperationV1::OpenDrawerDiagnostic => {

@@ -663,6 +663,54 @@ for payment states that do not exist yet.
   Never a temporary directory nobody asked for, and never the network.
   (ADR 045)
 
+## The showroom kiosk (PX Kiosk)
+
+Demo surface, and said so plainly: this is the showroom's own layer around the
+core, not a decision about the product. It is listed here because two of its
+rules constrain things the core owns, and one of them turns a sale down.
+
+* **A launch asks whether this installation can serve every lane the build
+  ships**, not whether *a* catalog is active. The second question is a
+  different question, and the difference is a bug that shipped: an installation
+  seeded before Tim Hortons and Sbarro existed has an active catalog and two
+  blank lanes, and every launch answered "already seeded". The answer is still
+  the core's — one menu read per lane — never a marker file somebody could
+  delete. (`bootstrap::ensure_demo`)
+* **The printer answers for itself, or says it cannot.** `DLE EOT` over the
+  printer's own USBPRINT interface or its socket where a channel is
+  configured, the host spooler's queue flags otherwise, and `UNKNOWN` where
+  neither can speak. "The queue took the job" is never a sensor, and a
+  spooler's flags are never published as `DLE_EOT`. (ADR 048, ADR 035)
+* **One mutex covers printing and asking.** Held for a whole document and a
+  whole status read, in `SwappablePrinter`, because a status byte and a receipt
+  share one wire. (ADR 048)
+* **A cover open, a roll run out, or a printer that does not answer stops a
+  payment before it starts.** Paper *near* its end does not, and neither does
+  a printer nobody can ask: what blocks is an answer, never the absence of one.
+  Written once, in `PrinterStatus::blocks_payment`, published as
+  `blocks_payment`, and re-derived by nobody. (ADR 048)
+* **That gate is in the host, not the core.** A device failure still never
+  changes a sale, a cent or a unit of stock, and a receipt is still an
+  obligation that comes after the money (ADR 043). Refusing to *start* a
+  payment on this screen is a showroom policy one level out, and it lives at
+  the one door all four lanes pass through — not in React, which a reload can
+  undo. (ADR 048)
+* **Closing a kiosk is a sign on the door.** No new order starts; an order in
+  progress is never interrupted; Admin stays reachable, because it is the only
+  way to open it again. The sign is drawn at exactly one stage, in one
+  function, for both shells. (`flow::showsClosedSign`)
+* **The note acceptor is HTTPS only, and `/token` is a form-encoded OAuth2
+  password grant.** Both were wrong in the first build and both looked
+  identical to an unplugged device, so both are pinned by tests — one on the
+  exact bytes, one against a real TLS listener. (ADR 049)
+* **The note acceptor's certificate is accepted without being verified**, in
+  one named type in one module, for a box on a showroom LAN that carries an
+  amount of pesos and no cardholder data. Nothing else in this repository
+  opens a TLS connection, and nothing else may use that verifier. (ADR 049)
+* **`/demo/status` reads cache and local state only, and publishes no nulls.**
+  A floor monitor polls it every ten seconds with a three second budget; a
+  peripheral that is not there must never make the kiosk look offline.
+
 ## Engineering rules (frozen in milestone 7)
 
 The organisation and quality rules in **`CLAUDE.md`** at the repository root are

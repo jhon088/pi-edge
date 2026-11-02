@@ -128,6 +128,12 @@ pub enum OperationV1 {
     GetPrinterSettings,
     /// Point it at a different one. Device configuration, never a sale.
     SetPrinterSettings(PrinterSettingsV1),
+    /// How the receipt printer is: paper, cover, cutter, whether it answers.
+    ///
+    /// Read-only, and the question a kiosk asks before it takes money. The
+    /// core keeps a cached answer and refreshes it on a timer; `refresh`
+    /// asks the device now, which is what the moment before a payment needs.
+    GetPrinterStatus(PrinterStatusRequestV1),
     PrintTransaction(PrintTransactionRequestV1),
     OpenDrawerDiagnostic,
     GetRefundEligibility(TransactionRequestV1),
@@ -225,6 +231,7 @@ impl OperationV1 {
             OperationV1::PrintTestPage => "PRINT_TEST_PAGE",
             OperationV1::GetPrinterSettings => "GET_PRINTER_SETTINGS",
             OperationV1::SetPrinterSettings(_) => "SET_PRINTER_SETTINGS",
+            OperationV1::GetPrinterStatus(_) => "GET_PRINTER_STATUS",
             OperationV1::PrintTransaction(_) => "PRINT_TRANSACTION",
             OperationV1::OpenDrawerDiagnostic => "OPEN_DRAWER_DIAGNOSTIC",
             OperationV1::GetRefundEligibility(_) => "GET_REFUND_ELIGIBILITY",
@@ -405,6 +412,8 @@ pub enum ResultV1 {
     CashPosition(CashPositionV1),
     /// What receipt printer this installation drives, and what it could.
     PrinterConfiguration(PrinterConfigurationV1),
+    /// How that printer is right now.
+    PrinterStatus(PrinterStatusV1),
     SafeDrop(SafeDropV1),
     SessionCloseRequirements(SessionCloseRequirementsV1),
     SessionCloseResult(SessionCloseResultV1),
@@ -448,6 +457,7 @@ impl ResultV1 {
             ResultV1::TransactionPayments(_) => "TRANSACTION_PAYMENTS",
             ResultV1::CashPosition(_) => "CASH_POSITION",
             ResultV1::PrinterConfiguration(_) => "PRINTER_CONFIGURATION",
+            ResultV1::PrinterStatus(_) => "PRINTER_STATUS",
             ResultV1::SafeDrop(_) => "SAFE_DROP",
             ResultV1::SessionCloseRequirements(_) => "SESSION_CLOSE_REQUIREMENTS",
             ResultV1::SessionCloseResult(_) => "SESSION_CLOSE_RESULT",

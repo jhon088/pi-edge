@@ -17,12 +17,13 @@ use edge_protocol::{
     InventoryPositionV1, InventoryQueryV1, JournalEventV1, LimitRequestV1, MenuRequestV1, MenuV1,
     OpenRegisterSessionRequestV1, OperationV1, PageRequestV1, PaymentRequestV1, PaymentResultV1,
     PendingOutboxV1, PrintTransactionRequestV1, PrinterConfigurationV1, PrinterSettingsV1,
-    ProductConfigurationRequestV1, ProductConfigurationV1, ProductLookupV1, ProductSelectorV1,
-    PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1, RefundRequestV1,
-    RefundV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1, RequestEnvelopeV1,
-    ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
-    SessionCloseResultV1, SnapshotAssetsRequestV1, SnapshotAssetsV1, StartPaymentRequestV1,
-    SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
+    PrinterStatusV1, ProductConfigurationRequestV1, ProductConfigurationV1, ProductLookupV1,
+    ProductSelectorV1, PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
+    RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
+    RequestEnvelopeV1, ResponseEnvelopeV1, ResultV1, RetailTransactionV1, SafeDropV1,
+    SessionCloseRequirementsV1, SessionCloseResultV1, SnapshotAssetsRequestV1, SnapshotAssetsV1,
+    StartPaymentRequestV1, SubmitScanRequestV1, SyncCycleV1, SyncStatusV1, TransactionPaymentsV1,
+    TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -493,6 +494,17 @@ impl EdgeClient for IpcEdgeClient {
             self.call(OperationV1::SetPrinterSettings(request), request_id)?,
             ResultV1::PrinterConfiguration,
             "PRINTER_CONFIGURATION"
+        )
+    }
+
+    fn printer_status(&self, refresh: bool) -> Result<PrinterStatusV1, ClientError> {
+        expect_result!(
+            self.call(
+                OperationV1::GetPrinterStatus(edge_protocol::PrinterStatusRequestV1 { refresh }),
+                None
+            )?,
+            ResultV1::PrinterStatus,
+            "PRINTER_STATUS"
         )
     }
 

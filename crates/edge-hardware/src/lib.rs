@@ -13,12 +13,18 @@
 //!
 //! What this crate does **not** know: the POS domain, money, the catalog,
 //! SQLite, IPC, Tauri, Android, the application layer. It knows devices, and
-//! the only I/O in it is one std TCP socket in the ESC/POS adapter.
+//! the only I/O in it is one std TCP socket in the ESC/POS adapter and the
+//! host spooler behind `edge-winspool`.
 //!
 //! ```text
 //! application ─> PrinterPort ────┬─> EscPosTcpPrinter ─> TCP ─> 80mm printer
+//!                                ├─> EscPosSpoolerPrinter ─> host queue
 //!                                ├─> SimulatorPrinter      (opt-in only)
 //!                                └─> UnconfiguredPrinter   (nothing configured)
+//!
+//!             ─> PrinterStatusPort ─┬─> UsbDleEotStatus ─> DLE EOT ─> firmware
+//!                                   ├─> EscPosTcpStatus ─> DLE EOT ─> firmware
+//!                                   └─> SpoolerStatus   ─> host queue flags
 //!             ─> CashDrawerPort ─┬─> EscPosKickDrawer ─> DK pulse ─> drawer
 //!                                ├─> IminDrawer ─> Android host ─> Kotlin ─> SDK
 //!                                ├─> SimulatorDrawer       (opt-in only)
@@ -47,14 +53,22 @@ pub mod simulator;
 pub mod spooler;
 pub mod swappable;
 pub mod unconfigured;
+pub mod usbprint;
 
 pub use device::{HardwareDeviceKind, HardwareDeviceState, HardwareDeviceStatus};
 pub use drawer::{CashDrawerPort, DrawerOpenReason};
 pub use error::{DeliveryCertainty, HardwareError};
-pub use escpos::{EscPosConfig, EscPosKickDrawer, EscPosTcpPrinter};
-pub use printer::{PrintAlign, PrintDocument, PrintKind, PrintLine, PrinterPort};
+pub use escpos::{
+    is_status_byte, read_status, EscPosConfig, EscPosKickDrawer, EscPosTcpPrinter, EscPosTcpStatus,
+    StatusQuery,
+};
+pub use printer::{
+    PaperLevel, PrintAlign, PrintDocument, PrintKind, PrintLine, PrinterPort, PrinterState,
+    PrinterStatus, PrinterStatusPort, StatusSource,
+};
 pub use scanner::{KeyInput, ScanBuffer, ScanEvent, ScanPolicy};
 pub use simulator::{IminBridge, IminDrawer, SimulatedHardware, SimulatorDrawer, SimulatorPrinter};
-pub use spooler::{list_queues, EscPosSpoolerPrinter, SpoolerQueue};
+pub use spooler::{list_queues, EscPosSpoolerPrinter, SpoolerFault, SpoolerQueue, SpoolerStatus};
 pub use swappable::SwappablePrinter;
 pub use unconfigured::{UnconfiguredDrawer, UnconfiguredPrinter, UNCONFIGURED};
+pub use usbprint::{readable_usb_printers, UsbDleEotStatus};

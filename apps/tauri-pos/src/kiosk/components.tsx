@@ -247,6 +247,62 @@ export function ClosedScreen({ brandName }: { brandName: string }) {
   );
 }
 
+/**
+ * The printer has stopped the lane, and the customer is told why.
+ *
+ * Shown instead of letting the tender choice through. The rule it draws is
+ * the core's: a cover that is open, a roll that has run out, or a printer that
+ * is not answering stops a payment *before* it starts, because the one thing
+ * worse than a kiosk that cannot print is a kiosk that takes the money first.
+ * Paper merely near its end never gets here — that sells.
+ *
+ * There is no way past it but fixing the printer and pressing the button: the
+ * host refuses the payment command itself, so a screen that offered a
+ * "continue anyway" would only produce the same refusal one tap later.
+ */
+export function PrinterBlockedScreen({
+  message,
+  busy,
+  onRetry,
+}: {
+  /** The core's own words, passed through rather than rewritten. */
+  message: string;
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="k-closed" role="alert">
+      <Brand large />
+      <div className="k-closed__mark" aria-hidden>
+        🧾
+      </div>
+      {message.split("\n").map((line, at) =>
+        at === 0 ? (
+          <h1 className="k-h1" key={line}>
+            {line}
+          </h1>
+        ) : (
+          <p className="k-body" key={line}>
+            {line}
+          </p>
+        ),
+      )}
+      <p className="k-field__hint">
+        En un momento alguien se acercará a ayudarte.
+      </p>
+      <button
+        type="button"
+        className="k-btn k-btn--primary"
+        disabled={busy}
+        onClick={onRetry}
+      >
+        {busy ? "Revisando…" : "Volver a intentar"}
+      </button>
+      <PoweredBy />
+    </div>
+  );
+}
+
 export function Toast({ message }: { message: string }) {
   return (
     <div className="k-toast" role="alert">

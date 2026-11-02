@@ -16,9 +16,9 @@ use std::sync::Mutex;
 use edge_client::EdgeClient;
 use edge_protocol::{
     AddItemRequestV1, AssetRefV1, ChangeQuantityRequestV1, HardwareStatusV1, MenuV1,
-    PrintTransactionRequestV1, PrinterConfigurationV1, PrinterSettingsV1, ProductConfigurationV1,
-    ProductSelectorV1, ReceiptV1, RemoveItemRequestV1, RequestedSelectionV1, RetailTransactionV1,
-    StartPaymentRequestV1, MAX_ASSET_CHUNK_BYTES,
+    PrintTransactionRequestV1, PrinterConfigurationV1, PrinterSettingsV1, PrinterStatusV1,
+    ProductConfigurationV1, ProductSelectorV1, ReceiptV1, RemoveItemRequestV1,
+    RequestedSelectionV1, RetailTransactionV1, StartPaymentRequestV1, MAX_ASSET_CHUNK_BYTES,
 };
 use uuid::Uuid;
 
@@ -145,17 +145,90 @@ pub fn kiosk_totalize(
     bridge.client.totalize(None).map_err(BridgeError::from)
 }
 
+/// Refuse to start a payment the printer could not follow with a receipt.
+///
+/// **The gate, and the only one.** It sits here because `kiosk_pay` is the
+/// single door from any of the four lanes to `START_PAYMENT`, and because the
+/// screen must not be the thing enforcing it — React can be reloaded, and a
+/// rule a reload can remove is not a rule.
+///
+/// It is deliberately *not* in the core. A device failure never changes a
+/// sale, a cent or a unit of stock (CLAUDE.md), and the core keeps that
+/// promise: the receipt is a separate obligation that comes after the money
+/// and can fail without touching it (ADR 043). What this adds is a showroom
+/// policy one level out — do not let a customer put cash in for a ticket that
+/// cannot come out — and the right place for a policy about *this screen's*
+/// customers is this screen's host.
+///
+/// Three conditions stop it, and the core decides which: the cover is open,
+/// the roll has run out, or the printer is not answering. Paper near its end
+/// does not. Neither does a printer nobody can ask: an installation with no
+/// status channel knows nothing, and a rule that refuses every sale wherever
+/// the question cannot be put is a rule that closes the shop.
+pub(crate) fn require_a_printer_that_can_follow_through(
+    bridge: &EdgeBridge,
+) -> Result<(), BridgeError> {
+    // Asked *now* rather than read from the core's cache: between the last
+    // fifteen-second poll and this moment is exactly when somebody lifts the
+    // cover to change the roll.
+    let status = match bridge.client.printer_status(true) {
+        Ok(status) => status,
+        Err(error) => {
+            // A runtime that drives no printer, or a core that cannot be
+            // asked, does not get to refuse a customer over a printer.
+            tracing::warn!(%error, "the printer could not be asked before a payment");
+            return Ok(());
+        }
+    };
+    if !status.blocks_payment {
+        if status.paper == "NEAR_END" {
+            // Worth a line in the log for whoever restocks, and nothing more:
+            // the sale goes ahead.
+            tracing::warn!("the receipt roll is near its end");
+        }
+        return Ok(());
+    }
+    tracing::warn!(
+        state = %status.state,
+        paper = %status.paper,
+        cover_open = status.cover_open,
+        source = %status.status_source,
+        detail = status.status_error.as_deref().unwrap_or("-"),
+        "a payment was refused because the printer cannot print"
+    );
+    Err(BridgeError {
+        code: "PRINTER_UNAVAILABLE".to_owned(),
+        message: edge_hardware::PrinterStatus::BLOCKED_MESSAGE.to_owned(),
+    })
+}
+
+/// May a payment be started on this kiosk right now?
+///
+/// The same question `kiosk_pay` asks itself, exposed so the screen can ask
+/// it *before* it puts a payment screen in front of a customer rather than
+/// after. The screen asking is a courtesy; the refusal inside `kiosk_pay` is
+/// the rule, and it stands whether or not anybody asked first.
+#[tauri::command]
+pub fn kiosk_payment_allowed(bridge: tauri::State<'_, EdgeBridge>) -> Result<(), BridgeError> {
+    require_a_printer_that_can_follow_through(&bridge)
+}
+
 /// Take the money through whatever provider the composition root configured.
 ///
 /// For the demo that is the deterministic simulator, which is **opt-in and
 /// named**: nothing here pretends a sale was paid, and the amount comes from
 /// the totals the core computed (ADR 020, ADR 038).
+///
+/// Nothing is sent to a provider before the printer has been asked whether a
+/// receipt could follow; see
+/// [`require_a_printer_that_can_follow_through`].
 #[tauri::command]
 pub fn kiosk_pay(
     bridge: tauri::State<'_, EdgeBridge>,
     tender_type: String,
     amount_minor: i64,
 ) -> Result<RetailTransactionV1, BridgeError> {
+    require_a_printer_that_can_follow_through(&bridge)?;
     bridge
         .client
         .start_payment(
@@ -293,6 +366,23 @@ pub fn admin_save_printer_settings(
     bridge
         .client
         .set_printer_settings(settings, None)
+        .map_err(BridgeError::from)
+}
+
+/// How the printer is, for the admin screen.
+///
+/// `refresh` asks the device now. The screen asks fresh when an operator
+/// presses the button and cached while the panel is only being drawn, which
+/// is the same distinction the payment path makes for the same reason: a
+/// status read waits on a wire a receipt may be using.
+#[tauri::command]
+pub fn admin_printer_status(
+    bridge: tauri::State<'_, EdgeBridge>,
+    refresh: bool,
+) -> Result<PrinterStatusV1, BridgeError> {
+    bridge
+        .client
+        .printer_status(refresh)
         .map_err(BridgeError::from)
 }
 

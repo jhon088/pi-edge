@@ -83,6 +83,27 @@ export function screenAfterPick(from: Origin, outcome: Pick): Screen {
 }
 
 /**
+ * Whether the closed sign is the screen to draw.
+ *
+ * Closing a kiosk on a showroom floor means **"do not start a new order"**.
+ * It is a sign on the door, not a shutdown: the application keeps running,
+ * Admin keeps working, the business day is untouched, and — the part that is
+ * easy to get wrong — an order already in progress is never interrupted.
+ *
+ * So the sign is drawn at exactly one stage, the one where a new order would
+ * begin. A customer who was halfway through paying when an operator closed
+ * the kiosk finishes, gets their receipt, and *then* the lane goes quiet.
+ *
+ * It takes the stage as a string because the two shells have their own stage
+ * unions — the counter lanes browse a menu and the retail lane scans a lane —
+ * and the rule is the same for both. There is one place to change it, and
+ * the test below pins every stage either shell can be on.
+ */
+export function showsClosedSign(kioskOpen: boolean, stage: string): boolean {
+  return !kioskOpen && stage === "attract";
+}
+
+/**
  * Whether the note acceptor takes this payment, or the simulator does.
  *
  * Two conditions, both necessary: an operator enabled the device, and the

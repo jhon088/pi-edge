@@ -1875,6 +1875,73 @@ pub struct PrinterSettingsV1 {
     pub columns: i64,
     /// Put a receipt out by itself when a sale finalizes.
     pub auto_print: bool,
+    /// Where to ask this printer how it is, as `host[:port]`. Empty for none.
+    ///
+    /// Opaque above the composition root exactly as `queue` is: the core
+    /// resolves it, and no client may invent one the operator did not type.
+    /// It is here rather than in the environment because an operator
+    /// configures their own kiosk from its own screen.
+    ///
+    /// Empty is not "no status" — it selects the host spooler's own flags,
+    /// which report less than the firmware does and are the only thing
+    /// available for a USB printer the host exposes as a queue.
+    #[serde(default)]
+    pub status_channel: String,
+}
+
+/// Ask how the printer is.
+///
+/// `refresh` is the difference between "what did it last say" — which a
+/// ten-second poll wants, and which costs nothing — and "ask it now", which
+/// is what the instant before a customer pays has to do. Asking now waits for
+/// whatever is printing to finish, because a status query and a receipt share
+/// one wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PrinterStatusRequestV1 {
+    #[serde(default)]
+    pub refresh: bool,
+}
+
+/// What the receipt printer is, right now.
+///
+/// Published so a kiosk can refuse to take money for a receipt it cannot
+/// print, and so a floor monitor can see which machine needs paper. Every
+/// field is something that answered, or the `UNKNOWN` that says nothing did:
+/// "the queue accepted the job" is not a sensor and never appears here
+/// (ADR 035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrinterStatusV1 {
+    /// True only when `state` is `ONLINE`.
+    pub online: bool,
+    /// `ONLINE`, `OFFLINE`, `ERROR`, `NO_RESPONSE` or `UNKNOWN`.
+    pub state: String,
+    pub cover_open: bool,
+    /// `OK`, `NEAR_END`, `END` or `UNKNOWN`.
+    pub paper: String,
+    pub cutter_error: bool,
+    /// A recoverable error the device wants cleared — on a receipt printer,
+    /// a jam or a lifted head. The firmware does not distinguish them.
+    pub jammed: bool,
+    pub unrecoverable_error: bool,
+    /// `DLE_EOT`, `SPOOLER` or `NONE`: which source **can** answer for this
+    /// printer, from the channel the installation has configured.
+    ///
+    /// Not which one answered last. Together with `status_checked_at` it
+    /// separates the two questions a floor has to tell apart: `NONE` means
+    /// this printer cannot say, and a source with no `status_checked_at`
+    /// means it can and has not yet been asked.
+    pub status_source: String,
+    /// When the answer was taken. `None` before the first read.
+    pub status_checked_at: Option<String>,
+    /// Why the read failed, or what is wrong, in words an operator can act
+    /// on. `None` when there is nothing to say.
+    pub status_error: Option<String>,
+    /// Whether a payment may be started against this printer.
+    ///
+    /// Computed by the core and published as an answer rather than left for
+    /// each client to re-derive from the flags — which is how two clients
+    /// come to disagree about whether a lane is open.
+    pub blocks_payment: bool,
 }
 
 /// What the admin screen needs to offer a choice: what is configured now,
@@ -1888,6 +1955,14 @@ pub struct PrinterConfigurationV1 {
     pub available: Vec<PrinterQueueV1>,
     /// What the driver in force calls itself, for the diagnostic line.
     pub driver: String,
+    /// USB printers this host exposes a **readable** interface for.
+    ///
+    /// What a `status_channel` of `usb` can be pointed at, so the admin
+    /// screen can offer the real bidirectional channel instead of asking an
+    /// operator to guess whether their printer has one. Opaque strings;
+    /// empty where the host has none or the platform has no such interface.
+    #[serde(default)]
+    pub status_devices: Vec<String>,
     /// Whether the configured printer answered a probe. `None` when there is
     /// nothing configured to probe.
     pub reachable: Option<bool>,

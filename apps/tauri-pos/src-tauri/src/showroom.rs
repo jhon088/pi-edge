@@ -34,6 +34,19 @@ pub enum Vertical {
 }
 
 impl Vertical {
+    /// Every lane this build ships, in the order Admin offers them.
+    ///
+    /// One list, because two would drift: the shell reads it to draw the
+    /// brands and bootstrap reads it to decide whether this installation can
+    /// actually serve them all. Adding a brand is adding a variant and a row
+    /// here, and the next launch notices the new lane has no menu.
+    pub const ALL: [Self; 4] = [
+        Self::Restaurant,
+        Self::TimHortons,
+        Self::Sbarro,
+        Self::Retail,
+    ];
+
     /// The catalog channel this lane sells from.
     ///
     /// All four read one active snapshot — a store may have exactly one — and
@@ -366,6 +379,20 @@ mod tests {
         assert_eq!(Vertical::TimHortons.channel(), "KIOSK-TIM");
         assert_eq!(Vertical::Sbarro.channel(), "KIOSK-SBARRO");
         assert_eq!(Vertical::Retail.channel(), "KIOSK-RETAIL");
+    }
+
+    /// Every brand this build ships is in the list bootstrap checks, and no
+    /// two of them share a channel. A brand missing here is a brand whose
+    /// blank menu nobody would notice.
+    #[test]
+    fn every_lane_this_build_ships_is_listed_once() {
+        let channels: Vec<&str> = Vertical::ALL.iter().map(|lane| lane.channel()).collect();
+        assert_eq!(
+            channels,
+            ["KIOSK", "KIOSK-TIM", "KIOSK-SBARRO", "KIOSK-RETAIL"]
+        );
+        let unique: std::collections::BTreeSet<&&str> = channels.iter().collect();
+        assert_eq!(unique.len(), channels.len(), "two lanes share a channel");
     }
 
     #[test]

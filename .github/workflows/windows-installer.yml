@@ -108,6 +108,16 @@ jobs:
         working-directory: apps/tauri-pos
         run: pnpm build
 
+      # The kiosk's own unit tests: the pick-to-screen rule, the selection
+      # model, the closed sign, the camera. `cargo test --workspace` cannot
+      # reach them — this package is deliberately outside the workspace — so
+      # nothing ran them until they were added here.
+      - name: Gate — kiosk tests
+        id: kiosk_tests
+        if: always()
+        working-directory: apps/tauri-pos
+        run: pnpm test
+
       # ---------------------------------------------------- runtime sidecars
       # Before the Tauri crate is even *checked*: `tauri-build` validates the
       # `externalBin` entries from its build script, so `cargo clippy` on that
@@ -143,6 +153,12 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
+          # Same reason as the kiosk tests above: this crate is outside the
+          # Cargo workspace, so `cargo test --workspace` never sees it. Its
+          # tests cover the bootstrap guard that decides whether a lane gets
+          # its menu and the note acceptor's transport, which are exactly the
+          # two things a Windows build has got wrong before.
+          cargo test
 
       # ------------------------------------------------------------ packaging
 
@@ -343,6 +359,7 @@ jobs:
             @{ n = 'lint';             r = '${{ steps.lint.outcome }}' }
             @{ n = 'typecheck';        r = '${{ steps.typecheck.outcome }}' }
             @{ n = 'frontend build';   r = '${{ steps.fe_build.outcome }}' }
+            @{ n = 'kiosk tests';      r = '${{ steps.kiosk_tests.outcome }}' }
             @{ n = 'tauri crate';      r = '${{ steps.tauri_crate.outcome }}' }
             @{ n = 'edge-daemon/cli';  r = '${{ steps.core_build.outcome }}' }
             @{ n = 'sidecar staging';  r = '${{ steps.staging.outcome }}' }

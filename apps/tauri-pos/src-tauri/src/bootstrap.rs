@@ -7,7 +7,7 @@
 //! ```text
 //! 1. decide where mutable state lives      (never inside Program Files)
 //! 2. start PI.Edge, or adopt the running one
-//! 3. seed the demo once, and never again
+//! 3. install the bundled demo unless every lane already sells
 //! ```
 //!
 //! **No second core.** Both steps run the very binaries the development flow
@@ -187,30 +187,73 @@ pub fn ensure_core(database: &Path, owned: &CoreProcess) -> Result<(), Bootstrap
     )))
 }
 
-/// Does this installation already have a menu?
+/// Which of this build's lanes this installation cannot serve.
 ///
-/// The question that makes bootstrap idempotent. A second launch must not
-/// import the catalog again — that would stack a new snapshot on every start
-/// — so the core is asked whether one is already active, and the answer is
-/// the core's, not a marker file somebody could delete.
-fn already_seeded(database: &Path) -> bool {
+/// The question `ensure_demo` actually has to answer, and **not** the one it
+/// used to ask. "Is a catalog active?" is a different question, and the
+/// difference is the bug: an installation seeded by the release *before* Tim
+/// Hortons and Sbarro existed has a perfectly active catalog and two blank
+/// lanes. Every launch answered "already seeded" and skipped the import that
+/// would have filled them, so on an upgraded Windows kiosk both brands
+/// appeared in Admin — the shell lists them from its own table — and showed
+/// no products and no photographs. A clean install was fine, which is why it
+/// survived CI: the installer stages every brand's dataset correctly, and
+/// nothing ever imported two of them.
+///
+/// The answer is still the core's rather than a marker file somebody could
+/// delete: four menu reads, one per lane this build ships.
+fn lanes_without_a_menu(database: &Path) -> Vec<&'static str> {
     use edge_client::EdgeClient;
-    edge_client::IpcEdgeClient::for_database(database, "px-kiosk")
-        .ok()
-        .and_then(|client| client.catalog_status().ok())
-        .map(|status| status.active.is_some())
-        .unwrap_or(false)
+    let every = || -> Vec<&'static str> {
+        crate::showroom::Vertical::ALL
+            .iter()
+            .map(|lane| lane.channel())
+            .collect()
+    };
+
+    let Ok(client) = edge_client::IpcEdgeClient::for_database(database, "px-kiosk") else {
+        return every();
+    };
+    // Nothing imported at all: every lane is blank and there is no point
+    // asking four times.
+    match client.catalog_status() {
+        Ok(status) if status.active.is_some() => {}
+        // Either no catalog, or a core that cannot say. Both are answered by
+        // seeding, and a seed that cannot reach the core reports the real
+        // reason rather than this guess.
+        _ => return every(),
+    }
+
+    crate::showroom::Vertical::ALL
+        .iter()
+        .map(|lane| lane.channel())
+        .filter(|channel| {
+            client
+                .menu(Some((*channel).to_owned()))
+                .map(|menu| menu.items.is_empty())
+                .unwrap_or(true)
+        })
+        .collect()
 }
 
-/// Install the bundled demo, once.
+/// Install the bundled demo unless every lane this build ships already sells.
 ///
 /// Runs the same `demo-seed` the development flow runs, against the demo that
-/// shipped inside the installer. Returns `false` when there was nothing to do.
-pub fn seed_once(database: &Path, demo: &Path) -> Result<bool, BootstrapError> {
-    if already_seeded(database) {
-        tracing::info!("this installation already has an active menu; not re-seeding");
+/// shipped inside the installer. That command is idempotent and upgrade-safe
+/// — it reconciles the catalog version against what the core already holds,
+/// and a dataset that has not changed produces no second snapshot — so the
+/// guard here only has to decide whether there is anything to install, and
+/// may err towards running it. Returns `false` when there was nothing to do.
+pub fn ensure_demo(database: &Path, demo: &Path) -> Result<bool, BootstrapError> {
+    let blank = lanes_without_a_menu(database);
+    if blank.is_empty() {
+        tracing::info!("every lane this build ships already has its menu; not re-seeding");
         return Ok(false);
     }
+    tracing::info!(
+        lanes = blank.join(", "),
+        "these lanes have no menu; installing the bundled demo"
+    );
     if !demo.join("menu.json").is_file() {
         return Err(BootstrapError::Seed(format!(
             "the bundled demo is missing from {}",
@@ -254,4 +297,158 @@ pub fn bundled_demo(app: &tauri::AppHandle) -> PathBuf {
     app.path()
         .resolve("demo", tauri::path::BaseDirectory::Resource)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../demo"))
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dataset that ships inside the installer, as the checkout holds it.
+    fn demo_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../demo")
+    }
+
+    /// The dataset as the release *before* Tim Hortons and Sbarro shipped it:
+    /// the restaurant alone, with no brand folders beside it and therefore no
+    /// availability rows naming aisles it was never given.
+    ///
+    /// This is what an upgraded Windows kiosk actually has in its database,
+    /// and reproducing it is the whole point: the bug was invisible on a clean
+    /// install.
+    fn restaurant_only(into: &Path) -> PathBuf {
+        let dataset = into.join("demo-before-the-brands");
+        let assets = dataset.join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        let mut menu: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(demo_dir().join("menu.json")).unwrap()).unwrap();
+        menu["availability"] = serde_json::json!([]);
+        std::fs::write(
+            dataset.join("menu.json"),
+            serde_json::to_vec_pretty(&menu).unwrap(),
+        )
+        .unwrap();
+        for entry in std::fs::read_dir(demo_dir().join("assets")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                std::fs::copy(&path, assets.join(path.file_name().unwrap())).unwrap();
+            }
+        }
+        dataset
+    }
+
+    /// A daemon on a throwaway database, stopped when the test ends.
+    struct Core {
+        process: CoreProcess,
+        database: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    impl Core {
+        fn start() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let database = dir.path().join("pi-edge.db");
+            let process = CoreProcess::default();
+            ensure_core(&database, &process).expect("a daemon for the test");
+            Self {
+                process,
+                database,
+                _dir: dir,
+            }
+        }
+    }
+
+    impl Drop for Core {
+        fn drop(&mut self) {
+            self.process.shutdown();
+        }
+    }
+
+    /// The regression: an installation on the old dataset has an active
+    /// catalog and two blank lanes, and bootstrap has to fill them.
+    #[test]
+    fn an_installation_from_before_the_brands_gets_their_menus_on_the_next_launch() {
+        let core = Core::start();
+        let old = restaurant_only(core._dir.path());
+
+        // What the previous release left behind.
+        assert!(
+            ensure_demo(&core.database, &old).unwrap(),
+            "the old dataset did not install"
+        );
+        let blank = lanes_without_a_menu(&core.database);
+        assert_eq!(
+            blank,
+            ["KIOSK-TIM", "KIOSK-SBARRO", "KIOSK-RETAIL"],
+            "the old dataset was expected to leave exactly these lanes blank"
+        );
+
+        // The upgraded app launches. This is the call that used to answer
+        // "already seeded" and leave Tim Hortons and Sbarro empty.
+        assert!(
+            ensure_demo(&core.database, &demo_dir()).unwrap(),
+            "the upgrade installed nothing; the two brands stay blank"
+        );
+        assert!(
+            lanes_without_a_menu(&core.database).is_empty(),
+            "a lane this build ships still has no menu"
+        );
+
+        // And the shelves the acceptance criteria name, with a photograph on
+        // every item: an upgraded installation has to end up where a clean
+        // one does, not merely non-empty.
+        use edge_client::EdgeClient;
+        let client =
+            edge_client::IpcEdgeClient::for_database(&core.database, "px-kiosk").expect("a client");
+        for (channel, expected) in [("KIOSK-TIM", 13), ("KIOSK-SBARRO", 14)] {
+            let menu = client
+                .menu(Some(channel.to_owned()))
+                .unwrap_or_else(|error| panic!("{channel}: {error:?}"));
+            assert_eq!(menu.items.len(), expected, "{channel} shelf");
+            assert_eq!(menu.categories.len(), 4, "{channel} aisles");
+            for item in &menu.items {
+                assert!(
+                    item.image.is_some(),
+                    "{} reached {channel} with no photograph",
+                    item.product_ref
+                );
+                assert!(item.from_price.minor > 0, "{} is free", item.product_ref);
+            }
+        }
+        // The two lanes that already worked still work.
+        for channel in ["KIOSK", "KIOSK-RETAIL"] {
+            assert!(
+                !client
+                    .menu(Some(channel.to_owned()))
+                    .expect("a menu")
+                    .items
+                    .is_empty(),
+                "the upgrade emptied {channel}"
+            );
+        }
+    }
+
+    /// And the launch after that costs nothing: the guard still has to stop a
+    /// kiosk re-importing its catalog every morning.
+    #[test]
+    fn a_launch_with_every_lane_already_selling_installs_nothing() {
+        let core = Core::start();
+        assert!(ensure_demo(&core.database, &demo_dir()).unwrap());
+        assert!(
+            !ensure_demo(&core.database, &demo_dir()).unwrap(),
+            "the second launch re-imported the catalog"
+        );
+        assert!(lanes_without_a_menu(&core.database).is_empty());
+    }
+
+    /// A database nothing has ever imported into is every lane blank, not an
+    /// error — that is the clean install, and it must seed.
+    #[test]
+    fn a_fresh_installation_reports_every_lane_blank() {
+        let core = Core::start();
+        assert_eq!(
+            lanes_without_a_menu(&core.database),
+            ["KIOSK", "KIOSK-TIM", "KIOSK-SBARRO", "KIOSK-RETAIL"]
+        );
+    }
 }

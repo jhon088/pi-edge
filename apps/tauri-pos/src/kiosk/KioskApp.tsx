@@ -24,15 +24,23 @@ import {
   cancelTransaction,
   changeQuantity,
   describe,
+  isBridgeError,
   fetchConfiguration,
   fetchMenu,
   fetchPrinterSettings,
   removeItem,
   startTransaction,
   totalize,
+  paymentAllowed,
 } from "./api";
 import type { Invitation } from "./brands";
-import { Gate, screenAfterPick, type Origin, type Stage } from "./flow";
+import {
+  Gate,
+  screenAfterPick,
+  showsClosedSign,
+  type Origin,
+  type Stage,
+} from "./flow";
 import { usePaymentJourney } from "./payment";
 import {
   Brand,
@@ -43,6 +51,7 @@ import {
   Splash,
   Steps,
   Toast,
+  PrinterBlockedScreen,
 } from "./components";
 import {
   AttractScreen,
@@ -163,6 +172,13 @@ function Kiosk({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<Method>("CARD");
+  /**
+   * Why the printer is stopping this sale, when it is.
+   *
+   * Held rather than thrown: the customer is standing there and the lane has
+   * to say what is wrong and offer to look again, not fail a tender choice.
+   */
+  const [printerBlock, setPrinterBlock] = useState<string | null>(null);
   /** Where to go once this product is added: the menu, or back to the cart. */
   const [returnTo, setReturnTo] = useState<"menu" | "cart">("menu");
   /** The dish the "Completa tu pedido" step is offering alongside. */
@@ -275,6 +291,7 @@ function Kiosk({
       setConfirmed(null);
       resetPaying();
       setMethod("CARD");
+      setPrinterBlock(null);
       setReturnTo("menu");
       setStage("attract");
     },
@@ -479,6 +496,9 @@ function Kiosk({
       const totalized = await totalize();
       setTransaction(totalized);
       resetPaying();
+      // Asked again on the way in, by `choosePayment`. A notice left over
+      // from the last attempt would hide a printer somebody has since fixed.
+      setPrinterBlock(null);
       setStage("method");
     } catch (reason) {
       complain(reason);
@@ -487,10 +507,49 @@ function Kiosk({
     }
   };
 
-  const choosePayment = (picked: Method) => {
-    setMethod(picked);
-    resetPaying();
-    setStage("payment");
+  /**
+   * Take the customer to the payment screen — unless the printer cannot
+   * follow it with a receipt.
+   *
+   * The question is put to the host before the screen changes, which is the
+   * whole point: nobody should reach a payment screen for a ticket that
+   * cannot come out. The host refuses the payment command too, so this is the
+   * courteous half of a rule that holds either way.
+   */
+  const choosePayment = async (picked: Method) => {
+    setBusy(true);
+    try {
+      await paymentAllowed();
+      setMethod(picked);
+      setPrinterBlock(null);
+      resetPaying();
+      setStage("payment");
+    } catch (reason) {
+      if (isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE") {
+        setPrinterBlock(reason.message);
+      } else {
+        complain(reason);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Look again, after somebody has closed the cover or changed the roll. */
+  const recheckPrinter = async () => {
+    setBusy(true);
+    try {
+      await paymentAllowed();
+      setPrinterBlock(null);
+    } catch (reason) {
+      setPrinterBlock(
+        isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE"
+          ? reason.message
+          : describe(reason),
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
   // --- render -------------------------------------------------------------
@@ -517,6 +576,8 @@ function Kiosk({
             setConfirmed(null);
             resetPaying();
             setMethod("CARD");
+            setPrinterBlock(null);
+      setPrinterBlock(null);
             setReturnTo("menu");
             refreshAutoPrint();
             setStage("attract");
@@ -560,14 +621,14 @@ function Kiosk({
       null;
     return (
       <div className="k-app">
-        {kioskOpen ? (
+        {showsClosedSign(kioskOpen, stage) ? (
+          <ClosedScreen brandName={brandName} />
+        ) : (
           <AttractScreen
             heroAsset={hero}
             invitation={invitation}
             onStart={begin}
           />
-        ) : (
-          <ClosedScreen brandName={brandName} />
         )}
         {corner}
         <button
@@ -751,10 +812,18 @@ function Kiosk({
             onBack={() => setStage("cart")}
           />
           <Screen>
-            <MethodScreen
-              due={transaction.totals.grand_total}
-              onPick={choosePayment}
-            />
+            {printerBlock ? (
+              <PrinterBlockedScreen
+                message={printerBlock}
+                busy={busy}
+                onRetry={() => void recheckPrinter()}
+              />
+            ) : (
+              <MethodScreen
+                due={transaction.totals.grand_total}
+                onPick={(picked) => void choosePayment(picked)}
+              />
+            )}
           </Screen>
         </>
       ) : null}

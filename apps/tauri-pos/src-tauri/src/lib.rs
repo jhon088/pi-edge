@@ -378,10 +378,11 @@ pub fn run() {
 
             if installed {
                 // Everything a person would otherwise do at a prompt: start
-                // PI.Edge, and install the demo the first time only.
+                // PI.Edge, and install the demo if this installation cannot
+                // already serve every lane the build ships.
                 let owned = app.state::<bootstrap::CoreProcess>();
                 bootstrap::ensure_core(&database, &owned)?;
-                bootstrap::seed_once(&database, &bootstrap::bundled_demo(app.handle()))?;
+                bootstrap::ensure_demo(&database, &bootstrap::bundled_demo(app.handle()))?;
             }
 
             let bridge = EdgeBridge::connect(database.clone()).map_err(|error| {
@@ -450,6 +451,7 @@ pub fn run() {
             kiosk::kiosk_cancel_transaction,
             kiosk::kiosk_totalize,
             kiosk::kiosk_pay,
+            kiosk::kiosk_payment_allowed,
             kiosk::kiosk_receipt,
             kiosk::kiosk_asset,
             showroom::kiosk_preferences,
@@ -471,6 +473,7 @@ pub fn run() {
             retail::retail_scan,
             retail::retail_add_item,
             kiosk::admin_printer_settings,
+            kiosk::admin_printer_status,
             kiosk::admin_save_printer_settings,
             kiosk::admin_test_print,
             kiosk::admin_print_receipt,

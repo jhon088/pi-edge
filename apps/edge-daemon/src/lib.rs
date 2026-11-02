@@ -182,6 +182,12 @@ pub fn run_until(config: DaemonConfig, shutdown: Arc<AtomicBool>) -> Result<(), 
         &SystemClock.now().to_rfc3339(),
     )?;
 
+    // The printer's own health, on a timer and off every request path. A
+    // kiosk must not take money for a receipt it cannot print, and the
+    // question costs four socket round trips — so it is asked every fifteen
+    // seconds here, again the instant before a payment, and again after a
+    // document goes through (ADR 035).
+    printer_control.watch();
     let dispatcher = Arc::new(
         Dispatcher::with_refund_authority(Arc::clone(&core), Arc::clone(&state), refund_authority)
             .with_printer_control(printer_control),

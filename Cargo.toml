@@ -42,6 +42,12 @@ windows-sys = { version = "0.59", features = [
     # these two. Type definitions only; nothing is linked for them.
     "Win32_Graphics_Gdi",
     "Win32_Security",
+    # Reading a `DLE EOT` reply back from a USB receipt printer: the USBPRINT
+    # device interface is found through SetupAPI and opened as a file. A print
+    # queue cannot carry a status query back; this is the channel that can.
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
 ] }
 signal-hook = "0.4.5"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }

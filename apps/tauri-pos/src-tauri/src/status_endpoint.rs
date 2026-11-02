@@ -22,6 +22,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use edge_client::{EdgeClient, IpcEdgeClient};
+use edge_protocol::{PrinterConfigurationV1, PrinterStatusV1};
 use serde_json::{json, Value};
 
 use crate::showroom;
@@ -48,13 +49,10 @@ struct CoreHealth {
 impl Default for CoreHealth {
     fn default() -> Self {
         Self {
-            printer: json!({
-                "online": false,
-                "state": "UNKNOWN",
-                "paper": "UNKNOWN",
-                "jammed": Value::Null,
-                "paper_states": ["UNKNOWN"],
-            }),
+            // Before the first round of the watcher, through the very
+            // function a real answer goes through — so a poller arriving in
+            // the first five seconds cannot see a different shape.
+            printer: printer_payload(None, None),
             business_day: "CLOSED",
         }
     }
@@ -218,61 +216,85 @@ fn payload(
     })
 }
 
-/// What the printer is, from the core's own hardware state and its model.
+/// What the printer is, from the core's own status read and its model.
 ///
-/// `paper` and `jammed` are only ever filled in for a model whose firmware
-/// reports them, and no model does *yet* — nothing in this build reads a
-/// status byte back. What the model does decide is which states are even
-/// possible, which is published as `paper_states` so a floor monitor can tell
-/// "this printer cannot say" apart from "this printer has not said". Claiming
-/// `OK` because a print succeeded would be inventing a sensor (ADR 035).
+/// The cached answer, not a fresh one: the poller has a three second budget
+/// and a status read can wait on a socket. The core refreshes it every
+/// fifteen seconds, before every payment and after every document, so what is
+/// here is at most fifteen seconds old.
 fn printer(client: &IpcEdgeClient) -> Value {
-    let settings = client.printer_settings().ok();
-    let model = settings.as_ref().and_then(|configuration| {
+    printer_payload(
+        client.printer_settings().ok().as_ref(),
+        client.printer_status(false).ok().as_ref(),
+    )
+}
+
+/// The printer block a store app polls, from parts that are already decided.
+///
+/// Every field carries a value and **none of them is null**: a floor app has
+/// to be able to branch without checking for absence, and `UNKNOWN` / `""`
+/// say "nothing answered" more clearly than a missing key. What is published
+/// is what somebody answered — the device's firmware over `DLE EOT`, or the
+/// host spooler's own flags — never an inference from a print having
+/// succeeded, which is not a sensor (ADR 035).
+///
+/// `status_source` says which of the two can answer for this printer, and
+/// `status_checked_at` whether it has yet. The two together are how a floor
+/// tells "this printer cannot say" from "it has not said".
+fn printer_payload(
+    settings: Option<&PrinterConfigurationV1>,
+    status: Option<&PrinterStatusV1>,
+) -> Value {
+    let model = settings.and_then(|configuration| {
         let chosen = &configuration.settings.model;
         configuration
             .models
             .iter()
             .find(|entry| &entry.id == chosen)
-            .cloned()
     });
-    let states: Vec<String> = model
-        .as_ref()
-        .map(|entry| entry.paper_states.clone())
-        .unwrap_or_else(|| vec!["UNKNOWN".to_owned()]);
-    let reports_paper = model.as_ref().is_some_and(|entry| entry.reports_paper);
-    let reports_jam = model.as_ref().is_some_and(|entry| entry.reports_jam);
 
-    match client.hardware_status() {
-        Ok(hardware) => {
-            let device = hardware.printer;
-            json!({
-                "online": device.state == "AVAILABLE",
-                "state": device.state,
-                "driver": device.driver,
-                "model": model.as_ref().map(|entry| entry.id.clone()),
-                "model_label": model.as_ref().map(|entry| entry.label.clone()),
-                // What this model *could* say, and what it has said.
-                "reports_paper": reports_paper,
-                "reports_jam": reports_jam,
-                "paper_states": states,
-                "paper": "UNKNOWN",
-                "jammed": Value::Null,
-                "last_error": device.last_error_code,
-            })
-        }
-        Err(error) => json!({
-            "online": false,
-            "state": "UNKNOWN",
-            "model": model.as_ref().map(|entry| entry.id.clone()),
-            "reports_paper": reports_paper,
-            "reports_jam": reports_jam,
-            "paper_states": states,
-            "paper": "UNKNOWN",
-            "jammed": Value::Null,
-            "last_error": error.to_string(),
-        }),
-    }
+    json!({
+        // What the device is.
+        "configured": settings.is_some_and(|c| c.settings.enabled),
+        "queue": settings.map(|c| c.settings.queue.clone()).unwrap_or_default(),
+        "model": model.map(|entry| entry.id.clone()).unwrap_or_default(),
+        "model_label": model.map(|entry| entry.label.clone()).unwrap_or_default(),
+        "driver": settings.map(|c| c.driver.clone()).unwrap_or_default(),
+        // What this model *could* say, which is not what it has said.
+        "reports_paper": model.is_some_and(|entry| entry.reports_paper),
+        "reports_jam": model.is_some_and(|entry| entry.reports_jam),
+        "paper_states": model
+            .map(|entry| entry.paper_states.clone())
+            .unwrap_or_else(|| vec!["UNKNOWN".to_owned()]),
+
+        // What it says. The contract a store app polls.
+        "online": status.is_some_and(|status| status.online),
+        "state": status
+            .map(|status| status.state.clone())
+            .unwrap_or_else(|| "UNKNOWN".to_owned()),
+        "cover_open": status.is_some_and(|status| status.cover_open),
+        "paper": status
+            .map(|status| status.paper.clone())
+            .unwrap_or_else(|| "UNKNOWN".to_owned()),
+        "cutter_error": status.is_some_and(|status| status.cutter_error),
+        "jammed": status.is_some_and(|status| status.jammed),
+        "unrecoverable_error": status.is_some_and(|status| status.unrecoverable_error),
+        "status_source": status
+            .map(|status| status.status_source.clone())
+            .unwrap_or_else(|| "NONE".to_owned()),
+        // Empty rather than null, for both of these: a poller branches on
+        // truthiness and never on a missing key.
+        "status_checked_at": status
+            .and_then(|status| status.status_checked_at.clone())
+            .unwrap_or_default(),
+        "status_error": status
+            .and_then(|status| status.status_error.clone())
+            .unwrap_or_default(),
+        // Whether this printer is currently stopping sales, as the core
+        // decided it — published so a floor sees the same answer the kiosk
+        // acted on rather than re-deriving it from the flags.
+        "blocks_payment": status.is_some_and(|status| status.blocks_payment),
+    })
 }
 
 /// The note recycler: whether it is on, whether it answers, and what it holds.
@@ -475,6 +497,123 @@ mod tests {
         assert_eq!(major(-1_250), json!(-12.5));
         assert_eq!(major(1), json!(0.01));
         assert_eq!(major(99), json!(0.99));
+    }
+
+    // ----------------------------------------------------- the printer block
+    //
+    // The contract a store app polls, and the one the brief is strictest
+    // about: every field present, every field a value.
+
+    /// Every field the contract names, and not one of them null.
+    #[test]
+    fn the_printer_block_carries_every_field_with_a_value() {
+        const PROMISED: [&str; 11] = [
+            "online",
+            "state",
+            "cover_open",
+            "paper",
+            "cutter_error",
+            "jammed",
+            "unrecoverable_error",
+            "status_source",
+            "status_checked_at",
+            "status_error",
+            "blocks_payment",
+        ];
+        // Both ends of the range: a kiosk nobody has configured, and one with
+        // a printer in trouble.
+        for (what, block) in [
+            ("an unconfigured kiosk", printer_payload(None, None)),
+            (
+                "a printer with its cover open",
+                printer_payload(
+                    None,
+                    Some(&PrinterStatusV1 {
+                        online: false,
+                        state: "OFFLINE".to_owned(),
+                        cover_open: true,
+                        paper: "NEAR_END".to_owned(),
+                        cutter_error: false,
+                        jammed: false,
+                        unrecoverable_error: false,
+                        status_source: "DLE_EOT".to_owned(),
+                        status_checked_at: Some("2026-11-02T10:00:00Z".to_owned()),
+                        status_error: Some("the cover is open".to_owned()),
+                        blocks_payment: true,
+                    }),
+                ),
+            ),
+        ] {
+            for field in PROMISED {
+                let value = block.get(field);
+                assert!(value.is_some(), "{what} omits `{field}`");
+                assert!(
+                    !value.is_some_and(Value::is_null),
+                    "{what} publishes `{field}` as null"
+                );
+            }
+        }
+    }
+
+    /// A kiosk with nothing configured says so without claiming a sensor.
+    #[test]
+    fn an_unconfigured_printer_claims_nothing_and_stops_nothing() {
+        let block = printer_payload(None, None);
+        assert_eq!(block["state"], "UNKNOWN");
+        assert_eq!(block["paper"], "UNKNOWN");
+        assert_eq!(block["status_source"], "NONE");
+        assert_eq!(block["online"], false);
+        assert_eq!(block["configured"], false);
+        // Never asked, and said so as an empty string rather than a null.
+        assert_eq!(block["status_checked_at"], "");
+        assert_eq!(block["status_error"], "");
+        assert_eq!(
+            block["blocks_payment"], false,
+            "a kiosk that cannot ask closed the lane"
+        );
+    }
+
+    /// The three conditions, as a store app would read them off the wire.
+    #[test]
+    fn the_three_conditions_that_stop_a_payment_are_visible_on_the_wire() {
+        let status = |state: &str, paper: &str, cover: bool| PrinterStatusV1 {
+            online: false,
+            state: state.to_owned(),
+            cover_open: cover,
+            paper: paper.to_owned(),
+            cutter_error: false,
+            jammed: false,
+            unrecoverable_error: false,
+            status_source: "DLE_EOT".to_owned(),
+            status_checked_at: Some("2026-11-02T10:00:00Z".to_owned()),
+            status_error: Some("something".to_owned()),
+            // The core's answer, carried verbatim — this block never
+            // re-derives it from the flags.
+            blocks_payment: true,
+        };
+        for (what, reported) in [
+            ("the cover", status("OFFLINE", "OK", true)),
+            ("no paper", status("OFFLINE", "END", false)),
+            ("no answer", status("NO_RESPONSE", "UNKNOWN", false)),
+        ] {
+            let block = printer_payload(None, Some(&reported));
+            assert_eq!(block["blocks_payment"], true, "{what}");
+            assert_ne!(block["status_error"], "", "{what} said nothing useful");
+        }
+
+        // And the one that does not: a low roll still sells.
+        let low = PrinterStatusV1 {
+            online: true,
+            state: "ONLINE".to_owned(),
+            paper: "NEAR_END".to_owned(),
+            blocks_payment: false,
+            status_error: None,
+            ..status("ONLINE", "NEAR_END", false)
+        };
+        let block = printer_payload(None, Some(&low));
+        assert_eq!(block["paper"], "NEAR_END");
+        assert_eq!(block["blocks_payment"], false);
+        assert_eq!(block["status_error"], "");
     }
 
     #[test]

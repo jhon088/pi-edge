@@ -12,12 +12,12 @@ use edge_protocol::{
     InitDeviceRequestV1, InventoryBootstrapV1, InventoryMovementRequestV1, InventoryMovementV1,
     InventoryPositionV1, InventoryQueryV1, JournalEventV1, MenuV1, OpenRegisterSessionRequestV1,
     PaymentRequestV1, PaymentResultV1, PendingOutboxV1, PrintTransactionRequestV1,
-    PrinterConfigurationV1, PrinterSettingsV1, ProductConfigurationV1, ProductLookupV1,
-    ProductSelectorV1, PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1, RefundEligibilityV1,
-    RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1, ReopenSessionRequestV1,
-    RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1, SessionCloseResultV1,
-    SnapshotAssetsV1, StartPaymentRequestV1, SubmitScanRequestV1, SyncCycleV1, SyncStatusV1,
-    TransactionPaymentsV1, TransactionRequestV1,
+    PrinterConfigurationV1, PrinterSettingsV1, PrinterStatusV1, ProductConfigurationV1,
+    ProductLookupV1, ProductSelectorV1, PutCatalogChunkRequestV1, ReceiptV1, RecentSalesV1,
+    RefundEligibilityV1, RefundRequestV1, RefundV1, RegisterSessionV1, RemoveItemRequestV1,
+    ReopenSessionRequestV1, RetailTransactionV1, SafeDropV1, SessionCloseRequirementsV1,
+    SessionCloseResultV1, SnapshotAssetsV1, StartPaymentRequestV1, SubmitScanRequestV1,
+    SyncCycleV1, SyncStatusV1, TransactionPaymentsV1, TransactionRequestV1,
 };
 use uuid::Uuid;
 
@@ -141,6 +141,12 @@ pub trait EdgeClient: Debug + Send + Sync {
         request: PrinterSettingsV1,
         request_id: Option<Uuid>,
     ) -> Result<PrinterConfigurationV1, ClientError>;
+    /// How the printer is: paper, cover, cutter, whether it answers.
+    ///
+    /// `refresh` asks the device now rather than reading the core's cached
+    /// answer. A kiosk about to take money asks now; a floor monitor polling
+    /// every ten seconds does not.
+    fn printer_status(&self, refresh: bool) -> Result<PrinterStatusV1, ClientError>;
     /// Print a finalized sale, or print it again. A reprint changes nothing.
     fn print_transaction(
         &self,

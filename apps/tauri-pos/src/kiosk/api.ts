@@ -17,6 +17,7 @@ import type {
   Menu,
   PrinterConfiguration,
   PrinterSettings,
+  PrinterStatus,
   ProductConfiguration,
   RequestedSelection,
   RetailTransaction,
@@ -60,6 +61,11 @@ export function describe(value: unknown): string {
       return "Ese código no se leyó bien. Vuelve a pasar el producto.";
     case "SCAN_NO_ACTIVE_TRANSACTION":
       return "Pasa el producto otra vez para empezar.";
+    case "PRINTER_UNAVAILABLE":
+      // The host composed this one from the core's own answer, in the words
+      // the brief asked for. Passed through rather than rewritten here, so
+      // there is one wording and the log and the screen agree.
+      return value.message;
     default:
       return value.message;
   }
@@ -131,6 +137,19 @@ export function totalize(): Promise<RetailTransaction> {
  * The amount is the core's own grand total, handed straight back: the screen
  * never decides what is owed, and never decides that it was paid.
  */
+/**
+ * May a payment be started at all?
+ *
+ * Asked before the payment screen opens, so a customer is told the printer is
+ * down instead of watching a tender choice fail. Resolves when the lane is
+ * clear and rejects with `PRINTER_UNAVAILABLE` when it is not — the same
+ * refusal `pay` itself would give, which is what makes this a courtesy rather
+ * than the rule.
+ */
+export function paymentAllowed(): Promise<void> {
+  return invoke("kiosk_payment_allowed");
+}
+
 export function pay(
   tenderType: string,
   amountMinor: number,
@@ -308,6 +327,17 @@ export function savePrinterSettings(
 
 export function testPrint(): Promise<unknown> {
   return invoke("admin_test_print");
+}
+
+/**
+ * How the printer is.
+ *
+ * `refresh` asks the device now rather than reading the core's cached answer.
+ * Admin asks fresh when an operator presses the button and cached while the
+ * panel is just sitting there.
+ */
+export function printerStatus(refresh: boolean): Promise<PrinterStatus> {
+  return invoke<PrinterStatus>("admin_printer_status", { refresh });
 }
 
 /**
