@@ -954,6 +954,7 @@ mod tests {
                 online: true,
                 device: Some("CashGenic 2.1.49".to_owned()),
                 state: "Idle".to_owned(),
+                phase: "NONE".to_owned(),
                 deposited_minor: 0,
                 outstanding_minor: 0,
                 change_minor: 0,

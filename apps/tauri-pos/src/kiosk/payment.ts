@@ -21,7 +21,7 @@ import {
   printReceipt,
   recordSale,
 } from "./api";
-import { takesCash } from "./flow";
+import { cashOutcome, takesCash } from "./flow";
 import type { Method } from "./screens";
 import type { CashGenicStatus, RetailTransaction } from "./types";
 
@@ -114,10 +114,19 @@ export function usePaymentJourney({
             return;
           }
           setAcceptor(reported);
-          if (reported.online && reported.outstanding_minor === 0) {
-            // Covered. Close the session before the sale is taken, so the
-            // device is free whatever the core answers.
+          const outcome = cashOutcome(reported.phase);
+          if (outcome === "paid") {
+            // `PaymentComplete`: the money is in and the change is out. The
+            // host closes the device's session; the sale is taken next.
             setPaying("approving");
+            return;
+          }
+          if (outcome === "ended") {
+            // Cancelled or stopped at the device. Nothing was sold.
+            refused.current({
+              code: "CASHGENIC_PAYMENT_ENDED",
+              message: "El pago en efectivo se canceló en el cajero.",
+            });
             return;
           }
           timer = window.setTimeout(poll, CASH_POLL_MS);
@@ -159,8 +168,8 @@ export function usePaymentJourney({
       // the core computed. The screen never decides what is owed, and never
       // decides that it was paid.
       const take = byDevice
-        ? // Let go of the device first: the money is in it, the session is
-          // finished with, and a sale must not wait on a note acceptor.
+        ? // Make sure the finished session is closed — normally the host
+          // already did — and never let a sale wait on a note acceptor.
           cashGenicClose()
             .catch(() => undefined)
             .then(() => pay(method, transaction.totals.grand_total.minor))

@@ -144,6 +144,24 @@ export function takesCash(cashGenic: boolean, method: "CASH" | "CARD"): boolean 
 }
 
 /**
+ * What a note-acceptor payment has come to, from the phase the host derived.
+ *
+ * `paid` only on `COMPLETE` — the device's `PaymentComplete`, after any change
+ * was given. Covering the amount is not paying it: the device may still be
+ * counting or dispensing, and the session is closed by the host, not here.
+ * `ended` when the device ended it without the money: cancelled or stopped.
+ */
+export function cashOutcome(phase: string): "paid" | "ended" | "pending" {
+  if (phase === "COMPLETE") {
+    return "paid";
+  }
+  if (phase === "CANCELLED" || phase === "STOPPED") {
+    return "ended";
+  }
+  return "pending";
+}
+
+/**
  * One intent at a time.
  *
  * Two taps on the same card are two `add_item` calls, and the core is right to

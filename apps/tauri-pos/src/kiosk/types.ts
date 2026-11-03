@@ -202,11 +202,26 @@ export interface DayTally {
   closed_at: string | null;
 }
 
+/**
+ * Where the payment this kiosk started stands, as the host's CashGenic runtime
+ * derived it from the device's events. `COMPLETE` is `PaymentComplete` and
+ * nothing else.
+ */
+export type CashGenicPhase =
+  | "NONE"
+  | "PAYING"
+  | "CANCELLING"
+  | "STOPPING"
+  | "COMPLETE"
+  | "CANCELLED"
+  | "STOPPED";
+
 /** What the note acceptor is doing, as the payment screen draws it. */
 export interface CashGenicStatus {
   online: boolean;
   device: string | null;
   state: string;
+  phase: CashGenicPhase;
   deposited_minor: number;
   outstanding_minor: number;
   change_minor: number;

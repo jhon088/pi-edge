@@ -416,9 +416,10 @@ pub fn run() {
             // The floor monitor's endpoint, sharing this one client. Started
             // before the bridge is handed over, because `manage` moves it.
             status_endpoint::serve(app.handle().clone(), Arc::clone(&bridge.client));
-            // Health of the note acceptor, checked off the request path so a
-            // status poll never waits on a peripheral.
-            cashgenic::watch(app.handle().clone());
+            // The note acceptor's runtime: the one link to the device and the
+            // one reader of its events. A status poll reads what it keeps and
+            // never waits on a peripheral.
+            cashgenic::start(app.handle().clone());
             app.manage(bridge);
             forward_core_events(app.handle());
             Ok(())

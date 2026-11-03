@@ -251,6 +251,12 @@ pub(crate) fn captured(work: impl FnOnce()) -> String {
     let path = dir.path().join("px-kiosk.log");
     let file = LogFile::default();
     file.attach(&path).expect("a log file");
+    // With a single dispatcher registered, tracing-core decides a callsite's
+    // interest against whichever thread hits it first — and a parallel test
+    // with no subscriber caches it as "never", which empties this capture. A
+    // second dispatcher kept alive meanwhile makes every decision consult all
+    // of them, this one included.
+    let _second = tracing::Dispatch::new(tracing_subscriber::registry());
     tracing::subscriber::with_default(subscriber(file), work);
     std::fs::read_to_string(&path).unwrap()
 }

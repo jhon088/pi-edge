@@ -1,6 +1,9 @@
 # ADR 049 — The note acceptor speaks TLS, and PX Kiosk accepts the certificate it signed itself
 
-Status: accepted (showroom — PX Kiosk)
+Status: accepted (showroom — PX Kiosk). Request model amended by ADR 051:
+the routes, the decimal amount, the per-call token and the reading of
+`/status` described below were written before the vendor's specification was
+available and are superseded there; the TLS decisions stand.
 Scope: `apps/tauri-pos/src-tauri/src/cashgenic.rs` and nothing else.
 
 ## Context
