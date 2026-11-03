@@ -343,6 +343,219 @@ jobs:
             throw "installer is only ${mb} MB — webviewInstallMode=offlineInstaller did not take"
           }
 
+      # -------------------------------------------- what is actually inside
+      #
+      # Every step above proves the pieces compiled. None of them proves the
+      # pieces are in the file somebody will double-click — and that is a real
+      # gap, not a theoretical one: a resource declared and not staged, or a
+      # sidecar built and not bundled, looks exactly like a healthy build
+      # until a stand.
+      #
+      # So the installer is unpacked and inspected. 7-Zip is already on the
+      # runner image, so this adds no software to the project and nothing to
+      # the runtime.
+      #
+      # Two kinds of check, and they are **not** equally strong:
+      #
+      #   * **files** — the main binary, both sidecars, the WebView2 offline
+      #     bootstrapper, the four datasets and their photographs. Reliable,
+      #     and fatal: a missing one means the installer is wrong.
+      #   * **strings** — evidence in `.rdata` that a feature is compiled in.
+      #     Reliable for a `&'static str` the code keeps; **not** a proof of
+      #     absence. A literal the compiler folded away, or one that only
+      #     exists inside the brotli-compressed frontend Tauri embeds in its
+      #     own binary, will not be found however present the feature is. So
+      #     these are *reported*, and the step fails only when a whole binary
+      #     yields nothing — which means the scan broke, not the feature.
+      - name: Inspect the installer payload
+        id: payload
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nsis = "apps/tauri-pos/src-tauri/target/$env:TARGET/release/bundle/nsis"
+          $installer = Join-Path $nsis 'PX-Kiosk-Setup-x64.exe'
+          if (-not (Test-Path $installer)) { throw "no installer to inspect at $installer" }
+
+          $seven = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+          if (-not $seven) { $seven = 'C:\Program Files\7-Zip\7z.exe' }
+          if (-not (Test-Path $seven)) {
+            throw "no 7-Zip on this runner; the payload cannot be unpacked"
+          }
+          Write-Host "7-Zip: $seven"
+
+          $out = Join-Path $env:RUNNER_TEMP 'payload'
+          Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+          & $seven x $installer "-o$out" -y -bso0 -bsp0
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip could not unpack the NSIS payload (exit $LASTEXITCODE)"
+          }
+          # An installer that packs its payload into a nested archive is
+          # unpacked one level further, so the checks below see real files
+          # either way.
+          foreach ($nested in Get-ChildItem $out -Recurse -File -Include *.7z,*.zip,*.cab) {
+            & $seven x $nested.FullName "-o$($nested.DirectoryName)" -y -bso0 -bsp0 | Out-Null
+          }
+
+          $files = @(Get-ChildItem $out -Recurse -File)
+          $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum) / 1MB, 1)
+          Write-Host "NSIS EXTRACTION: $($files.Count) files, $mb MB"
+          Write-Host '--- payload, by size ---'
+          $files | Sort-Object Length -Descending | Select-Object -First 25 |
+            ForEach-Object {
+              Write-Host ("  {0,10:N2} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring($out.Length + 1))
+            }
+
+          $missing = New-Object System.Collections.Generic.List[string]
+
+          function Need([string] $label, [string[]] $names) {
+            $hit = $files | Where-Object { $names -contains $_.Name } | Select-Object -First 1
+            if (-not $hit) {
+              $hit = $files | Where-Object { $n = $_.Name; $names | Where-Object { $n -like $_ } } |
+                Select-Object -First 1
+            }
+            if (-not $hit) {
+              $script:missing.Add("$label (looked for $($names -join ', '))")
+              Write-Host ("::error::{0} is not in the payload (looked for {1})" -f $label, ($names -join ', '))
+              return $null
+            }
+            Write-Host ("{0,-24} {1,-46} {2,8:N2} MB" -f $label, $hit.Name, ($hit.Length / 1MB))
+            return $hit
+          }
+
+          Write-Host '--- the programs ---'
+          # Tauri names the main binary after `productName`; the crate name is
+          # accepted too so a rename of either does not read as absent.
+          $main   = Need 'TAURI POS'      @('PX Kiosk.exe', 'tauri-pos.exe')
+          $daemon = Need 'edge-daemon'    @('edge-daemon.exe')
+          $cli    = Need 'edge-cli'       @('edge-cli.exe')
+          $webview = Need 'WEBVIEW2'      @('*WebView2*.exe', '*Webview2*.exe', '*webview2*.exe')
+
+          Write-Host '--- the datasets ---'
+          # Each experience, by the folder its `menu.json` sits in, and the
+          # photographs beside it. The counts are the acceptance numbers.
+          $lanes = @(
+            @{ label = 'RESTAURANT DATASET'; dir = 'demo';        photos = 13; kind = '*.jpg' }
+            @{ label = 'TIM DATASET';        dir = 'demo/tim';    photos = 13; kind = '*.jpg' }
+            @{ label = 'SBARRO DATASET';     dir = 'demo/sbarro'; photos = 14; kind = '*.jpg' }
+            @{ label = 'RETAIL DATASET';     dir = 'demo/retail'; photos = 18; kind = '*.jpg' }
+          )
+          foreach ($lane in $lanes) {
+            $leaf = ($lane.dir -split '/')[-1]
+            $menu = $files | Where-Object {
+              $_.Name -eq 'menu.json' -and $_.Directory.Name -eq $leaf
+            } | Select-Object -First 1
+            if (-not $menu) {
+              $missing.Add("$($lane.label): no menu.json in a `"$leaf`" folder")
+              Write-Host ("::error::{0}: no menu.json in a '{1}' folder" -f $lane.label, $leaf)
+              continue
+            }
+            $assets = Join-Path $menu.Directory.FullName 'assets'
+            if (-not (Test-Path $assets)) {
+              $missing.Add("$($lane.label): no assets beside $($menu.FullName)")
+              Write-Host ("::error::{0}: no assets folder beside its menu.json" -f $lane.label)
+              continue
+            }
+            $pictures = @(Get-ChildItem $assets -Filter $lane.kind)
+            $shelf = Get-Content $menu.FullName -Raw | ConvertFrom-Json
+            # A brand's shelf is what has presentation; the base and retail
+            # datasets are counted by their product list.
+            $onMenu = if ($shelf.PSObject.Properties.Name -contains 'presentation' -and
+                          @($shelf.presentation).Count -gt 0) {
+              @($shelf.presentation).Count
+            } else {
+              @($shelf.products).Count
+            }
+            Write-Host ("{0,-24} {1,3} on the shelf, {2,3} photographs" -f $lane.label, $onMenu, $pictures.Count)
+            if ($pictures.Count -ne $lane.photos) {
+              $missing.Add("$($lane.label): $($pictures.Count) photographs, expected $($lane.photos)")
+              Write-Host ("::error::{0}: {1} photographs, expected {2}" -f $lane.label, $pictures.Count, $lane.photos)
+            }
+          }
+          # And the four menus are four, not one found four times.
+          $menus = @($files | Where-Object { $_.Name -eq 'menu.json' })
+          Write-Host "menu.json in the payload: $($menus.Count)"
+          if ($menus.Count -lt 4) {
+            $missing.Add("only $($menus.Count) menu.json in the payload; the four experiences need four")
+            Write-Host "::error::only $($menus.Count) menu.json in the payload"
+          }
+
+          # ------------------------------------------------- compiled evidence
+          #
+          # Read as Latin-1 so no byte collapses into a '?' and a needle can
+          # never match by accident.
+          function Scan([System.IO.FileInfo] $file) {
+            if (-not $file) { return '' }
+            return [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($file.FullName))
+          }
+
+          function Report([string] $label, [string[]] $needles, [string] $haystack, [string] $where) {
+            if (-not $haystack) {
+              Write-Host ("  {0,-26} SKIPPED ({1} is not in the payload)" -f $label, $where)
+              return $false
+            }
+            foreach ($needle in $needles) {
+              if ($haystack.Contains($needle)) {
+                Write-Host ("  {0,-26} FOUND in {1}  (`"{2}`")" -f $label, $where, $needle)
+                return $true
+              }
+            }
+            Write-Host ("  {0,-26} not found in {1}" -f $label, $where)
+            return $false
+          }
+
+          Write-Host '--- compiled into the host binary ---'
+          $host_text = Scan $main
+          $hostFound = 0
+          foreach ($check in @(
+            @{ l = 'DEMO STATUS';       n = @('/demo/status') }
+            @{ l = 'DEMO PRODUCTS';     n = @('/demo/products') }
+            @{ l = 'REMOTE AUTH';       n = @('/demo/control/authorization') }
+            @{ l = 'REMOTE OPEN/CLOSE'; n = @('/demo/control/kiosk') }
+            @{ l = 'authorization_required'; n = @('authorization_required') }
+            @{ l = 'remote_control';    n = @('remote_control') }
+            @{ l = 'CASHGENIC';         n = @('CASHGENIC_UNREACHABLE', 'cashgenic', 'CashGenic') }
+          )) {
+            if (Report $check.l $check.n $host_text 'the host binary') { $hostFound++ }
+          }
+
+          Write-Host '--- compiled into edge-daemon ---'
+          $daemon_text = Scan $daemon
+          $daemonFound = 0
+          foreach ($check in @(
+            @{ l = 'DLE EOT';           n = @('DLE EOT', 'did not answer DLE EOT') }
+            @{ l = 'USBPRINT';          n = @('readable USB printer', 'the USB printer') }
+            @{ l = 'status sources';    n = @('DLE_EOT') }
+            @{ l = 'preset RPT004';     n = @('RPT004') }
+            @{ l = 'preset RPT008';     n = @('RPT008') }
+            @{ l = 'preset RPT015';     n = @('RPT015') }
+            @{ l = 'preset EPSON-EU30'; n = @('EPSON-EU30') }
+            @{ l = 'preset TM-T82III';  n = @('EPSON-TM-T82III') }
+            @{ l = 'preset TM-T88VI';   n = @('EPSON-TM-T88VI') }
+          )) {
+            if (Report $check.l $check.n $daemon_text 'edge-daemon') { $daemonFound++ }
+          }
+
+          Write-Host ''
+          Write-Host "string evidence: host $hostFound/7, edge-daemon $daemonFound/9"
+          # A binary that yields nothing means the scan is broken — a wrong
+          # path, a compressed section, an encoding mistake — not that every
+          # feature vanished. That is worth failing on; one absent literal is
+          # not, and is reported above instead.
+          if ($main -and $hostFound -eq 0) {
+            $missing.Add('no expected string was found anywhere in the host binary; the scan is unreliable')
+            Write-Host '::error::no expected string found in the host binary'
+          }
+          if ($daemon -and $daemonFound -eq 0) {
+            $missing.Add('no expected string was found anywhere in edge-daemon; the scan is unreliable')
+            Write-Host '::error::no expected string found in edge-daemon'
+          }
+
+          if ($missing.Count -gt 0) {
+            throw "the installer payload is missing $($missing.Count) thing(s): $($missing -join '; ')"
+          }
+          Write-Host 'the installer carries every file this build promised'
+
       # ------------------------------------------------------------- verdict
       # One place that says what passed and what did not, so the log does not
       # have to be read step by step.
@@ -366,6 +579,7 @@ jobs:
             @{ n = 'tauri build';      r = '${{ steps.tauri_build.outcome }}' }
             @{ n = 'bundled demo';     r = '${{ steps.demo.outcome }}' }
             @{ n = 'nsis installer';   r = '${{ steps.nsis.outcome }}' }
+            @{ n = 'installer payload'; r = '${{ steps.payload.outcome }}' }
           )
           "## Windows build" | Out-File $env:GITHUB_STEP_SUMMARY -Append
           "| step | result |`n| --- | --- |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
