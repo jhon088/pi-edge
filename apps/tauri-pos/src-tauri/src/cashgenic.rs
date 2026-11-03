@@ -34,10 +34,12 @@
 //! **No cardholder data passes through here, and none can**: the device
 //! accepts banknotes, and what comes back is an amount in minor units.
 
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -58,7 +60,7 @@ const TIMEOUT: Duration = Duration::from_secs(4);
 /// `connection timed out` (os error 10060) from one round to the next. Nothing
 /// waits on this answer — a poll of `/demo/status` reads the last result and
 /// never dials — so the budget can be the one a person already trusts.
-const PROBE_TIMEOUT: Duration = TIMEOUT;
+pub(crate) const PROBE_TIMEOUT: Duration = TIMEOUT;
 
 /// How often the acceptor is asked how it is.
 const PROBE_EVERY: Duration = Duration::from_secs(10);
@@ -200,6 +202,9 @@ pub fn watch(app: tauri::AppHandle) {
 pub struct CashGenic<'a> {
     settings: &'a CashGenicSettingsV1,
     timeout: Duration,
+    /// DIAGNOSTIC, temporary: the health check's rounds record every stage of
+    /// every call. The payment path carries none and logs nothing new.
+    trace: Option<Trace>,
 }
 
 impl<'a> CashGenic<'a> {
@@ -207,13 +212,31 @@ impl<'a> CashGenic<'a> {
         Self {
             settings,
             timeout: TIMEOUT,
+            trace: None,
         }
     }
 
-    /// The same device, on a budget. For the health check, which nobody waits
-    /// on and which must never hold up a status poll.
-    fn impatient(settings: &'a CashGenicSettingsV1, timeout: Duration) -> Self {
-        Self { settings, timeout }
+    /// The same device, on a budget, with every stage of every call timed and
+    /// logged as `CASHGENIC_TRACE`. For the health check, which nobody waits
+    /// on and which must never hold up a status poll — and for the diagnostic,
+    /// which runs exactly this.
+    pub(crate) fn traced(settings: &'a CashGenicSettingsV1, timeout: Duration, round: u64) -> Self {
+        Self {
+            settings,
+            timeout,
+            trace: Some(Trace {
+                round,
+                steps: RefCell::new(Vec::new()),
+            }),
+        }
+    }
+
+    /// Every stage recorded so far, in order.
+    pub(crate) fn steps(&self) -> Vec<TraceStep> {
+        self.trace
+            .as_ref()
+            .map(|trace| trace.steps.borrow().clone())
+            .unwrap_or_default()
     }
 
     /// A bearer token. Asked for on every call rather than cached: a demo
@@ -234,16 +257,7 @@ impl<'a> CashGenic<'a> {
     /// the body shape is pinned by a test rather than left to read like a
     /// detail.
     fn token(&self) -> Result<String, BridgeError> {
-        let body = self.call(
-            "POST",
-            "/token",
-            None,
-            Some(Body::Form(vec![
-                ("grant_type", "password".to_owned()),
-                ("username", self.settings.username.clone()),
-                ("password", self.settings.password.clone()),
-            ])),
-        )?;
+        let body = self.call("POST", "/token", None, Some(grant(self.settings)))?;
         body.get("token")
             .or_else(|| body.get("access_token"))
             .and_then(Value::as_str)
@@ -340,32 +354,88 @@ impl<'a> CashGenic<'a> {
         let address = format!("{host}:{}", self.settings.port);
         let request = request_bytes(method, path, &address, token, body);
 
-        let resolved = address
-            .to_socket_addrs()
-            .map_err(|error| offline(&address, error))?
-            .next()
-            .ok_or_else(|| BridgeError {
-                code: "CASHGENIC_UNREACHABLE".to_owned(),
-                message: format!("{address} resolves to nothing"),
-            })?;
+        let mut stages = Stages::new(self.trace.as_ref(), path);
 
-        let socket = TcpStream::connect_timeout(&resolved, self.timeout)
-            .map_err(|error| offline(&address, error))?;
+        let started = Instant::now();
+        let resolved = match address.to_socket_addrs().map(|mut all| all.next()) {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) => {
+                stages.fail("resolve", started, "resolves to nothing".to_owned());
+                return Err(BridgeError {
+                    code: "CASHGENIC_UNREACHABLE".to_owned(),
+                    message: format!("{address} resolves to nothing"),
+                });
+            }
+            Err(error) => {
+                stages.fail("resolve", started, io_detail(&error));
+                return Err(offline(&address, error));
+            }
+        };
+        let family = if resolved.is_ipv4() { "ipv4" } else { "ipv6" };
+        stages.pass("resolve", started, format!("{resolved} {family}"));
+
+        let started = Instant::now();
+        let mut socket = match TcpStream::connect_timeout(&resolved, self.timeout) {
+            Ok(socket) => socket,
+            Err(error) => {
+                stages.fail("tcp_connect", started, io_detail(&error));
+                return Err(offline(&address, error));
+            }
+        };
+        let local = socket
+            .local_addr()
+            .map(|local| local.to_string())
+            .unwrap_or_default();
+        stages.pass("tcp_connect", started, format!("local={local}"));
         socket
             .set_read_timeout(Some(self.timeout))
             .and_then(|()| socket.set_write_timeout(Some(self.timeout)))
             .map_err(|error| offline(&address, error))?;
 
-        let connection = tls_connection(host).map_err(|detail| BridgeError {
+        let mut connection = tls_connection(host).map_err(|detail| BridgeError {
             code: "CASHGENIC_UNREACHABLE".to_owned(),
             message: format!("{address}: {detail}"),
         })?;
+        // Driven to the end here rather than on the first write, which is all
+        // `StreamOwned` would do with it anyway — so the handshake has its own
+        // time and its own failure instead of hiding inside "write".
+        let started = Instant::now();
+        while connection.is_handshaking() {
+            if let Err(error) = connection.complete_io(&mut socket) {
+                stages.fail("tls_handshake", started, io_detail(&error));
+                return Err(offline(&address, error));
+            }
+        }
+        let sni = if host.parse::<std::net::IpAddr>().is_ok() {
+            "none(ip-literal)"
+        } else {
+            host
+        };
+        stages.pass(
+            "tls_handshake",
+            started,
+            format!(
+                "version={:?} suite={:?} sni={sni}",
+                connection.protocol_version(),
+                connection
+                    .negotiated_cipher_suite()
+                    .map(|suite| suite.suite()),
+            ),
+        );
+
         let raw = round_trip(
             rustls::StreamOwned::new(connection, socket),
             &request,
             &address,
+            &mut stages,
         )?;
-        parse(&raw)
+        let started = Instant::now();
+        let parsed = parse(&raw);
+        match &parsed {
+            Ok(_) => stages.pass("json_parse", started, String::new()),
+            Err(error) => stages.fail("json_parse", started, error.code.clone()),
+        }
+        parsed
     }
 }
 
@@ -404,6 +474,21 @@ impl Body {
     }
 }
 
+/// The password grant `/token` takes, built once for the client and for the
+/// diagnostic's curl comparison, so both send the same bytes.
+fn grant(settings: &CashGenicSettingsV1) -> Body {
+    Body::Form(vec![
+        ("grant_type", "password".to_owned()),
+        ("username", settings.username.clone()),
+        ("password", settings.password.clone()),
+    ])
+}
+
+/// DIAGNOSTIC, temporary: the grant as the form body curl is handed on stdin.
+pub(crate) fn grant_form(settings: &CashGenicSettingsV1) -> String {
+    grant(settings).encode()
+}
+
 /// Percent-encode one form value.
 ///
 /// Written here rather than pulled in: it is twelve lines and the only place
@@ -427,26 +512,243 @@ fn form_encode(value: &str) -> String {
 }
 
 /// Write the request and read the whole answer off one stream.
+///
+/// To the end of the stream, as before — with each stage timed: the write,
+/// the headers arriving, and the body to its end, including how it ended and
+/// how long the stream stayed open after `Content-Length` said it was done.
 fn round_trip(
     mut stream: impl Read + Write,
     request: &[u8],
     address: &str,
+    stages: &mut Stages<'_>,
 ) -> Result<Vec<u8>, BridgeError> {
-    stream
-        .write_all(request)
-        .and_then(|()| stream.flush())
-        .map_err(|error| offline(address, error))?;
+    let started = Instant::now();
+    if let Err(error) = stream.write_all(request).and_then(|()| stream.flush()) {
+        stages.fail("http_write", started, io_detail(&error));
+        return Err(offline(address, error));
+    }
+    stages.pass("http_write", started, format!("bytes={}", request.len()));
+
+    let started = Instant::now();
     let mut raw = Vec::new();
-    match stream.read_to_end(&mut raw) {
-        Ok(_) => Ok(raw),
+    let mut chunk = [0_u8; 4096];
+    let mut head: Option<(usize, Option<usize>)> = None;
+    let mut complete_at: Option<Duration> = None;
+    let ended: Result<&'static str, std::io::Error> = loop {
+        match stream.read(&mut chunk) {
+            // rustls says 0 only once the peer's `close_notify` has arrived.
+            Ok(0) => break Ok("close_notify"),
+            Ok(read) => {
+                raw.extend_from_slice(&chunk[..read]);
+                if head.is_none() {
+                    if let Some(at) = header_end(&raw) {
+                        let length = content_length(&raw[..at]);
+                        head = Some((at, length));
+                        stages.pass("http_headers", started, header_summary(&raw[..at]));
+                    }
+                }
+                if let (None, Some((at, Some(length)))) = (complete_at, head) {
+                    if raw.len() >= at + length {
+                        complete_at = Some(started.elapsed());
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => break Err(error),
+        }
+    };
+
+    if head.is_none() {
+        let detail = match &ended {
+            Ok(how) => format!("no header end; ended={how} bytes={}", raw.len()),
+            Err(error) => format!("no header end; bytes={} {}", raw.len(), io_detail(error)),
+        };
+        stages.fail("http_headers", started, detail);
+    }
+    let how = match &ended {
+        Ok(how) => (*how).to_owned(),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+            "tcp_close_without_close_notify".to_owned()
+        }
+        Err(error) => format!("error {}", io_detail(error)),
+    };
+    let waited = complete_at.map_or_else(
+        || "unknown(no content-length)".to_owned(),
+        |at| format!("{}", started.elapsed().saturating_sub(at).as_millis()),
+    );
+    let body = format!(
+        "bytes={} end={how} open_after_complete_ms={waited}",
+        raw.len()
+    );
+
+    match ended {
+        Ok(_) => {
+            stages.pass("http_body", started, body);
+            Ok(raw)
+        }
         // A server that closes without a TLS `close_notify` is ordinary in
         // embedded firmware, and what it already sent is still the answer.
         Err(error) if !raw.is_empty() => {
             tracing::debug!(%error, address, "the device closed the stream abruptly");
+            stages.pass("http_body", started, body);
             Ok(raw)
         }
-        Err(error) => Err(offline(address, error)),
+        Err(error) => {
+            stages.fail("http_body", started, body);
+            Err(offline(address, error))
+        }
     }
+}
+
+// ------------------------------------------------- DIAGNOSTIC, temporary
+//
+// Stage timing for the health check and the diagnostic binary. Never a body,
+// never a credential, never a token: a stage carries its name, how long it
+// took, whether it worked, and a detail built only from socket addresses, I/O
+// error kinds, TLS parameters, a status code and an allowlist of headers.
+
+/// The stages of one round, as the diagnostic reads them back.
+#[derive(Debug)]
+struct Trace {
+    round: u64,
+    steps: RefCell<Vec<TraceStep>>,
+}
+
+/// One stage of one call.
+#[derive(Debug, Clone)]
+pub(crate) struct TraceStep {
+    /// `token`, `system`, `status`, or `other`.
+    pub call: &'static str,
+    pub step: &'static str,
+    pub elapsed: Duration,
+    pub ok: bool,
+    pub detail: String,
+}
+
+static ROUND: AtomicU64 = AtomicU64::new(1);
+
+/// A fresh round id, for the log.
+pub(crate) fn next_round() -> u64 {
+    ROUND.fetch_add(1, Ordering::Relaxed)
+}
+
+/// The recorder one call writes into: nothing at all when untraced.
+struct Stages<'t> {
+    trace: Option<&'t Trace>,
+    call: &'static str,
+}
+
+impl<'t> Stages<'t> {
+    fn new(trace: Option<&'t Trace>, path: &str) -> Self {
+        let call = if path.starts_with("/token") {
+            "token"
+        } else if path.starts_with("/system") {
+            "system"
+        } else if path.starts_with("/status") {
+            "status"
+        } else {
+            "other"
+        };
+        Self { trace, call }
+    }
+
+    fn pass(&mut self, step: &'static str, started: Instant, detail: String) {
+        self.record(step, started, true, detail);
+    }
+
+    fn fail(&mut self, step: &'static str, started: Instant, detail: String) {
+        self.record(step, started, false, detail);
+    }
+
+    fn record(&mut self, step: &'static str, started: Instant, ok: bool, detail: String) {
+        let Some(trace) = self.trace else {
+            return;
+        };
+        let elapsed = started.elapsed();
+        tracing::info!(
+            "CASHGENIC_TRACE round_id={} call={} step={step} elapsed_ms={} result={} detail={:?}",
+            trace.round,
+            self.call,
+            elapsed.as_millis(),
+            if ok { "OK" } else { "ERROR" },
+            detail
+        );
+        trace.steps.borrow_mut().push(TraceStep {
+            call: self.call,
+            step,
+            elapsed,
+            ok,
+            detail,
+        });
+    }
+}
+
+/// An I/O error as its kind, the operating system's code and its words —
+/// the three that tell a connect timeout from a read timeout from a reset.
+fn io_detail(error: &std::io::Error) -> String {
+    let code = error
+        .raw_os_error()
+        .map_or_else(|| "none".to_owned(), |code| code.to_string());
+    format!(
+        "kind={:?} os_error={code} error={:?}",
+        error.kind(),
+        error.to_string()
+    )
+}
+
+/// Where the headers end, counting the blank line.
+fn header_end(raw: &[u8]) -> Option<usize> {
+    raw.windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|at| at + 4)
+}
+
+fn content_length(head: &[u8]) -> Option<usize> {
+    String::from_utf8_lossy(head).lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse().ok())
+            .flatten()
+    })
+}
+
+/// The status code and the headers that decide where a body ends, plus the
+/// names (never the values) of every other header the device sent.
+fn header_summary(head: &[u8]) -> String {
+    const SHOWN: [&str; 6] = [
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "content-type",
+        "server",
+    ];
+    let text = String::from_utf8_lossy(head);
+    let mut lines = text.lines();
+    let status = lines
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("?")
+        .to_owned();
+    let mut shown = Vec::new();
+    let mut others = Vec::new();
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        if SHOWN.contains(&name.as_str()) {
+            shown.push(format!("{name}={}", value.trim()));
+        } else {
+            others.push(name);
+        }
+    }
+    format!(
+        "http_status={status} {} other_headers=[{}]",
+        shown.join(" "),
+        others.join(",")
+    )
 }
 
 /// An HTTP/1.1 request as bytes.
@@ -829,7 +1131,13 @@ fn probe_with(settings: &CashGenicSettingsV1, timeout: Duration) -> CashGenicSta
             ..CashGenicStatusV1::offline("not enabled on this kiosk")
         };
     }
-    let device = CashGenic::impatient(settings, timeout);
+    let device = CashGenic::traced(settings, timeout, next_round());
+    probe_round(&device)
+}
+
+/// One health-check round on a device: a grant, `/system`, `/status`. What
+/// the watcher and the diagnostic both run.
+pub(crate) fn probe_round(device: &CashGenic<'_>) -> CashGenicStatusV1 {
     // One grant per round: three connections, not four. A token outlives a
     // round by a long way, and a refused grant is the same "offline" either
     // way.
@@ -1345,6 +1653,10 @@ mod tests {
         /// How long `GET /status` takes to answer. Zero unless a test is
         /// standing in for a slow unit.
         status_delay: Mutex<Duration>,
+        /// How long the connection is kept open after the answer, as a
+        /// device that ignores `Connection: close` would. One at a time, like
+        /// the rest of this bench: while one is held, the next waits.
+        hold_open: Mutex<Duration>,
     }
 
     /// Serve TLS on loopback until the test drops it.
@@ -1430,6 +1742,14 @@ mod tests {
                     .as_bytes(),
                 );
                 let _ = stream.flush();
+                // Held the way a keep-alive server holds it: until the client
+                // closes or the server's own idle limit, whichever is first.
+                let hold = heard.hold_open.lock().map(|d| *d).unwrap_or_default();
+                if !hold.is_zero() {
+                    let _ = stream.sock.set_read_timeout(Some(hold));
+                    let mut rest = [0_u8; 64];
+                    let _ = stream.read(&mut rest);
+                }
             }
         });
         address
@@ -1509,6 +1829,100 @@ mod tests {
             heard.paths.lock().unwrap().is_empty(),
             "a disabled acceptor was dialled"
         );
+    }
+
+    /// DIAGNOSTIC: every stage of a round, in order, and nothing secret in
+    /// the log it leaves.
+    #[test]
+    fn a_traced_round_times_every_stage_and_logs_no_secret() {
+        let heard = Arc::new(Heard::default());
+        let address = bench_acceptor(Arc::clone(&heard));
+        let settings = bench_settings(address, true);
+        let mut steps = Vec::new();
+        let log = captured(|| {
+            let device = CashGenic::traced(&settings, PROBE_TIMEOUT, 77);
+            assert!(probe_round(&device).online);
+            steps = device.steps();
+        });
+
+        let stages = [
+            "resolve",
+            "tcp_connect",
+            "tls_handshake",
+            "http_write",
+            "http_headers",
+            "http_body",
+            "json_parse",
+        ];
+        let expected: Vec<String> = ["token", "system", "status"]
+            .iter()
+            .flat_map(|call| stages.iter().map(move |step| format!("{call}.{step}")))
+            .collect();
+        let seen: Vec<String> = steps
+            .iter()
+            .map(|step| format!("{}.{}", step.call, step.step))
+            .collect();
+        assert_eq!(seen, expected);
+        assert!(steps.iter().all(|step| step.ok));
+
+        let headers = &steps[4].detail;
+        assert!(headers.contains("http_status=200"), "{headers}");
+        assert!(headers.contains("content-length="), "{headers}");
+        assert!(headers.contains("connection=close"), "{headers}");
+        assert!(
+            steps[2].detail.contains("sni=none(ip-literal)"),
+            "{}",
+            steps[2].detail
+        );
+
+        assert!(
+            log.contains("CASHGENIC_TRACE round_id=77 call=token step=tcp_connect"),
+            "{log}"
+        );
+        for secret in ["1234", "bench-token", "ApiUserOne"] {
+            assert!(!log.contains(secret), "{secret} reached the log: {log}");
+        }
+    }
+
+    /// DIAGNOSTIC: what this client does against a device that answers in
+    /// full and then keeps the connection open, as a keep-alive server does
+    /// until the client closes. The answer is complete by `Content-Length`,
+    /// and this client still waits for the close until its read budget runs
+    /// out — on every call. Measured, not assumed.
+    #[test]
+    fn a_connection_held_open_after_the_answer_costs_the_read_budget() {
+        let heard = Arc::new(Heard {
+            hold_open: Mutex::new(Duration::from_millis(600)),
+            ..Heard::default()
+        });
+        let address = bench_acceptor(Arc::clone(&heard));
+        let settings = bench_settings(address, true);
+        let budget = Duration::from_millis(300);
+
+        let device = CashGenic::traced(&settings, budget, 78);
+        let status = probe_round(&device);
+        let steps = device.steps();
+
+        assert!(status.online, "the answer arrived, so the round passes");
+        let body = steps
+            .iter()
+            .find(|step| step.call == "token" && step.step == "http_body")
+            .unwrap();
+        assert!(body.ok);
+        assert!(body.detail.contains("end=error"), "{}", body.detail);
+        assert!(body.elapsed >= budget, "{:?}", body.elapsed);
+        assert!(
+            body.detail.contains("open_after_complete_ms="),
+            "{}",
+            body.detail
+        );
+        // Every call pays it: the round costs three read budgets.
+        let waited: Vec<&TraceStep> = steps
+            .iter()
+            .filter(|step| step.step == "http_body")
+            .collect();
+        assert_eq!(waited.len(), 3);
+        assert!(waited.iter().all(|step| step.elapsed >= budget));
     }
 
     /// The whole conversation, over TLS, against a self-signed certificate.

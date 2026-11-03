@@ -1,0 +1,98 @@
+# TEMPORARY — delete once the CashGenic connection problem has a root cause.
+#
+# Builds `cashgenic-diagnostic.exe` on Windows and nothing else: no gates, no
+# Tauri build, no NSIS, no installer. The program is an *example* of the
+# tauri-pos crate (examples/cashgenic-diagnostic.rs) so that it can never be
+# bundled into PX Kiosk; it runs the kiosk's own CashGenic client outside the
+# window. See src/cashgenic_diagnostic.rs.
+name: CashGenic diagnostic (temporary)
+
+# `workflow_dispatch` only works once a workflow is on the default branch, and
+# this one is not going there: it runs on a push to a temporary diagnostic
+# branch instead. The installer workflow does not run on those branches.
+on:
+  push:
+    branches: ["diagnostic/**"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  diagnostic:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/tauri-pos/src-tauri -> apps/tauri-pos/src-tauri/target
+
+      # Needed, not optional: `tauri::generate_context!()` in the crate's
+      # library embeds `../dist` at compile time, so the frontend has to have
+      # been built for the crate to compile at all.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/tauri-pos/pnpm-lock.yaml
+
+      - name: Frontend (for generate_context!)
+        working-directory: apps/tauri-pos
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # `tauri-build` checks from the build script that every `externalBin`
+      # path exists. The diagnostic never runs either sidecar and nothing is
+      # bundled here, so empty placeholders satisfy the check without building
+      # PI.Edge.
+      - name: Placeholder sidecars (existence check only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $triple = (rustc -vV | Select-String '^host: ').ToString().Split(' ')[1]
+          $dir = 'apps/tauri-pos/src-tauri/binaries'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          foreach ($name in 'edge-daemon', 'edge-cli') {
+            New-Item -ItemType File -Force -Path "$dir/$name-$triple.exe" | Out-Null
+          }
+          Write-Host "placeholders for $triple"
+
+      - name: Build cashgenic-diagnostic
+        working-directory: apps/tauri-pos/src-tauri
+        run: cargo build --release --example cashgenic-diagnostic
+
+      - name: Check the executable
+        id: exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'apps/tauri-pos/src-tauri/target/release/examples/cashgenic-diagnostic.exe'
+          if (-not (Test-Path $exe)) { throw "no $exe" }
+          $item = Get-Item $exe
+          Write-Host "cashgenic-diagnostic.exe  $($item.Length) bytes"
+          # Usage line only: no device is reachable from CI. With no
+          # arguments it prints its usage and exits 2, which is expected.
+          $ErrorActionPreference = 'Continue'
+          $usage = (& $exe 2>&1 | Out-String)
+          $ErrorActionPreference = 'Stop'
+          Write-Host $usage
+          if ($usage -notmatch 'usage: cashgenic-diagnostic') { throw 'the executable did not run' }
+          $global:LASTEXITCODE = 0
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item $exe out/cashgenic-diagnostic.exe
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cashgenic-diagnostic-windows
+          path: out/cashgenic-diagnostic.exe
+          if-no-files-found: error
+          retention-days: 14

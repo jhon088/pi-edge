@@ -31,6 +31,7 @@ mod alerts;
 mod authorization;
 mod bootstrap;
 mod cashgenic;
+mod cashgenic_diagnostic;
 mod kiosk;
 mod logging;
 mod overrides;
@@ -348,6 +349,13 @@ fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDt
         reconnect_in_ms: status.reconnect_in_ms,
         can_issue_commands: status.connected,
     }
+}
+
+/// DIAGNOSTIC, temporary: the `cashgenic-diagnostic` binary's whole body.
+/// Runs the kiosk's own CashGenic client outside the window and returns the
+/// process exit code.
+pub fn cashgenic_diagnostic(args: &[String]) -> i32 {
+    cashgenic_diagnostic::run(args)
 }
 
 /// Start the diagnostic window.
