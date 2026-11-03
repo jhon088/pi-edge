@@ -244,7 +244,11 @@ fn lanes_without_a_menu(database: &Path) -> Vec<&'static str> {
 /// and a dataset that has not changed produces no second snapshot — so the
 /// guard here only has to decide whether there is anything to install, and
 /// may err towards running it. Returns `false` when there was nothing to do.
-pub fn ensure_demo(database: &Path, demo: &Path) -> Result<bool, BootstrapError> {
+pub fn ensure_demo(
+    database: &Path,
+    demo: &Path,
+    overrides: Option<&Path>,
+) -> Result<bool, BootstrapError> {
     let blank = lanes_without_a_menu(database);
     if blank.is_empty() {
         tracing::info!("every lane this build ships already has its menu; not re-seeding");
@@ -254,6 +258,24 @@ pub fn ensure_demo(database: &Path, demo: &Path) -> Result<bool, BootstrapError>
         lanes = blank.join(", "),
         "these lanes have no menu; installing the bundled demo"
     );
+    reseed(database, demo, overrides).map(|()| true)
+}
+
+/// Import the bundled demo now, whatever is already in force.
+///
+/// What a price change runs. An operator edited a number, so the catalog has
+/// to carry it — and the only way a number becomes the one a sale charges is
+/// a new active snapshot, built by the same pipeline a release uses (ADR 050).
+///
+/// Unconditional on purpose: the guard above asks whether a *lane* is blank,
+/// which a changed price is not. Safe to call repeatedly — `demo-seed`
+/// reconciles the version against what the core holds and an unchanged
+/// dataset produces no second snapshot.
+pub fn reseed(
+    database: &Path,
+    demo: &Path,
+    overrides: Option<&Path>,
+) -> Result<(), BootstrapError> {
     if !demo.join("menu.json").is_file() {
         return Err(BootstrapError::Seed(format!(
             "the bundled demo is missing from {}",
@@ -271,8 +293,15 @@ pub fn ensure_demo(database: &Path, demo: &Path) -> Result<bool, BootstrapError>
         .arg("json")
         .arg("demo-seed")
         .arg("--path")
-        .arg(demo)
-        .env("PI_EDGE_LOG", "warn");
+        .arg(demo);
+    // Prices an operator changed on this machine, applied to the dataset
+    // before it is imported. A missing file is nothing overridden, which the
+    // CLI handles, so the flag is passed whenever a path is known rather than
+    // only when the file exists.
+    if let Some(overrides) = overrides {
+        command.arg("--overrides").arg(overrides);
+    }
+    command.env("PI_EDGE_LOG", "warn");
     configure(&mut command);
     // Captured rather than discarded: if this fails it is the one thing the
     // log needs to say.
@@ -287,8 +316,11 @@ pub fn ensure_demo(database: &Path, demo: &Path) -> Result<bool, BootstrapError>
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         ));
     }
-    tracing::info!("the bundled demo is installed");
-    Ok(true)
+    tracing::info!(
+        report = %String::from_utf8_lossy(&output.stdout).trim(),
+        "the bundled demo is installed"
+    );
+    Ok(())
 }
 
 /// Where the bundled demo lives in an installed app.
@@ -373,7 +405,7 @@ mod tests {
 
         // What the previous release left behind.
         assert!(
-            ensure_demo(&core.database, &old).unwrap(),
+            ensure_demo(&core.database, &old, None).unwrap(),
             "the old dataset did not install"
         );
         let blank = lanes_without_a_menu(&core.database);
@@ -386,7 +418,7 @@ mod tests {
         // The upgraded app launches. This is the call that used to answer
         // "already seeded" and leave Tim Hortons and Sbarro empty.
         assert!(
-            ensure_demo(&core.database, &demo_dir()).unwrap(),
+            ensure_demo(&core.database, &demo_dir(), None).unwrap(),
             "the upgrade installed nothing; the two brands stay blank"
         );
         assert!(
@@ -433,12 +465,61 @@ mod tests {
     #[test]
     fn a_launch_with_every_lane_already_selling_installs_nothing() {
         let core = Core::start();
-        assert!(ensure_demo(&core.database, &demo_dir()).unwrap());
+        assert!(ensure_demo(&core.database, &demo_dir(), None).unwrap());
         assert!(
-            !ensure_demo(&core.database, &demo_dir()).unwrap(),
+            !ensure_demo(&core.database, &demo_dir(), None).unwrap(),
             "the second launch re-imported the catalog"
         );
         assert!(lanes_without_a_menu(&core.database).is_empty());
+    }
+
+    /// An edited price becomes the price the catalog in force charges.
+    ///
+    /// The whole claim of ADR 050, end to end against a real daemon: write
+    /// the override, run the same pipeline a release runs, and ask the core
+    /// what the product costs now. A number that only lived in a file would
+    /// fail here.
+    #[test]
+    fn an_overridden_price_is_the_one_the_catalog_in_force_charges() {
+        let core = Core::start();
+        let overrides = core._dir.path().join("overrides.json");
+        assert!(ensure_demo(&core.database, &demo_dir(), Some(&overrides)).unwrap());
+
+        use edge_client::EdgeClient;
+        let client =
+            edge_client::IpcEdgeClient::for_database(&core.database, "px-kiosk").expect("a client");
+        let price_of = |product_ref: &str| -> i64 {
+            client
+                .menu(Some("KIOSK-TIM".to_owned()))
+                .expect("a menu")
+                .items
+                .iter()
+                .find(|item| item.product_ref == product_ref)
+                .unwrap_or_else(|| panic!("{product_ref} is not on the menu"))
+                .from_price
+                .minor
+        };
+        let shipped = price_of("T-LATTE");
+        assert!(shipped > 0);
+
+        // An operator changes it on the kiosk.
+        std::fs::write(&overrides, r#"{"T-LATTE":{"price_minor":9900}}"#).unwrap();
+        reseed(&core.database, &demo_dir(), Some(&overrides)).expect("the reimport");
+        assert_eq!(
+            price_of("T-LATTE"),
+            9_900,
+            "the override never reached the catalog the till reads"
+        );
+
+        // And it survives the kind of re-seed an upgrade performs, because
+        // the overrides travel with it.
+        reseed(&core.database, &demo_dir(), Some(&overrides)).expect("a second reimport");
+        assert_eq!(price_of("T-LATTE"), 9_900);
+
+        // Taking the override away puts the dataset's own price back.
+        std::fs::write(&overrides, "{}").unwrap();
+        reseed(&core.database, &demo_dir(), Some(&overrides)).expect("the third reimport");
+        assert_eq!(price_of("T-LATTE"), shipped);
     }
 
     /// A database nothing has ever imported into is every lane blank, not an

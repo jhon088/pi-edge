@@ -130,6 +130,33 @@ pub struct KioskPreferencesV1 {
 
     #[serde(default)]
     pub cashgenic: CashGenicSettingsV1,
+
+    /// The PIN that approves an authorization and drives the control
+    /// endpoints. Empty means nobody has set one.
+    ///
+    /// Four digits typed by whoever set the kiosk up, stored in the clear
+    /// beside the database — the same trade as the acceptor's credentials, and
+    /// the same reasoning: a showroom machine is reconfigured by hand on a
+    /// stand. It is **not** an operator identity and authorises nothing in the
+    /// core; it releases a showroom gate, and the core's own authority model
+    /// is untouched by it (ADR 022).
+    ///
+    /// Empty is a refusal, not a free pass: with no PIN set, nothing can be
+    /// authorized and the control endpoints answer that they are not
+    /// configured.
+    #[serde(default)]
+    pub admin_pin: String,
+
+    /// Whether this kiosk accepts the two control POSTs at all.
+    ///
+    /// Off by default, and deliberately. `GET /demo/status` only reads and has
+    /// always answered anyone who can reach the port; a POST that closes the
+    /// kiosk or releases a payment is the first write path from the network,
+    /// and a four-digit PIN is thin protection to leave switched on in a
+    /// customer's building. An operator turns it on for the demo that needs
+    /// it.
+    #[serde(default)]
+    pub remote_control: bool,
 }
 
 fn open_by_default() -> bool {
@@ -154,7 +181,20 @@ impl Default for KioskPreferencesV1 {
             cashier_id: String::new(),
             kiosk_open: true,
             cashgenic: CashGenicSettingsV1::default(),
+            admin_pin: String::new(),
+            remote_control: false,
         }
+    }
+}
+
+impl KioskPreferencesV1 {
+    /// Whether `pin` is the one this kiosk was given.
+    ///
+    /// Compared in full, and a kiosk with no PIN set matches nothing: an
+    /// empty stored PIN must not be satisfied by an empty one offered.
+    pub fn pin_matches(&self, offered: &str) -> bool {
+        let stored = self.admin_pin.trim();
+        !stored.is_empty() && stored == offered.trim()
     }
 }
 

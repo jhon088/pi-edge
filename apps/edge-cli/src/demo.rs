@@ -1,10 +1,11 @@
 //! One-command offline bootstrap of the demo restaurant.
 //!
 //! ```text
-//! edge-cli demo-seed --path demo
+//! edge-cli demo-seed --path demo [--overrides overrides.json]
 //!     provision the device
 //!     import every file in demo/assets/   (hashed locally, verified by the core)
-//!     import demo/menu.json               (its `file:` images resolved to hashes)
+//!     import demo/menu.json               (its `file:` images resolved to hashes,
+//!                                          its prices overridden if asked)
 //!     activate the snapshot               (refused unless every image is here)
 //!     open the business day and a kiosk session
 //! ```
@@ -67,6 +68,15 @@ pub struct DemoOutcome {
     /// Image stems the dataset asks for that nobody has supplied yet. Those
     /// rows render as tiles; dropping the file in turns them into cards.
     pub photographs_wanted: Vec<String>,
+    /// Products whose price came from the overrides file rather than the
+    /// dataset.
+    pub repriced: Vec<String>,
+    /// Overrides naming a product this dataset does not have.
+    ///
+    /// Reported rather than dropped: an override for `T-LATE` is a typo, and
+    /// a typo that silently does nothing is a price somebody thinks they
+    /// changed.
+    pub repriced_unknown: Vec<String>,
 }
 
 impl DemoOutcome {
@@ -82,11 +92,17 @@ impl DemoOutcome {
             "catalog_upgraded": self.catalog_upgraded,
             "channel": DEMO_CHANNEL,
             "photographs_wanted": self.photographs_wanted,
+            "repriced": self.repriced,
+            "repriced_unknown": self.repriced_unknown,
         }))
     }
 }
 
-pub fn seed(client: &IpcEdgeClient, path: &Path) -> Result<DemoOutcome, CliError> {
+pub fn seed(
+    client: &IpcEdgeClient,
+    path: &Path,
+    overrides: Option<&Path>,
+) -> Result<DemoOutcome, CliError> {
     // 1. The device. Idempotent by nature: an existing profile is returned
     //    untouched, so re-seeding is safe — and so an installation that is
     //    already somebody's shop says so instead of being adopted.
@@ -160,6 +176,16 @@ pub fn seed(client: &IpcEdgeClient, path: &Path) -> Result<DemoOutcome, CliError
             merge_vertical(&mut fixture, &menu)?;
         }
     }
+    // Prices an operator changed on this kiosk, applied before the import so
+    // the catalog in force is the one that carries them.
+    let prices = price_overrides(overrides)?;
+    let repriced = apply_price_overrides(&mut fixture, &prices);
+    let unknown: Vec<String> = prices
+        .keys()
+        .filter(|product_ref| !repriced.contains(*product_ref))
+        .cloned()
+        .collect();
+
     let mut unsupplied = BTreeSet::new();
     resolve_assets(&mut fixture, &hashes, &mut unsupplied)?;
 
@@ -208,7 +234,95 @@ pub fn seed(client: &IpcEdgeClient, path: &Path) -> Result<DemoOutcome, CliError
         catalog_version: outcome.version,
         catalog_upgraded: in_force_before.is_some_and(|before| before != outcome.version),
         photographs_wanted: unsupplied.into_iter().collect(),
+        repriced: repriced.into_iter().collect(),
+        repriced_unknown: unknown,
     })
+}
+
+/// Prices an operator changed on the kiosk itself.
+///
+/// Read from a file the host writes and applied to the dataset **before** it
+/// is imported, so the number that comes out the other side is the one the
+/// catalog in force charges. There is deliberately no second place a price
+/// lives: a sale reads the active snapshot and nothing else, so an override
+/// that did not travel through this function would be cosmetic (ADR 050).
+///
+/// Shape, keyed by `product_ref`:
+///
+/// ```json
+/// { "T-LATTE": { "price_minor": 5900 } }
+/// ```
+///
+/// Only `price_minor` is read here. The flag that says a product needs
+/// authorization lives in the same file and is **not** catalog data — it is a
+/// showroom gate the host owns, and the core never sees it.
+fn price_overrides(path: Option<&Path>) -> Result<BTreeMap<String, i64>, CliError> {
+    let Some(path) = path else {
+        return Ok(BTreeMap::new());
+    };
+    // A missing file is "nothing overridden", not a failure: a kiosk nobody
+    // has edited prices on has no such file, and the seed still has to run.
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Ok(BTreeMap::new());
+    };
+    let parsed: BTreeMap<String, Value> = serde_json::from_str(&raw).map_err(|error| {
+        CliError::Input(format!("{} is not valid JSON: {error}", path.display()))
+    })?;
+    let mut prices = BTreeMap::new();
+    for (product_ref, entry) in parsed {
+        let Some(minor) = entry.get("price_minor") else {
+            continue;
+        };
+        let minor = minor.as_i64().ok_or_else(|| {
+            CliError::Input(format!(
+                "`{product_ref}` has a price_minor that is not a whole number of cents"
+            ))
+        })?;
+        if minor < 0 {
+            return Err(CliError::Input(format!(
+                "`{product_ref}` is priced at {minor}; a price cannot be negative"
+            )));
+        }
+        prices.insert(product_ref, minor);
+    }
+    Ok(prices)
+}
+
+/// Rewrite every price of every overridden product, in place.
+///
+/// Every price book, because the demo has one and a kiosk that edits a price
+/// means "this costs that now" rather than "in this one book". Answers which
+/// products were actually found, so the seed can report an override naming a
+/// product the dataset does not have instead of dropping it quietly.
+fn apply_price_overrides(fixture: &mut Value, prices: &BTreeMap<String, i64>) -> BTreeSet<String> {
+    let mut applied = BTreeSet::new();
+    if prices.is_empty() {
+        return applied;
+    }
+    let Some(products) = fixture.get_mut("products").and_then(Value::as_array_mut) else {
+        return applied;
+    };
+    for product in products.iter_mut() {
+        let Some(product_ref) = product
+            .get("product_ref")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(minor) = prices.get(&product_ref) else {
+            continue;
+        };
+        if let Some(entries) = product.get_mut("prices").and_then(Value::as_array_mut) {
+            for entry in entries.iter_mut() {
+                if let Some(map) = entry.as_object_mut() {
+                    map.insert("amount_minor".to_owned(), json!(minor));
+                }
+            }
+            applied.insert(product_ref);
+        }
+    }
+    applied
 }
 
 /// Open the business day and the kiosk session, tolerating the ones that are
@@ -436,5 +550,152 @@ fn media_type_of(path: &Path) -> Result<&'static str, CliError> {
             "`{}` has no media type this runtime holds ({other:?})",
             path.display()
         ))),
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dataset() -> Value {
+        json!({
+            "products": [
+                {
+                    "product_ref": "T-LATTE",
+                    "sku": "T-LATTE",
+                    "prices": [
+                        { "price_book": "BASE", "amount_minor": 5_500, "price_mode": "TAX_EXCLUSIVE" },
+                    ],
+                },
+                {
+                    "product_ref": "T-CAFE-DARK",
+                    "sku": "T-CAFE-DARK",
+                    "prices": [
+                        { "price_book": "BASE", "amount_minor": 3_900, "price_mode": "TAX_EXCLUSIVE" },
+                    ],
+                },
+            ],
+        })
+    }
+
+    fn price_of(fixture: &Value, product_ref: &str) -> i64 {
+        fixture["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|product| product["product_ref"] == product_ref)
+            .unwrap()["prices"][0]["amount_minor"]
+            .as_i64()
+            .unwrap()
+    }
+
+    /// An override reaches the dataset the importer reads, which is the whole
+    /// point: the price that comes out is the one the catalog charges.
+    #[test]
+    fn an_override_replaces_the_price_the_dataset_declared() {
+        let mut fixture = dataset();
+        let applied = apply_price_overrides(
+            &mut fixture,
+            &BTreeMap::from([("T-LATTE".to_owned(), 5_900)]),
+        );
+        assert_eq!(applied, BTreeSet::from(["T-LATTE".to_owned()]));
+        assert_eq!(price_of(&fixture, "T-LATTE"), 5_900);
+        // And nothing else moved.
+        assert_eq!(price_of(&fixture, "T-CAFE-DARK"), 3_900);
+    }
+
+    /// Nothing to override leaves the dataset exactly as it shipped.
+    #[test]
+    fn no_overrides_changes_nothing_at_all() {
+        let mut fixture = dataset();
+        let before = fixture.clone();
+        assert!(apply_price_overrides(&mut fixture, &BTreeMap::new()).is_empty());
+        assert_eq!(fixture, before);
+    }
+
+    /// An override naming a product the dataset does not have is reported,
+    /// not dropped: a typo is a price somebody thinks they changed.
+    #[test]
+    fn an_override_for_a_product_that_does_not_exist_is_reported() {
+        let mut fixture = dataset();
+        let applied = apply_price_overrides(
+            &mut fixture,
+            &BTreeMap::from([("T-LATE".to_owned(), 5_900), ("T-LATTE".to_owned(), 6_100)]),
+        );
+        assert_eq!(applied, BTreeSet::from(["T-LATTE".to_owned()]));
+        assert!(
+            !applied.contains("T-LATE"),
+            "a typo was applied to something"
+        );
+        assert_eq!(price_of(&fixture, "T-LATTE"), 6_100);
+    }
+
+    /// Zero is a price. It is what a showroom uses to give something away,
+    /// and it must not be mistaken for "no override".
+    #[test]
+    fn a_price_of_zero_is_an_override_like_any_other() {
+        let mut fixture = dataset();
+        let applied =
+            apply_price_overrides(&mut fixture, &BTreeMap::from([("T-LATTE".to_owned(), 0)]));
+        assert_eq!(applied, BTreeSet::from(["T-LATTE".to_owned()]));
+        assert_eq!(price_of(&fixture, "T-LATTE"), 0);
+    }
+
+    /// The file the host writes, read back.
+    #[test]
+    fn the_overrides_file_is_read_for_prices_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overrides.json");
+        std::fs::write(
+            &path,
+            r#"{
+                 "T-LATTE": { "price_minor": 5900 },
+                 "R-ARRACHERA": { "price_minor": 28900, "authorization_required": true },
+                 "R-CLOROX": { "authorization_required": true }
+               }"#,
+        )
+        .unwrap();
+        let prices = price_overrides(Some(&path)).unwrap();
+        assert_eq!(prices.get("T-LATTE"), Some(&5_900));
+        assert_eq!(prices.get("R-ARRACHERA"), Some(&28_900));
+        // The authorization flag is not catalog data and the core never sees
+        // it: a product with only that flag contributes no price.
+        assert!(!prices.contains_key("R-CLOROX"));
+        assert_eq!(prices.len(), 2);
+    }
+
+    /// A kiosk nobody has edited prices on has no such file, and the seed
+    /// still has to run.
+    #[test]
+    fn a_missing_overrides_file_is_nothing_overridden_rather_than_a_failure() {
+        assert!(price_overrides(None).unwrap().is_empty());
+        assert!(price_overrides(Some(Path::new("/nowhere/overrides.json")))
+            .unwrap()
+            .is_empty());
+    }
+
+    /// What cannot be a price is refused rather than coerced.
+    #[test]
+    fn a_price_that_is_not_a_whole_number_of_cents_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        for bad in [
+            r#"{ "T-LATTE": { "price_minor": "5900" } }"#,
+            r#"{ "T-LATTE": { "price_minor": 59.5 } }"#,
+            r#"{ "T-LATTE": { "price_minor": -100 } }"#,
+        ] {
+            let path = dir.path().join("overrides.json");
+            std::fs::write(&path, bad).unwrap();
+            assert!(
+                price_overrides(Some(&path)).is_err(),
+                "`{bad}` was accepted as a price"
+            );
+        }
+        // And a file that is not JSON at all says so rather than being
+        // treated as empty: a corrupt overrides file is an operator's edit
+        // gone wrong, and seeding past it would charge the old prices.
+        let path = dir.path().join("overrides.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(price_overrides(Some(&path)).is_err());
     }
 }

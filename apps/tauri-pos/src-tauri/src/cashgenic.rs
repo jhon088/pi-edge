@@ -858,6 +858,10 @@ pub fn cashgenic_pay(
     amount_minor: i64,
 ) -> Result<CashGenicStatusV1, BridgeError> {
     crate::kiosk::require_a_printer_that_can_follow_through(&bridge)?;
+    crate::kiosk::require_an_authorization_if_the_basket_needs_one(
+        &crate::showroom::data_dir(&app)?,
+        &bridge,
+    )?;
     let preferences = crate::showroom::stored(&crate::showroom::data_dir(&app)?);
     let device = CashGenic::new(&preferences.cashgenic);
     device.pay_amount(amount_minor)?;

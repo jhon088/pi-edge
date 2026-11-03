@@ -172,6 +172,15 @@ enum Command {
         /// Directory holding `menu.json` and `assets/`.
         #[arg(long, default_value = "demo")]
         path: PathBuf,
+        /// Prices an operator changed on the kiosk itself, as JSON.
+        ///
+        /// `{"T-LATTE": {"price_minor": 5900}}`. Applied to the dataset
+        /// *before* it is imported, so the price that comes out the other
+        /// side is the one the catalog in force charges — not a second number
+        /// kept somewhere a sale never reads. Absent means the dataset's own
+        /// prices (ADR 050).
+        #[arg(long = "overrides")]
+        overrides: Option<PathBuf>,
     },
     /// Import one asset's bytes into the local content-addressed store.
     ImportAsset {
@@ -584,7 +593,9 @@ fn run(cli: &Cli) -> Result<Value, CliError> {
             )?;
             outcome.to_value()
         }
-        Command::DemoSeed { path } => demo::seed(&client, path)?.to_value(),
+        Command::DemoSeed { path, overrides } => {
+            demo::seed(&client, path, overrides.as_deref())?.to_value()
+        }
         Command::ImportAsset {
             file,
             media_type,

@@ -27,6 +27,8 @@ export interface MenuCategory {
 
 export interface MenuItem {
   product_ref: string;
+  /** The shop's own code, when the catalog carries one. */
+  sku: string | null;
   category_ref: string | null;
   name: string;
   description: string | null;
@@ -175,6 +177,18 @@ export interface KioskPreferences {
   /** Whether the kiosk will take an order at all. */
   kiosk_open: boolean;
   cashgenic: CashGenicSettings;
+  /**
+   * The PIN that approves an authorization and drives the control endpoints.
+   * `""` means nobody has set one — which is a refusal, not a free pass.
+   */
+  admin_pin: string;
+  /**
+   * Whether this kiosk accepts the two control POSTs at all. Off by default:
+   * a POST that closes the kiosk or releases a payment is the first write
+   * path from the network, and a four-digit PIN is thin protection to leave
+   * switched on in a customer's building.
+   */
+  remote_control: boolean;
 }
 
 /** What this screen has put through since the day was opened. */
@@ -283,4 +297,64 @@ export interface PrinterConfiguration {
    * has none, or where the platform has no such interface at all.
    */
   status_devices: string[];
+}
+
+// =============================================== products, prices, authority
+
+/**
+ * One row of the Admin product list.
+ *
+ * The core's own menu for the chosen experience, with this installation's
+ * edits laid over it. There is no second catalog: `price_minor` is what the
+ * catalog in force charges, so a row showing a new price is a row the till
+ * agrees with.
+ */
+export interface AdminProduct {
+  product_ref: string;
+  /** The shop's code. `""` when the catalog has none. */
+  sku: string;
+  name: string;
+  category_ref: string;
+  category_name: string;
+  price_minor: number;
+  price_formatted: string;
+  available: boolean;
+  /** Retail only. The counter lanes ignore it. */
+  authorization_required: boolean;
+  /** Whether the price shown came from an edit rather than the dataset. */
+  price_overridden: boolean;
+  image: AssetRef | null;
+}
+
+/** One product's edits, as Admin sends them. */
+export interface ProductEdit {
+  product_ref: string;
+  /** `null` puts the dataset's own price back. */
+  price_minor: number | null;
+  authorization_required: boolean;
+}
+
+/** What the lane is waiting for somebody to come over and release. */
+export interface Authorization {
+  required: boolean;
+  request_id: string;
+  sale_id: string;
+  products: { product_ref: string; name: string }[];
+  approved: boolean;
+  requested_at: string;
+}
+
+/**
+ * Whether a payment may start, and why not.
+ *
+ * Answered as a value rather than thrown, because the screen is deciding
+ * which screen to draw rather than handling a failure. The hard refusals stay
+ * in the host: `pay` itself refuses, so this is the courteous half.
+ */
+export interface PaymentGate {
+  allowed: boolean;
+  blocked_by: "" | "PRINTER" | "AUTHORIZATION";
+  /** What to put in front of the customer. `""` when allowed. */
+  message: string;
+  authorization: Authorization;
 }

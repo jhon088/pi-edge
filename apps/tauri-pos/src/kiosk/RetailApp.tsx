@@ -21,7 +21,6 @@ import {
   cancelTransaction,
   changeQuantity,
   describe,
-  isBridgeError,
   fetchMenu,
   fetchPrinterSettings,
   removeItem,
@@ -30,6 +29,7 @@ import {
   scanKey,
   totalize,
   paymentAllowed,
+  approveAuthorization,
 } from "./api";
 import { CameraCorner } from "./CameraCorner";
 import {
@@ -41,6 +41,7 @@ import {
   Splash,
   Toast,
   PrinterBlockedScreen,
+  AuthorizationScreen,
 } from "./components";
 import { showsClosedSign } from "./flow";
 import { usePaymentJourney } from "./payment";
@@ -58,7 +59,7 @@ import {
   PaymentScreen,
   type Method,
 } from "./screens";
-import type { Menu, MenuItem, RetailTransaction } from "./types";
+import type { Menu, MenuItem, PaymentGate, RetailTransaction } from "./types";
 import "./kiosk.css";
 
 /** How long a lane may sit untouched before the basket is abandoned. */
@@ -143,6 +144,16 @@ function Retail({
    * to say what is wrong and offer to look again, not fail a tender choice.
    */
   const [printerBlock, setPrinterBlock] = useState<string | null>(null);
+  /**
+   * The authorization this basket is waiting on, when it is waiting.
+   *
+   * The whole gate answer rather than just its message, because the screen
+   * needs the request id to approve it and the product list to say what the
+   * hold is about.
+   */
+  const [waiting, setWaiting] = useState<PaymentGate | null>(null);
+  /** Why the last PIN attempt failed. */
+  const [authError, setAuthError] = useState<string | null>(null);
   const [autoPrint, setAutoPrint] = useState(false);
   const [adminFrom, setAdminFrom] = useState<Stage>("attract");
   const [confirmed, setConfirmed] = useState<{
@@ -241,6 +252,8 @@ function Retail({
       resetPaying();
       setMethod("CARD");
       setPrinterBlock(null);
+      setWaiting(null);
+      setAuthError(null);
       setStage("attract");
     },
     [resetPaying],
@@ -379,6 +392,8 @@ function Retail({
       // Asked again on the way in, by `choosePayment`. A notice left over
       // from the last attempt would hide a printer somebody has since fixed.
       setPrinterBlock(null);
+      setWaiting(null);
+      setAuthError(null);
       setStage("method");
     } catch (reason) {
       complain(reason);
@@ -399,17 +414,26 @@ function Retail({
   const choosePayment = async (picked: Method) => {
     setBusy(true);
     try {
-      await paymentAllowed();
+      const gate = await paymentAllowed();
+      if (!gate.allowed) {
+        // Two reasons a lane stops, and they are different screens: a printer
+        // somebody has to fix, and a basket somebody has to come and release.
+        if (gate.blocked_by === "AUTHORIZATION") {
+          setWaiting(gate);
+          setAuthError(null);
+        } else {
+          setPrinterBlock(gate.message);
+        }
+        return;
+      }
       setMethod(picked);
       setPrinterBlock(null);
+      setWaiting(null);
+      setAuthError(null);
       resetPaying();
       setStage("payment");
     } catch (reason) {
-      if (isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE") {
-        setPrinterBlock(reason.message);
-      } else {
-        complain(reason);
-      }
+      complain(reason);
     } finally {
       setBusy(false);
     }
@@ -419,14 +443,44 @@ function Retail({
   const recheckPrinter = async () => {
     setBusy(true);
     try {
-      await paymentAllowed();
-      setPrinterBlock(null);
+      const gate = await paymentAllowed();
+      setPrinterBlock(gate.allowed ? null : gate.message);
     } catch (reason) {
-      setPrinterBlock(
-        isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE"
-          ? reason.message
-          : describe(reason),
-      );
+      setPrinterBlock(describe(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * A member of staff typed the PIN.
+   *
+   * On success the lane goes straight on to the method choice — the customer
+   * has already been standing there, and making them press pay again would be
+   * a second wait for nothing. The gate is re-asked rather than assumed: the
+   * printer may have failed while somebody walked over.
+   */
+  const approve = async (pin: string) => {
+    if (!waiting) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await approveAuthorization(waiting.authorization.request_id, pin);
+      setWaiting(null);
+      setAuthError(null);
+      const gate = await paymentAllowed();
+      if (!gate.allowed) {
+        if (gate.blocked_by === "AUTHORIZATION") {
+          // The basket grew while somebody walked over: another restricted
+          // product went in and needs its own approval.
+          setWaiting(gate);
+        } else {
+          setPrinterBlock(gate.message);
+        }
+      }
+    } catch (reason) {
+      setAuthError(describe(reason));
     } finally {
       setBusy(false);
     }
@@ -467,7 +521,8 @@ function Retail({
             resetPaying();
             setMethod("CARD");
             setPrinterBlock(null);
-      setPrinterBlock(null);
+            setWaiting(null);
+            setAuthError(null);
             refreshAutoPrint();
             setStage("attract");
           }}
@@ -583,6 +638,14 @@ function Retail({
                 message={printerBlock}
                 busy={busy}
                 onRetry={() => void recheckPrinter()}
+              />
+            ) : waiting ? (
+              <AuthorizationScreen
+                message={waiting.message}
+                products={waiting.authorization.products}
+                busy={busy}
+                error={authError}
+                onApprove={(pin) => void approve(pin)}
               />
             ) : (
               <MethodScreen

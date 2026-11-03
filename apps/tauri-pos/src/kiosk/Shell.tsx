@@ -44,6 +44,9 @@ export default function Shell() {
             username: "",
             password: "",
           },
+          // The quiet defaults: no PIN, and not listening for a control POST.
+          admin_pin: "",
+          remote_control: false,
         }),
       );
   }, []);

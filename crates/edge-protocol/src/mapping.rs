@@ -1401,6 +1401,7 @@ impl From<&MenuView> for MenuV1 {
                 .iter()
                 .map(|item| MenuItemV1 {
                     product_ref: item.product_ref.to_string(),
+                    sku: item.sku.clone(),
                     category_ref: item.category_ref.as_ref().map(ToString::to_string),
                     name: item.name.clone(),
                     description: item.description.clone(),

@@ -1796,6 +1796,10 @@ pub struct MenuCategoryV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MenuItemV1 {
     pub product_ref: String,
+    /// The shop's own code for it, when the catalog carries one. Never an
+    /// identity a command may name — that is always `product_ref`.
+    #[serde(default)]
+    pub sku: Option<String>,
     pub category_ref: Option<String>,
     pub name: String,
     pub description: Option<String>,

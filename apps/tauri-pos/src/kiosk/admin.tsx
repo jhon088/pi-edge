@@ -26,9 +26,14 @@ import {
   setKioskOpen,
   setVertical,
   testPrint,
+  adminProducts,
+  saveProducts,
+  setPin,
+  setRemoteControl,
 } from "./api";
+import { majorOf, minorOf } from "./flow";
 import { BRANDS, brandOf } from "./brands";
-import { Brand, PoweredBy } from "./components";
+import { Brand, PoweredBy, AssetImage } from "./components";
 import {
   CameraPreview,
   browserCamera,
@@ -44,6 +49,8 @@ import type {
   PrinterSettings,
   PrinterStatus,
   Vertical,
+  AdminProduct,
+  ProductEdit,
 } from "./types";
 
 /** Minor units as a peso amount. Display only; the core owns every total. */
@@ -203,6 +210,147 @@ export function AdminScreen({
       onVerticalChange(chosen);
     } catch (reason) {
       setNote({ tone: "bad", text: describe(reason) });
+      setBusy(false);
+    }
+  };
+
+  // --- products and prices ------------------------------------------------
+  //
+  // The list is the **core's own menu** for whichever experience is being
+  // looked at, with this kiosk's edits laid over it. Admin can browse an
+  // experience it is not currently running — somebody setting up a stand
+  // prices all four — so the shelf being shown is its own piece of state,
+  // separate from the lane in use.
+
+  /** Which experience's shelf is on screen. Defaults to the one in use. */
+  const [shelf, setShelf] = useState<Vertical | null>(null);
+  const [products, setProducts] = useState<AdminProduct[] | null>(null);
+  /**
+   * Prices as they are being typed, by `product_ref`.
+   *
+   * Held apart from `products` so the list keeps showing what the till
+   * charges while a number is half-typed, and so [Aplicar precios] knows
+   * exactly what changed.
+   */
+  const [typed, setTyped] = useState<Record<string, string>>({});
+  /** Authorization flags as they are being switched, by `product_ref`. */
+  const [flags, setFlags] = useState<Record<string, boolean>>({});
+
+  const shelfChannel = shelf ? brandOf(shelf).channel : null;
+
+  const loadProducts = useCallback(async (channel: string) => {
+    try {
+      setProducts(await adminProducts(channel));
+      setTyped({});
+      setFlags({});
+    } catch (reason) {
+      setProducts([]);
+      setNote({ tone: "bad", text: describe(reason) });
+    }
+  }, []);
+
+  // The lane in use decides which shelf opens, once.
+  useEffect(() => {
+    if (lane && shelf === null) {
+      setShelf(lane.vertical);
+    }
+  }, [lane, shelf]);
+
+  useEffect(() => {
+    if (shelfChannel) {
+      void loadProducts(shelfChannel);
+    }
+  }, [shelfChannel, loadProducts]);
+
+  /** What an operator has actually changed, ready to send. */
+  const edits: ProductEdit[] = (products ?? [])
+    .filter((product) => {
+      const price = typed[product.product_ref];
+      const flag = flags[product.product_ref];
+      const pricePending =
+        price !== undefined && price.trim() !== "" && minorOf(price) !== product.price_minor;
+      const flagPending = flag !== undefined && flag !== product.authorization_required;
+      return pricePending || flagPending;
+    })
+    .map((product) => {
+      const price = typed[product.product_ref];
+      return {
+        product_ref: product.product_ref,
+        price_minor:
+          price !== undefined && price.trim() !== ""
+            ? minorOf(price)
+            : product.price_overridden
+              ? product.price_minor
+              : null,
+        authorization_required:
+          flags[product.product_ref] ?? product.authorization_required,
+      };
+    });
+
+  const badPrices = Object.entries(typed).filter(
+    ([, value]) => value.trim() !== "" && minorOf(value) === null,
+  );
+
+  /**
+   * Write the edits and rebuild the catalog.
+   *
+   * One press for the whole batch, because each price has to reach the
+   * catalog in force and the only honest way there is a new active snapshot —
+   * a second or two, and a catalog version. Eight prices adjusted in one
+   * sitting is one import, not eight.
+   */
+  const applyEdits = async () => {
+    if (edits.length === 0) {
+      return;
+    }
+    setBusy(true);
+    setNote({ tone: "ok", text: "Aplicando precios al catálogo…" });
+    try {
+      // What comes back is read from the core, so the list below is what the
+      // till charges rather than what was typed.
+      setProducts(await saveProducts(edits));
+      setTyped({});
+      setFlags({});
+      setNote({
+        tone: "ok",
+        text: `${edits.length} producto(s) actualizado(s). El precio nuevo es el que cobra la venta.`,
+      });
+    } catch (reason) {
+      setNote({ tone: "bad", text: describe(reason) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // --- the PIN and remote control ------------------------------------------
+
+  /** The PIN as it is being typed, before it is saved. */
+  const [pinDraft, setPinDraft] = useState("");
+
+  const savePin = async () => {
+    setBusy(true);
+    try {
+      setLane(await setPin(pinDraft));
+      setPinDraft("");
+      setNote({
+        tone: "ok",
+        text: pinDraft.trim() === "" ? "PIN eliminado." : "PIN guardado.",
+      });
+    } catch (reason) {
+      setNote({ tone: "bad", text: describe(reason) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleRemote = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      setLane(await setRemoteControl(enabled));
+      setNote(null);
+    } catch (reason) {
+      setNote({ tone: "bad", text: describe(reason) });
+    } finally {
       setBusy(false);
     }
   };
@@ -741,6 +889,241 @@ export function AdminScreen({
               restaurante no tiene vista previa.
             </p>
           ) : null}
+        </section>
+
+        <section className="k-panel" style={{ marginTop: 22 }}>
+          <div className="k-panel__head">
+            <h2 className="k-h2">Productos y precios</h2>
+            <span className="k-state k-state--idle">
+              {products ? `${products.length} productos` : "Cargando…"}
+            </span>
+          </div>
+          <p className="k-field__hint" style={{ marginTop: 0 }}>
+            La lista real de la experiencia, leída del catálogo activo. El
+            precio que se muestra es el que cobra la venta; al aplicar un
+            cambio se reimporta el catálogo y la venta cobra el nuevo.
+          </p>
+
+          <div className="k-admin__lanes k-admin__lanes--tight">
+            {BRANDS.map((entry) => (
+              <button
+                key={entry.vertical}
+                type="button"
+                className={`k-admin__lane${
+                  shelf === entry.vertical ? " k-admin__lane--on" : ""
+                }`}
+                disabled={busy}
+                onClick={() => setShelf(entry.vertical)}
+              >
+                <span className="k-admin__lane-name">{entry.name}</span>
+                {lane?.vertical === entry.vertical ? (
+                  <span className="k-admin__lane-on">En uso</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+
+          {products === null ? (
+            <p className="k-body">Leyendo el catálogo…</p>
+          ) : products.length === 0 ? (
+            <p className="k-admin__note k-admin__note--bad">
+              Esta experiencia no tiene productos en el catálogo activo. Si
+              acabas de actualizar, cierra y vuelve a abrir la aplicación.
+            </p>
+          ) : (
+            <div className="k-admin__table" role="table">
+              <div className="k-admin__row k-admin__row--head" role="row">
+                <span role="columnheader">Producto</span>
+                <span role="columnheader">Categoría</span>
+                <span role="columnheader">Precio</span>
+                {shelf === "RETAIL" ? (
+                  <span role="columnheader">Autorización</span>
+                ) : null}
+              </div>
+              {products.map((product) => {
+                const draft = typed[product.product_ref];
+                const shown =
+                  draft !== undefined ? draft : majorOf(product.price_minor);
+                const bad = draft !== undefined && draft.trim() !== "" && minorOf(draft) === null;
+                return (
+                  <div className="k-admin__row" role="row" key={product.product_ref}>
+                    <span role="cell" className="k-admin__cell-product">
+                      <AssetImage
+                        asset={product.image}
+                        alt={product.name}
+                        className="k-admin__thumb"
+                      />
+                      <span>
+                        <span className="k-admin__product-name">{product.name}</span>
+                        <span className="k-admin__product-ref">
+                          {product.sku || product.product_ref}
+                        </span>
+                      </span>
+                    </span>
+                    <span role="cell" className="k-field__hint">
+                      {product.category_name || product.category_ref || "—"}
+                    </span>
+                    <span role="cell" className="k-admin__cell-price">
+                      <input
+                        className={`k-input k-input--price${bad ? " k-input--bad" : ""}`}
+                        type="text"
+                        inputMode="decimal"
+                        aria-label={`Precio de ${product.name}`}
+                        value={shown}
+                        disabled={busy}
+                        onChange={(event) =>
+                          setTyped((current) => ({
+                            ...current,
+                            [product.product_ref]: event.target.value,
+                          }))
+                        }
+                      />
+                      {product.price_overridden ? (
+                        <span className="k-admin__edited" title="Precio editado en este kiosko">
+                          editado
+                        </span>
+                      ) : null}
+                    </span>
+                    {shelf === "RETAIL" ? (
+                      <span role="cell">
+                        <input
+                          type="checkbox"
+                          aria-label={`${product.name} requiere autorización`}
+                          checked={
+                            flags[product.product_ref] ??
+                            product.authorization_required
+                          }
+                          disabled={busy}
+                          onChange={(event) =>
+                            setFlags((current) => ({
+                              ...current,
+                              [product.product_ref]: event.target.checked,
+                            }))
+                          }
+                        />
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {shelf === "RETAIL" ? (
+            <p className="k-field__hint">
+              «Requiere autorización» no bloquea el escaneo. El cliente llena
+              su carrito normalmente y el cobro se detiene al final, que es
+              como se comporta una caja de autoservicio de verdad.
+            </p>
+          ) : null}
+
+          {badPrices.length > 0 ? (
+            <p className="k-admin__note k-admin__note--bad">
+              {badPrices.length === 1
+                ? "Hay un precio que no se entiende."
+                : `Hay ${badPrices.length} precios que no se entienden.`}{" "}
+              Usa pesos con hasta dos decimales, por ejemplo 59.50.
+            </p>
+          ) : null}
+
+          <div className="k-panel__foot">
+            <button
+              type="button"
+              className="k-btn k-btn--ghost"
+              disabled={busy || !shelfChannel}
+              onClick={() => {
+                if (shelfChannel) {
+                  void loadProducts(shelfChannel);
+                }
+              }}
+            >
+              Descartar cambios
+            </button>
+            <button
+              type="button"
+              className="k-btn k-btn--primary"
+              disabled={busy || edits.length === 0 || badPrices.length > 0}
+              onClick={() => void applyEdits()}
+            >
+              {edits.length === 0
+                ? "Aplicar precios"
+                : `Aplicar ${edits.length} cambio(s)`}
+            </button>
+          </div>
+          <p className="k-field__hint">
+            Aplicar reimporta el catálogo por el mismo camino que una
+            actualización: tarda un par de segundos y sube una versión. Varios
+            cambios de una vez son una sola reimportación.
+          </p>
+        </section>
+
+        <section className="k-panel" style={{ marginTop: 22 }}>
+          <div className="k-panel__head">
+            <h2 className="k-h2">Autorización y control</h2>
+            <span
+              className={`k-state ${
+                lane?.admin_pin ? "k-state--ok" : "k-state--idle"
+              }`}
+            >
+              {lane?.admin_pin ? "PIN configurado" : "Sin PIN"}
+            </span>
+          </div>
+          <p className="k-field__hint" style={{ marginTop: 0 }}>
+            El PIN libera un cobro detenido por autorización y es lo único que
+            protege el control remoto. Sin PIN no se autoriza nada.
+          </p>
+
+          <div className="k-field">
+            <span className="k-field__label">PIN de Admin</span>
+            <input
+              className="k-input"
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder={lane?.admin_pin ? "••••" : "Al menos 4 dígitos"}
+              value={pinDraft}
+              disabled={busy}
+              onChange={(event) => setPinDraft(event.target.value)}
+            />
+            <span className="k-field__hint">
+              Al menos cuatro dígitos. Vacío lo elimina, y entonces no se
+              puede autorizar ni controlar nada. Se guarda en claro junto a la
+              base de datos, como las credenciales del aceptador: es un equipo
+              de showroom que se reconfigura a mano.
+            </span>
+          </div>
+
+          <label className="k-field k-field--switch">
+            <input
+              type="checkbox"
+              checked={lane?.remote_control ?? false}
+              disabled={busy || !lane?.admin_pin}
+              onChange={(event) => void toggleRemote(event.target.checked)}
+            />
+            <span>
+              <span className="k-field__label">Permitir control remoto</span>
+              <span className="k-field__hint">
+                Deja que una app de tienda abra o cierre este kiosko y apruebe
+                autorizaciones, con este PIN y sólo desde la red local.
+                Apagado por defecto: un POST que cierra el kiosko es el primer
+                camino de escritura desde la red, y cuatro dígitos son poca
+                protección para dejarla encendida en las oficinas de un
+                cliente. <code>GET /demo/status</code> sigue abierto como
+                siempre.
+              </span>
+            </span>
+          </label>
+
+          <div className="k-panel__foot">
+            <button
+              type="button"
+              className="k-btn k-btn--primary"
+              disabled={busy}
+              onClick={() => void savePin()}
+            >
+              {pinDraft.trim() === "" ? "Quitar PIN" : "Guardar PIN"}
+            </button>
+          </div>
         </section>
 
         <section className="k-panel" style={{ marginTop: 22 }}>

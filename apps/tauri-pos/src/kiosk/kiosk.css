@@ -3259,3 +3259,148 @@ button {
 .k-cg__row--change dd {
   font-size: 34px;
 }
+
+/* ------------------------------------------------- waiting for a signature
+ *
+ * The authorization screen reuses the retail keypad wholesale — it is the
+ * same gesture on the same hardware — and adds only the list of what the
+ * lane is waiting on.
+ */
+.k-auth__list {
+  list-style: none;
+  margin: 18px 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+
+.k-auth__list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--k-surface-2, rgba(0, 0, 0, 0.05));
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.k-auth__ref {
+  font-family: var(--k-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.6;
+}
+
+.k-auth__pad {
+  margin-top: 18px;
+}
+
+/* ------------------------------------------------ the product list in Admin
+ *
+ * A table, because that is what a price list is. Scrolls inside itself on a
+ * narrow screen rather than pushing the panel sideways — an operator on a
+ * kiosk in portrait still has to reach the Aplicar button.
+ */
+.k-admin__lanes--tight {
+  margin-bottom: 14px;
+}
+
+.k-admin__table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 4px;
+  max-height: 46vh;
+  overflow: auto;
+  border-radius: 12px;
+}
+
+.k-admin__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--k-surface-2, rgba(0, 0, 0, 0.04));
+}
+
+.k-admin__row:has(> [role="cell"]:nth-child(4)),
+.k-admin__row--head:has(> [role="columnheader"]:nth-child(4)) {
+  grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr) 150px 110px;
+}
+
+.k-admin__row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--k-surface, #fff);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.k-admin__cell-product {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.k-admin__thumb {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--k-surface-3, rgba(0, 0, 0, 0.08));
+}
+
+.k-admin__product-name,
+.k-admin__product-ref {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.k-admin__product-name {
+  font-weight: 600;
+}
+
+.k-admin__product-ref {
+  font-family: var(--k-mono, ui-monospace, monospace);
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.k-admin__cell-price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.k-input--price {
+  width: 92px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-input--bad {
+  border-color: var(--k-bad, #c2410c);
+  outline: 2px solid var(--k-bad, #c2410c);
+}
+
+.k-admin__edited {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}

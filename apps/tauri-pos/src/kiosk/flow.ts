@@ -145,3 +145,40 @@ export class Gate {
     return this.held;
   }
 }
+
+/**
+ * A typed price as minor units, or `null` when it is not a price.
+ *
+ * Parsed as **text** and never through a float: `59.50` pesos is 5950 minor
+ * units and the arithmetic to get there is two integers, because this number
+ * becomes the one a sale charges and a cent lost in a float is a cent nobody
+ * can account for (CLAUDE.md).
+ *
+ * Strict on purpose, in two places where being helpful would be worse:
+ *
+ * * **interior whitespace is refused.** `"5 9"` is two numbers somebody is
+ *   still typing, and reading it as 59.00 would set a price they never chose.
+ * * **a comma must be a well-formed thousands separator.** `"1,234.00"` is a
+ *   price. `"59,5"` is ambiguous — 59.50 to half the world and 59,500
+ *   half-typed to the other — so it is refused and the operator retypes it.
+ *   Stripping it blindly was the first version of this, and it turned a
+ *   fifty-nine peso coffee into a five-hundred-and-ninety-five peso one.
+ */
+export function minorOf(typed: string): number | null {
+  const cleaned = typed.trim().replace(/\$/g, "");
+  const plain = /^\d+(\.\d{1,2})?$/;
+  const grouped = /^\d{1,3}(,\d{3})+(\.\d{1,2})?$/;
+  if (!plain.test(cleaned) && !grouped.test(cleaned)) {
+    return null;
+  }
+  const [whole, fraction = ""] = cleaned.replace(/,/g, "").split(".");
+  const cents = (fraction + "00").slice(0, 2);
+  return Number(whole) * 100 + Number(cents);
+}
+
+/** Minor units as the decimal an operator edits. */
+export function majorOf(minor: number): string {
+  const sign = minor < 0 ? "-" : "";
+  const absolute = Math.abs(minor);
+  return `${sign}${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
+}

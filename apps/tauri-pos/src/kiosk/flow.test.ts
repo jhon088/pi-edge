@@ -16,6 +16,8 @@ import { describe, it } from "node:test";
 import {
   Gate,
   screenAfterPick,
+  majorOf,
+  minorOf,
   showsClosedSign,
   type Origin,
   type Pick,
@@ -222,5 +224,66 @@ describe("the closed sign", () => {
   /** Admin has to stay reachable: it is the only way to open it again. */
   it("is never drawn over Admin", () => {
     assert.equal(showsClosedSign(false, "admin"), false);
+  });
+});
+
+describe("a price an operator types", () => {
+  it("becomes minor units without passing through a float", () => {
+    assert.equal(minorOf("59"), 5900);
+    assert.equal(minorOf("59.5"), 5950);
+    assert.equal(minorOf("59.50"), 5950);
+    assert.equal(minorOf("0"), 0);
+    assert.equal(minorOf("0.05"), 5);
+    assert.equal(minorOf("0.01"), 1);
+    assert.equal(minorOf("1234.00"), 123400);
+    // Typed the way a person types money.
+    assert.equal(minorOf(" 1,234.00 "), 123400);
+    assert.equal(minorOf("$59.50"), 5950);
+  });
+
+  /**
+   * The cases a float gets wrong. `0.1 + 0.2` and `59.99 * 100` are the
+   * classic ones; this parses text, so there is nothing to get wrong.
+   */
+  it("keeps every cent that a float would lose", () => {
+    assert.equal(minorOf("59.99"), 5999);
+    assert.equal(minorOf("0.07"), 7);
+    assert.equal(minorOf("8.15"), 815);
+    assert.equal(minorOf("1.10"), 110);
+    assert.equal(minorOf("1.1"), 110);
+    // Round-trips, which is what the editable field relies on.
+    for (const minor of [0, 1, 5, 99, 100, 815, 5999, 123400]) {
+      assert.equal(minorOf(majorOf(minor)), minor, `${minor}`);
+    }
+  });
+
+  it("refuses what is not a price rather than guessing one", () => {
+    for (const typed of [
+      "",
+      " ",
+      "abc",
+      "59.555",
+      "-1",
+      "-0.01",
+      "1e3",
+      "59.",
+      ".5",
+      "5 9",
+      "59,5",
+      "1,23",
+      "1,2345",
+      ",500",
+      "NaN",
+      "Infinity",
+    ]) {
+      assert.equal(minorOf(typed), null, `\`${typed}\` was read as a price`);
+    }
+  });
+
+  it("formats minor units the way the field shows them", () => {
+    assert.equal(majorOf(5950), "59.50");
+    assert.equal(majorOf(0), "0.00");
+    assert.equal(majorOf(5), "0.05");
+    assert.equal(majorOf(123400), "1234.00");
   });
 });

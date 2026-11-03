@@ -303,6 +303,138 @@ export function PrinterBlockedScreen({
   );
 }
 
+/**
+ * The lane is waiting for somebody to come over.
+ *
+ * Shown instead of letting the tender choice through when the basket holds a
+ * product the shop will not let a customer pay for unsupervised. Deliberately
+ * **not** shown when the product was scanned: a customer fills their basket
+ * normally and finds out at the till, which is how a real self-checkout
+ * behaves and is the behaviour being demonstrated.
+ *
+ * Two states in one screen. First the customer's: what is happening and that
+ * help is coming. Then, once somebody presses Autorizar, the member of
+ * staff's: a keypad for the PIN. The customer's words stay on screen while
+ * the PIN is typed, because the person typing is standing beside them.
+ */
+export function AuthorizationScreen({
+  message,
+  products,
+  busy,
+  error,
+  onApprove,
+}: {
+  /** The host's words, passed through rather than rewritten. */
+  message: string;
+  /** Which products the sale is waiting on. */
+  products: { product_ref: string; name: string }[];
+  busy: boolean;
+  /** Why the last attempt failed, when one did. */
+  error: string | null;
+  onApprove: (pin: string) => void;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [pin, setPin] = useState("");
+
+  return (
+    <div className="k-closed" role="alert">
+      <Brand large />
+      <div className="k-closed__mark" aria-hidden>
+        🔒
+      </div>
+      {message.split("\n").map((line, at) =>
+        at === 0 ? (
+          <h1 className="k-h1" key={line}>
+            {line}
+          </h1>
+        ) : (
+          <p className="k-body" key={line}>
+            {line}
+          </p>
+        ),
+      )}
+
+      {products.length > 0 ? (
+        <ul className="k-auth__list">
+          {products.map((product) => (
+            <li key={product.product_ref}>
+              {product.name}
+              <span className="k-auth__ref">{product.product_ref}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {asking ? (
+        <div className="k-r-pad k-auth__pad">
+          <p className="k-eyebrow">PIN de autorización</p>
+          <div className="k-r-pad__display">
+            {pin ? "•".repeat(pin.length) : <span className="k-r-keys__ghost">••••</span>}
+          </div>
+          <div className="k-r-pad__keys">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
+              <button
+                key={digit}
+                type="button"
+                className="k-r-key k-r-key--pad"
+                disabled={busy}
+                onClick={() => setPin((current) => (current + digit).slice(0, 12))}
+              >
+                {digit}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="k-r-key k-r-key--pad"
+              aria-label="Borrar un dígito"
+              disabled={busy}
+              onClick={() => setPin((current) => current.slice(0, -1))}
+            >
+              ⌫
+            </button>
+            <button
+              type="button"
+              className="k-r-key k-r-key--pad"
+              disabled={busy}
+              onClick={() => setPin((current) => (current + "0").slice(0, 12))}
+            >
+              0
+            </button>
+            <button
+              type="button"
+              className="k-r-key k-r-key--pad k-r-key--go"
+              disabled={busy || pin.length < 4}
+              onClick={() => {
+                onApprove(pin);
+                setPin("");
+              }}
+            >
+              ✓
+            </button>
+          </div>
+          {error ? (
+            <p className="k-admin__note k-admin__note--bad">{error}</p>
+          ) : (
+            <p className="k-field__hint">
+              Lo teclea un miembro del equipo, no el cliente.
+            </p>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="k-btn k-btn--primary"
+          disabled={busy}
+          onClick={() => setAsking(true)}
+        >
+          Autorizar
+        </button>
+      )}
+      <PoweredBy />
+    </div>
+  );
+}
+
 export function Toast({ message }: { message: string }) {
   return (
     <div className="k-toast" role="alert">

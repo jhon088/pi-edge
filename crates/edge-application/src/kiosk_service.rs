@@ -94,6 +94,9 @@ where
                     !configuration_for(&groups, &options, &shown.product_ref).is_empty();
                 items.push(MenuItemView {
                     product_ref: shown.product_ref.clone(),
+                    // Already in hand: the product was loaded to decide
+                    // whether it is saleable at all.
+                    sku: product.sku.clone(),
                     category_ref: shown.category_ref.clone(),
                     name: shown
                         .display_name

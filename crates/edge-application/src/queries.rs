@@ -346,6 +346,13 @@ pub struct MenuCategoryView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItemView {
     pub product_ref: ProductRef,
+    /// The shop's own code for it, when the catalog carries one.
+    ///
+    /// Not a second identity: `product_ref` is what every command names, and
+    /// this is what a person reads off a shelf label. The retail dataset has
+    /// both (`R-COCA-3L` / `SKU-RT-1001`); the counter brands use one string
+    /// for both, and `None` is an ordinary answer.
+    pub sku: Option<String>,
     pub category_ref: Option<CategoryRef>,
     pub name: String,
     pub description: Option<String>,

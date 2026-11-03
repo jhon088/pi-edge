@@ -24,7 +24,6 @@ import {
   cancelTransaction,
   changeQuantity,
   describe,
-  isBridgeError,
   fetchConfiguration,
   fetchMenu,
   fetchPrinterSettings,
@@ -519,17 +518,21 @@ function Kiosk({
   const choosePayment = async (picked: Method) => {
     setBusy(true);
     try {
-      await paymentAllowed();
+      const gate = await paymentAllowed();
+      if (!gate.allowed) {
+        // A counter lane can only ever be stopped by the printer — the
+        // authorization flag is a retail concept, and the host answers
+        // nothing for the other three brands. Whatever the reason, the host's
+        // own words go on the screen.
+        setPrinterBlock(gate.message);
+        return;
+      }
       setMethod(picked);
       setPrinterBlock(null);
       resetPaying();
       setStage("payment");
     } catch (reason) {
-      if (isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE") {
-        setPrinterBlock(reason.message);
-      } else {
-        complain(reason);
-      }
+      complain(reason);
     } finally {
       setBusy(false);
     }
@@ -539,14 +542,10 @@ function Kiosk({
   const recheckPrinter = async () => {
     setBusy(true);
     try {
-      await paymentAllowed();
-      setPrinterBlock(null);
+      const gate = await paymentAllowed();
+      setPrinterBlock(gate.allowed ? null : gate.message);
     } catch (reason) {
-      setPrinterBlock(
-        isBridgeError(reason) && reason.code === "PRINTER_UNAVAILABLE"
-          ? reason.message
-          : describe(reason),
-      );
+      setPrinterBlock(describe(reason));
     } finally {
       setBusy(false);
     }

@@ -28,9 +28,11 @@ use tauri::{Emitter, Manager};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod authorization;
 mod bootstrap;
 mod cashgenic;
 mod kiosk;
+mod overrides;
 mod retail;
 mod scanner;
 mod showroom;
@@ -115,7 +117,7 @@ pub struct EdgeBridge {
 }
 
 impl EdgeBridge {
-    fn connect(database: PathBuf) -> Result<Self, ClientError> {
+    pub(crate) fn connect(database: PathBuf) -> Result<Self, ClientError> {
         // Lazy: the client resolves the endpoint and credential now but does
         // not dial, so the window opens even with the core down.
         let client = IpcEdgeClient::for_database(&database, "tauri-pos")?;
@@ -382,7 +384,15 @@ pub fn run() {
                 // already serve every lane the build ships.
                 let owned = app.state::<bootstrap::CoreProcess>();
                 bootstrap::ensure_core(&database, &owned)?;
-                bootstrap::ensure_demo(&database, &bootstrap::bundled_demo(app.handle()))?;
+                // The prices an operator changed on this machine travel with
+                // the seed, so an upgrade that re-imports the dataset carries
+                // them rather than quietly charging the shipped ones again.
+                let data = bootstrap::data_dir(app.handle())?;
+                bootstrap::ensure_demo(
+                    &database,
+                    &bootstrap::bundled_demo(app.handle()),
+                    Some(&overrides::path(&data)),
+                )?;
             }
 
             let bridge = EdgeBridge::connect(database.clone()).map_err(|error| {
@@ -472,6 +482,12 @@ pub fn run() {
             retail::retail_scan_key,
             retail::retail_scan,
             retail::retail_add_item,
+            kiosk::admin_products,
+            kiosk::admin_save_products,
+            kiosk::admin_set_pin,
+            kiosk::admin_set_remote_control,
+            kiosk::authorization_approve,
+            kiosk::authorization_pending,
             kiosk::admin_printer_settings,
             kiosk::admin_printer_status,
             kiosk::admin_save_printer_settings,

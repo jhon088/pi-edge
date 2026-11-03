@@ -9,15 +9,19 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
+  AdminProduct,
   AssetRef,
+  Authorization,
   CashGenicSettings,
   CashGenicStatus,
   DayTally,
   BridgeError,
   Menu,
   PrinterConfiguration,
+  PaymentGate,
   PrinterSettings,
   PrinterStatus,
+  ProductEdit,
   ProductConfiguration,
   RequestedSelection,
   RetailTransaction,
@@ -61,11 +65,16 @@ export function describe(value: unknown): string {
       return "Ese código no se leyó bien. Vuelve a pasar el producto.";
     case "SCAN_NO_ACTIVE_TRANSACTION":
       return "Pasa el producto otra vez para empezar.";
+    case "AUTHORIZATION_REQUIRED":
     case "PRINTER_UNAVAILABLE":
-      // The host composed this one from the core's own answer, in the words
-      // the brief asked for. Passed through rather than rewritten here, so
-      // there is one wording and the log and the screen agree.
+      // The host composed these from its own gates, in the words the brief
+      // asked for. Passed through rather than rewritten here, so there is one
+      // wording and the log and the screen agree.
       return value.message;
+    case "AUTHORIZATION_PIN_REFUSED":
+      return "Ese PIN no es el de este kiosko.";
+    case "AUTHORIZATION_REQUEST_UNKNOWN":
+      return "El carrito cambió. Vuelve a intentar el pago.";
     default:
       return value.message;
   }
@@ -140,14 +149,37 @@ export function totalize(): Promise<RetailTransaction> {
 /**
  * May a payment be started at all?
  *
- * Asked before the payment screen opens, so a customer is told the printer is
- * down instead of watching a tender choice fail. Resolves when the lane is
- * clear and rejects with `PRINTER_UNAVAILABLE` when it is not — the same
- * refusal `pay` itself would give, which is what makes this a courtesy rather
- * than the rule.
+ * Asked before the payment screen opens, so a customer is told what is wrong
+ * instead of watching a tender choice fail. Two reasons it can say no — the
+ * printer cannot follow through, or the basket is waiting for somebody to
+ * authorise it — and both come back as a value rather than a throw, because
+ * the screen is choosing what to draw, not handling a failure.
+ *
+ * `pay` refuses on its own account too, so this is the courteous half of a
+ * rule that holds either way.
  */
-export function paymentAllowed(): Promise<void> {
-  return invoke("kiosk_payment_allowed");
+export function paymentAllowed(): Promise<PaymentGate> {
+  return invoke<PaymentGate>("kiosk_payment_allowed");
+}
+
+/** What, if anything, the lane is waiting on. */
+export function pendingAuthorization(): Promise<Authorization> {
+  return invoke<Authorization>("authorization_pending");
+}
+
+/**
+ * Release the waiting authorization with the PIN an operator typed.
+ *
+ * Rejects with `AUTHORIZATION_PIN_REFUSED` for a wrong PIN and
+ * `AUTHORIZATION_REQUEST_UNKNOWN` when the basket changed underneath — the
+ * second is a real case, not a defensive branch: the customer may have
+ * scanned something while somebody walked over.
+ */
+export function approveAuthorization(
+  requestId: string,
+  pin: string,
+): Promise<Authorization> {
+  return invoke<Authorization>("authorization_approve", { requestId, pin });
 }
 
 export function pay(
@@ -358,4 +390,42 @@ export function printReceipt(transactionId: string): Promise<boolean> {
  */
 export function resetDemo(): Promise<void> {
   return invoke("admin_reset_demo");
+}
+
+// ------------------------------------------------- products, prices, the PIN
+
+/**
+ * The real products of one experience.
+ *
+ * The core's own menu for that channel, with this kiosk's edits laid over it.
+ * Asked per experience rather than cached, because switching experiences in
+ * Admin is a different channel and a different shelf.
+ */
+export function adminProducts(channel: string): Promise<AdminProduct[]> {
+  return invoke<AdminProduct[]>("admin_products", { channelRef: channel });
+}
+
+/**
+ * Save a batch of product edits, and make the prices real.
+ *
+ * Batched because each price has to reach the catalog in force, and the only
+ * honest way there is a new active snapshot built by the same pipeline a
+ * release uses — a second or two, and a catalog version. Eight prices in one
+ * sitting is one import.
+ *
+ * Answers the list read back **from the core**, so what the screen shows next
+ * is what the till charges rather than what was typed.
+ */
+export function saveProducts(edits: ProductEdit[]): Promise<AdminProduct[]> {
+  return invoke<AdminProduct[]>("admin_save_products", { edits });
+}
+
+/** Set the PIN, or pass `""` to remove it. */
+export function setPin(pin: string): Promise<KioskPreferences> {
+  return invoke<KioskPreferences>("admin_set_pin", { pin });
+}
+
+/** Let the control endpoints answer, or stop them answering. */
+export function setRemoteControl(enabled: boolean): Promise<KioskPreferences> {
+  return invoke<KioskPreferences>("admin_set_remote_control", { enabled });
 }

@@ -707,6 +707,34 @@ rules constrain things the core owns, and one of them turns a sale down.
   one named type in one module, for a box on a showroom LAN that carries an
   amount of pesos and no cardholder data. Nothing else in this repository
   opens a TLS connection, and nothing else may use that verifier. (ADR 049)
+* **An edited price is a new catalog.** A price typed in Admin is written to
+  `overrides.json` and then re-imported through the same `demo-seed` pipeline
+  a release uses, producing a new active snapshot. The till charges that
+  number because there is no other number, and the overrides travel with every
+  seed so an upgrade carries them. The file is written *before* the rebuild:
+  reversed, a reseed imports the old prices. (ADR 050)
+* **`authorization_required` is not catalog data and never reaches the core.**
+  "Somebody has to come over before this is paid for" is a showroom policy
+  about this screen's customers, like the closed sign and the printer gate.
+  It shares a file with the price because it shares an editor, not a
+  destination. (ADR 050)
+* **Admin's product list is the core's own menu**, with the overrides laid
+  over it, and `GET /demo/products` is the same function. No second list of
+  products, no cached copy, no catalog for Admin — a floor app and the
+  operator at the machine cannot disagree about the shelf. (ADR 050)
+* **Scanning a restricted product is never blocked; paying for it is.** An
+  approval belongs to one sale and one set of product refs, so it cannot reach
+  the next customer's basket and a restricted product added to an approved
+  basket asks again. Retail only, and held in memory — an approval that
+  outlived a restart is one nobody remembers giving. (ADR 050)
+* **The PIN releases a screen and authorises nothing in the core.** No refund,
+  no discount, no safe drop, no session close: those are the core's and are
+  decided online (ADR 030, ADR 042), and a close still cannot carry an amount
+  (ADR 022). An empty stored PIN is never satisfied by an empty offered one.
+* **The two control POSTs are off unless an operator turned them on**, answer
+  a private address only, and then check the PIN — in that order, so a kiosk
+  with the feature off never reveals whether the PIN was right. The reads stay
+  open, as they always were. (ADR 050)
 * **`/demo/status` reads cache and local state only, and publishes no nulls.**
   A floor monitor polls it every ten seconds with a three second budget; a
   peripheral that is not there must never make the kiosk look offline.
