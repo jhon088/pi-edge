@@ -13,12 +13,24 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { preferences } from "./api";
+import { signAdopted } from "./flow";
 import { BRANDS, brandOf } from "./brands";
 import { Splash } from "./components";
 import KioskApp from "./KioskApp";
 import RetailApp from "./RetailApp";
 import type { KioskPreferences } from "./types";
 import "./kiosk.css";
+
+/**
+ * How often the screen asks the host whether the sign on the door changed.
+ *
+ * The sign is the one preference somebody can flip while a screen is live and
+ * from somewhere the screen cannot see: Admin writes the file, and so does a
+ * floor app over the control route. Neither has a way to reach this webview,
+ * so the webview asks. The host answers out of a small file it already reads
+ * on every call — this is a showroom floor, not a hot path.
+ */
+const SIGN_POLL_MS = 1_500;
 
 export default function Shell() {
   const [lane, setLane] = useState<KioskPreferences | null>(null);
@@ -53,6 +65,22 @@ export default function Shell() {
 
   useEffect(read, [read]);
 
+  // The sign can come down from Admin or from a floor app, and until this
+  // existed the screen never found out: `read` ran once on mount and again
+  // only on the way out of Admin, which is why a local close appeared to work
+  // and a remote one did not. Nothing else about the lane is taken from here
+  // — see `signAdopted`.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void preferences()
+        .then((fresh) => setLane((held) => signAdopted(held, fresh)))
+        // A host that did not answer has said nothing. The screen keeps the
+        // sign it has and the next read asks again.
+        .catch(() => {});
+    }, SIGN_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // The palette is a document-level attribute rather than a wrapper class, so
   // fixed-position furniture — the camera corner, the admin key, a toast —
   // picks the brand up too.
@@ -78,7 +106,6 @@ export default function Shell() {
         channel={lane.channel_ref}
         cameraPreview={lane.camera_preview}
         kioskOpen={lane.kiosk_open}
-        brandName={brand.name}
         cashGenic={lane.cashgenic.enabled}
         onLeave={read}
       />
@@ -88,7 +115,6 @@ export default function Shell() {
     <KioskApp
       key={lane.vertical}
       channel={lane.channel_ref}
-      brandName={brand.name}
       kioskOpen={lane.kiosk_open}
       cashGenic={lane.cashgenic.enabled}
       cameraPreview={lane.camera_preview}

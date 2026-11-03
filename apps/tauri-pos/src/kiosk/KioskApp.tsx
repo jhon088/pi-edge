@@ -101,7 +101,6 @@ const CONFIRM_SECONDS = 4 satisfies 4;
  */
 export default function KioskApp({
   channel,
-  brandName,
   kioskOpen,
   cashGenic,
   cameraPreview,
@@ -111,7 +110,6 @@ export default function KioskApp({
   /** The catalog channel this brand sells from. Chosen by the host. */
   channel: string;
   /** Whose menu this is, for the screens that say so. */
-  brandName: string;
   /** Whether the kiosk is taking orders at all. */
   kioskOpen: boolean;
   /** Whether cash is taken by a real note acceptor. */
@@ -131,7 +129,6 @@ export default function KioskApp({
     >
       <Kiosk
         channel={channel}
-        brandName={brandName}
         kioskOpen={kioskOpen}
         cashGenic={cashGenic}
         cameraPreview={cameraPreview}
@@ -144,7 +141,6 @@ export default function KioskApp({
 
 function Kiosk({
   channel,
-  brandName,
   kioskOpen,
   cashGenic,
   cameraPreview,
@@ -152,7 +148,6 @@ function Kiosk({
   onLeave,
 }: {
   channel: string;
-  brandName: string;
   kioskOpen: boolean;
   cashGenic: boolean;
   cameraPreview: boolean;
@@ -621,7 +616,7 @@ function Kiosk({
     return (
       <div className="k-app">
         {showsClosedSign(kioskOpen, stage) ? (
-          <ClosedScreen brandName={brandName} />
+          <ClosedScreen />
         ) : (
           <AttractScreen
             heroAsset={hero}

@@ -539,6 +539,9 @@ fn payload(
     business_day: &str,
     authorization: Value,
 ) -> Value {
+    // Computed from the very blocks published below, so an alert and the
+    // flags beside it can never disagree.
+    let alerts = crate::alerts::raise(&printer, &cashgenic, &authorization);
     json!({
         "branch_id": preferences.branch_id,
         "kiosk_id": preferences.kiosk_id,
@@ -567,6 +570,13 @@ fn payload(
         // nothing is — never a null, so a floor app branches on `required`
         // and reads the rest without checking for absence.
         "authorization": authorization,
+        // What is wrong here, and nothing else — the list a console by
+        // exception renders verbatim. Empty when this kiosk is well, never
+        // null, and ordered most urgent first so the first entry is the one
+        // to act on. `KIOSK_OFFLINE` is not in it and cannot be: a kiosk that
+        // is off does not answer this request, which is how "off" is
+        // reported (see the module header).
+        "alerts": alerts,
         // Whether this kiosk would accept a control POST at all. Published so
         // a floor app can tell "it refused my PIN" from "it is not listening
         // for me" without guessing from a 403.
@@ -781,6 +791,70 @@ mod tests {
         assert_eq!(body["sales"]["card_total"], json!(4000.0));
         // Which brand the screen is wearing, so a floor can see it at a glance.
         assert_eq!(body["vertical"], "TIM_HORTONS");
+        // A well kiosk carries the key with nothing in it. Never a null, and
+        // never absent: a console branches on the array, not on the key.
+        assert_eq!(body["alerts"], json!([]));
+    }
+
+    /// The whole point of the block: what is wrong travels decided, beside
+    /// the flags it was decided from.
+    #[test]
+    fn a_kiosk_with_something_wrong_carries_it_as_an_alert() {
+        let body = payload(
+            &kiosk(),
+            &day(),
+            json!({
+                "configured": true,
+                "online": false,
+                "state": "NO_RESPONSE",
+                "paper": "UNKNOWN",
+                "cover_open": false,
+            }),
+            json!({ "enabled": true, "online": false }),
+            "OPEN",
+            crate::authorization::AuthorizationV1::none().into_wire(),
+        );
+        assert_eq!(
+            body["alerts"],
+            json!([
+                {
+                    "code": "PRINTER_OFFLINE",
+                    "severity": "BLOCKING",
+                    "message": "Impresora desconectada",
+                },
+                {
+                    "code": "CASHGENIC_OFFLINE",
+                    "severity": "ACTION",
+                    "message": "CashGenic desconectado",
+                },
+            ])
+        );
+    }
+
+    /// A closed kiosk still reports its faults. Low paper at seven in the
+    /// morning is worth knowing *before* the lane opens, so the list does not
+    /// depend on `kiosk_open`.
+    #[test]
+    fn a_closed_kiosk_still_reports_what_is_wrong_with_it() {
+        let mut closed = kiosk();
+        closed.kiosk_open = false;
+        let body = payload(
+            &closed,
+            &day(),
+            json!({
+                "configured": true,
+                "online": true,
+                "state": "ONLINE",
+                "paper": "NEAR_END",
+                "cover_open": false,
+            }),
+            json!({ "enabled": false, "online": false }),
+            "CLOSED",
+            crate::authorization::AuthorizationV1::none().into_wire(),
+        );
+        assert_eq!(body["kiosk_open"], false);
+        assert_eq!(body["alerts"][0]["code"], "PRINTER_PAPER_LOW");
+        assert_eq!(body["alerts"][0]["severity"], "WARN");
     }
 
     #[test]
@@ -1293,6 +1367,97 @@ mod tests {
         assert!(showroom::stored(dir.path()).kiosk_open);
     }
 
+    /// One sign, written by both hands.
+    ///
+    /// Admin on the machine and a floor app over the control route are the
+    /// same field in the same file, and `kiosk_preferences` — the command the
+    /// shell polls — answers out of that file. If these ever came apart, a
+    /// kiosk closed from the floor would keep taking orders, which is the bug
+    /// this pins down.
+    #[test]
+    fn the_sign_admin_writes_and_the_sign_a_floor_app_writes_are_one_field() {
+        let dir = controllable_kiosk();
+
+        // What Admin does: read, flip, write. `set_kiosk_open` is this plus
+        // an app handle to find the directory with.
+        let mut local = showroom::stored(dir.path());
+        local.kiosk_open = false;
+        showroom::write(dir.path(), &local).unwrap();
+        assert!(!showroom::stored(dir.path()).kiosk_open);
+
+        // And the floor app opens the same one again.
+        let (code, _) = kiosk_control(
+            dir.path(),
+            &post(
+                "/demo/control/kiosk",
+                r#"{"action":"OPEN","pin":"4821"}"#,
+                FROM_LAN,
+            ),
+        );
+        assert_eq!(code, 200);
+        assert!(
+            showroom::stored(dir.path()).kiosk_open,
+            "the floor and Admin are writing different signs"
+        );
+
+        // Closing remotely changes the sign and nothing else about the lane:
+        // the vertical the shell is mounted on is untouched, which is why a
+        // poll may adopt the sign and must not adopt the rest.
+        let before = showroom::stored(dir.path());
+        kiosk_control(
+            dir.path(),
+            &post(
+                "/demo/control/kiosk",
+                r#"{"action":"CLOSE","pin":"4821"}"#,
+                FROM_LAN,
+            ),
+        );
+        let after = showroom::stored(dir.path());
+        assert!(!after.kiosk_open);
+        assert_eq!(after.vertical, before.vertical);
+        assert_eq!(after.channel_ref, before.channel_ref);
+        assert_eq!(after.admin_pin, before.admin_pin);
+        assert_eq!(after.remote_control, before.remote_control);
+    }
+
+    /// The sign and the accounting day are different states.
+    ///
+    /// A kiosk can be closed to customers on an open business day — that is
+    /// exactly what closing one on a showroom floor means. The shell reads
+    /// `kiosk_open`; anything reading `business_day` for this would draw the
+    /// wrong screen.
+    #[test]
+    fn the_sign_and_the_business_day_are_published_apart() {
+        let mut closed = kiosk();
+        closed.kiosk_open = false;
+        let body = payload(
+            &closed,
+            &day(),
+            json!({}),
+            json!({}),
+            // The core's day is open. The door is not.
+            "OPEN",
+            crate::authorization::AuthorizationV1::none().into_wire(),
+        );
+        assert_eq!(body["kiosk_open"], false);
+        assert_eq!(body["business_day"], "OPEN");
+
+        // And the other way round, which is the end of a day on a lane
+        // somebody left open.
+        let mut open = kiosk();
+        open.kiosk_open = true;
+        let body = payload(
+            &open,
+            &day(),
+            json!({}),
+            json!({}),
+            "CLOSED",
+            crate::authorization::AuthorizationV1::none().into_wire(),
+        );
+        assert_eq!(body["kiosk_open"], true);
+        assert_eq!(body["business_day"], "CLOSED");
+    }
+
     /// **Closing changes the sign and nothing else.** Not the business day,
     /// not the identity, not the printer, not the acceptor — a remote close
     /// is the same sign on the door the Admin button hangs.
@@ -1577,10 +1742,14 @@ mod tests {
             "sales",
             "business_day",
             "authorization",
+            "alerts",
             "remote_control",
         ] {
             assert!(!body[field].is_null(), "`{field}` is missing or null");
         }
+        // An empty list is a value. A null here would make every console
+        // check for absence before it could read the card.
+        assert!(body["alerts"].is_array(), "`alerts` is not an array");
         for figure in [
             "transaction_count",
             "sales_total",

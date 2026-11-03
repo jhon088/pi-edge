@@ -230,19 +230,12 @@ export function Splash({ message }: { message: string }) {
  * on a showroom floor means "do not start a new order", and an operator has
  * to be able to open it again from the same machine.
  */
-export function ClosedScreen({ brandName }: { brandName: string }) {
+export function ClosedScreen() {
   return (
     <div className="k-closed">
       <Brand large />
-      <div className="k-closed__mark" aria-hidden>
-        ⏸
-      </div>
-      <h1 className="k-h1">Kiosko temporalmente cerrado</h1>
-      <p className="k-body">
-        {brandName} no está tomando pedidos en esta pantalla por el momento.
-      </p>
-      <p className="k-field__hint">Un miembro del equipo puede abrirlo de nuevo.</p>
-      <PoweredBy />
+      <h1 className="k-h1">KIOSKO CERRADO</h1>
+      <p className="k-body">Este kiosko no está disponible en este momento.</p>
     </div>
   );
 }

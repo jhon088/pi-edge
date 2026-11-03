@@ -1114,6 +1114,210 @@ mod showroom_tests {
         // `Mutex`, and an ordinary `Mutex` is not reentrant.
     }
 
+    /// Put a restricted product in an open basket and stop at the till.
+    ///
+    /// The state every test below starts from: a sale that cannot be paid for
+    /// until somebody says so, and the request the lane published about it.
+    fn a_basket_waiting_for_permission(
+        kiosk: &Kiosk,
+    ) -> (String, crate::authorization::AuthorizationV1) {
+        kiosk.as_lane(Vertical::Retail);
+        kiosk.restrict("R-ARRACHERA");
+        crate::authorization::clear();
+        kiosk.bridge.client.start_transaction(None).unwrap();
+        let sale = kiosk
+            .bridge
+            .client
+            .add_item(
+                AddItemRequestV1 {
+                    product: ProductSelectorV1::ProductRef("R-ARRACHERA".to_owned()),
+                    quantity_thousandths: 1_000,
+                    selections: Vec::new(),
+                    preparation_note: None,
+                },
+                None,
+            )
+            .expect("a restricted product still scans");
+        require_an_authorization_if_the_basket_needs_one(kiosk.dir.path(), &kiosk.bridge)
+            .expect_err("the payment was not held");
+        (sale.transaction_id, crate::authorization::published())
+    }
+
+    /// Whether the lane would let a payment start right now.
+    ///
+    /// The same question `kiosk_payment_allowed` answers for the screen, and
+    /// the same one `kiosk_pay` refuses on. Asked without a window, which is
+    /// the only reason it is spelled out here.
+    fn payment_is_allowed(kiosk: &Kiosk) -> bool {
+        require_an_authorization_if_the_basket_needs_one(kiosk.dir.path(), &kiosk.bridge).is_ok()
+    }
+
+    /// A PIN typed on the glass.
+    #[test]
+    fn a_local_approval_releases_the_open_sale() {
+        let kiosk = Kiosk::start();
+        let _turn = crate::authorization::turn();
+        let (_sale_id, waiting) = a_basket_waiting_for_permission(&kiosk);
+
+        crate::authorization::approve(&waiting.request_id, true).unwrap();
+
+        assert!(payment_is_allowed(&kiosk), "a PIN did not release the lane");
+    }
+
+    /// The bug this exists for: `POST /demo/control/authorization` released
+    /// the basket and the lane stayed held, because nothing re-asked.
+    ///
+    /// The host half, proven here: the remote route releases **this** sale
+    /// through the same state the screen's gate reads. What was missing was
+    /// only the screen asking again — see `afterAuthorizationRecheck`.
+    #[test]
+    fn a_remote_approval_releases_that_same_open_sale() {
+        let kiosk = Kiosk::start();
+        let _turn = crate::authorization::turn();
+        let (sale_id, waiting) = a_basket_waiting_for_permission(&kiosk);
+        assert!(!payment_is_allowed(&kiosk));
+
+        // Exactly what the control route does with a correct PIN, and nothing
+        // else: no second command, nobody touching the kiosk.
+        let approved = crate::authorization::approve(&waiting.request_id, true)
+            .expect("the remote approval was refused");
+
+        assert_eq!(approved.sale_id, sale_id);
+        assert_eq!(approved.request_id, waiting.request_id);
+        assert!(approved.approved);
+        assert!(
+            payment_is_allowed(&kiosk),
+            "the lane stayed held after a remote approval"
+        );
+    }
+
+    /// A floor app approving a request the basket has already replaced.
+    #[test]
+    fn a_remote_approval_with_a_stale_request_id_releases_nothing() {
+        let kiosk = Kiosk::start();
+        let _turn = crate::authorization::turn();
+        let (_sale_id, first) = a_basket_waiting_for_permission(&kiosk);
+
+        // The customer adds a second restricted product, so the lane mints a
+        // new request and the one the floor is holding is no longer the one
+        // waiting.
+        kiosk.restrict("R-COCA-3L");
+        kiosk
+            .bridge
+            .client
+            .add_item(
+                AddItemRequestV1 {
+                    product: ProductSelectorV1::ProductRef("R-COCA-3L".to_owned()),
+                    quantity_thousandths: 1_000,
+                    selections: Vec::new(),
+                    preparation_note: None,
+                },
+                None,
+            )
+            .expect("a second restricted product");
+        require_an_authorization_if_the_basket_needs_one(kiosk.dir.path(), &kiosk.bridge)
+            .expect_err("the bigger basket was not held");
+        let second = crate::authorization::published();
+        assert_ne!(second.request_id, first.request_id);
+
+        let refused = crate::authorization::approve(&first.request_id, true)
+            .expect_err("a stale request id was honoured");
+        assert_eq!(refused, crate::authorization::RefusedBecause::WrongRequest);
+        assert!(
+            !payment_is_allowed(&kiosk),
+            "a stale approval released the lane"
+        );
+    }
+
+    /// An approval that belongs to a different sale.
+    #[test]
+    fn a_remote_approval_for_another_sale_releases_nothing() {
+        let kiosk = Kiosk::start();
+        let _turn = crate::authorization::turn();
+        let (sale_id, _waiting) = a_basket_waiting_for_permission(&kiosk);
+
+        // Another lane's request, raised over this one and approved. The id is
+        // right for *that* request, and the sale is not this sale.
+        let elsewhere = crate::authorization::require(
+            "sale-from-another-lane",
+            vec![crate::authorization::AuthorizationProductV1 {
+                product_ref: "R-ARRACHERA".to_owned(),
+                name: "Arrachera".to_owned(),
+            }],
+        );
+        assert_ne!(elsewhere.sale_id, sale_id);
+        crate::authorization::approve(&elsewhere.request_id, true)
+            .expect("that request was the one waiting");
+
+        assert!(
+            !payment_is_allowed(&kiosk),
+            "an approval for another sale released this one"
+        );
+    }
+
+    /// The rule that must survive the fix: a basket that grows past what was
+    /// approved asks again, however it was approved.
+    #[test]
+    fn another_restricted_product_after_a_remote_approval_holds_the_lane_again() {
+        let kiosk = Kiosk::start();
+        let _turn = crate::authorization::turn();
+        let (_sale_id, waiting) = a_basket_waiting_for_permission(&kiosk);
+        crate::authorization::approve(&waiting.request_id, true).unwrap();
+        assert!(payment_is_allowed(&kiosk));
+
+        kiosk.restrict("R-COCA-3L");
+        kiosk
+            .bridge
+            .client
+            .add_item(
+                AddItemRequestV1 {
+                    product: ProductSelectorV1::ProductRef("R-COCA-3L".to_owned()),
+                    quantity_thousandths: 1_000,
+                    selections: Vec::new(),
+                    preparation_note: None,
+                },
+                None,
+            )
+            .expect("a second restricted product");
+
+        assert!(
+            !payment_is_allowed(&kiosk),
+            "a basket that grew past its approval was still payable"
+        );
+        let again = crate::authorization::published();
+        assert_ne!(again.request_id, waiting.request_id);
+        assert!(!again.approved);
+    }
+
+    /// One authority, read by both.
+    ///
+    /// The screen's gate and `GET /demo/status` are the same two fields of the
+    /// same in-memory state. If these ever disagree, a floor app and the lane
+    /// in front of a customer are telling two different stories.
+    #[test]
+    fn the_screen_and_the_floor_endpoint_read_one_authorization_state() {
+        let kiosk = Kiosk::start();
+        let _turn = crate::authorization::turn();
+        let (sale_id, _waiting) = a_basket_waiting_for_permission(&kiosk);
+
+        // Held: the floor is told somebody has to come over.
+        let on_the_wire = crate::authorization::status();
+        assert_eq!(on_the_wire["required"], true);
+        assert_eq!(on_the_wire["approved"], false);
+        assert_eq!(on_the_wire["sale_id"], sale_id);
+        assert!(!payment_is_allowed(&kiosk));
+
+        let request_id = on_the_wire["request_id"].as_str().unwrap().to_owned();
+        crate::authorization::approve(&request_id, true).unwrap();
+
+        // Released: the same state, read again by both.
+        let after = crate::authorization::status();
+        assert_eq!(after["required"], true);
+        assert_eq!(after["approved"], true);
+        assert_eq!(after["request_id"], request_id);
+        assert!(payment_is_allowed(&kiosk));
+    }
+
     /// A basket with nothing restricted in it is never held up.
     #[test]
     fn an_ordinary_basket_is_never_held_up() {

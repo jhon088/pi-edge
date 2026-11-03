@@ -43,7 +43,7 @@ import {
   PrinterBlockedScreen,
   AuthorizationScreen,
 } from "./components";
-import { showsClosedSign } from "./flow";
+import { afterAuthorizationRecheck, showsClosedSign } from "./flow";
 import { usePaymentJourney } from "./payment";
 import {
   RetailAttractScreen,
@@ -68,6 +68,15 @@ const IDLE_MS = 90_000;
 /** How long the ticket stays up before the lane frees itself. */
 const CONFIRM_SECONDS = 4 satisfies 4;
 
+/**
+ * How often a held basket re-asks whether it is still held.
+ *
+ * Only while the hold is on the screen, and it stops the moment it comes off.
+ * Two seconds is the pace of somebody walking over to a lane; the host answers
+ * this from state it already has, and the question is idempotent.
+ */
+const AUTHORIZATION_POLL_MS = 2_000;
+
 type Stage =
   | "loading"
   | "attract"
@@ -82,7 +91,6 @@ export default function RetailApp({
   channel,
   cameraPreview,
   kioskOpen,
-  brandName,
   cashGenic,
   onLeave,
 }: {
@@ -92,7 +100,6 @@ export default function RetailApp({
   cameraPreview: boolean;
   /** Whether the lane is taking customers at all. */
   kioskOpen: boolean;
-  brandName: string;
   /** Whether cash is taken by a real note acceptor. */
   cashGenic: boolean;
   /** Called when an operator switched the installation to another vertical. */
@@ -108,7 +115,6 @@ export default function RetailApp({
         channel={channel}
         cameraPreview={cameraPreview}
         kioskOpen={kioskOpen}
-        brandName={brandName}
         cashGenic={cashGenic}
         onLeave={onLeave}
       />
@@ -120,14 +126,12 @@ function Retail({
   channel,
   cameraPreview,
   kioskOpen,
-  brandName,
   cashGenic,
   onLeave,
 }: {
   channel: string;
   cameraPreview: boolean;
   kioskOpen: boolean;
-  brandName: string;
   cashGenic: boolean;
   onLeave: () => void;
 }) {
@@ -305,6 +309,51 @@ function Retail({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [stage, clear]);
+
+  // --- a hold can be released from somewhere other than this glass ------
+  //
+  // `waiting` is a snapshot of why the lane stopped, and a snapshot cannot see
+  // a floor app approving the basket over the control route: the host's
+  // authorization state changes and nothing tells this window. So while the
+  // hold is up — and only while it is up — the lane re-asks the single command
+  // that owns the answer, and treats a remote approval exactly as it treats a
+  // PIN typed here, because the host does not distinguish them either.
+  //
+  // Asking repeatedly is safe: the host mints a request id once per basket and
+  // hands the same one back for an unchanged one, so this cannot replace the
+  // id a floor app is holding, and it cannot approve anything by itself.
+  useEffect(() => {
+    if (!waiting) {
+      return;
+    }
+    const held = waiting;
+    const timer = window.setInterval(() => {
+      void paymentAllowed()
+        .then((fresh) => {
+          const next = afterAuthorizationRecheck(held, fresh);
+          if (next.kind === "holding") {
+            return;
+          }
+          if (next.kind === "released") {
+            setWaiting(null);
+            setAuthError(null);
+            return;
+          }
+          if (next.kind === "waiting") {
+            setWaiting(next.gate);
+            setAuthError(null);
+            return;
+          }
+          setWaiting(null);
+          setPrinterBlock(next.message);
+        })
+        // A poll that could not reach the host has told us nothing. The hold
+        // stays and the next one asks again: a customer must never be let
+        // through by an IPC hiccup.
+        .catch(() => {});
+    }, AUTHORIZATION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [waiting]);
 
   // --- the reader -------------------------------------------------------
   //
@@ -549,7 +598,7 @@ function Retail({
     return (
       <div className="k-app">
         {showsClosedSign(kioskOpen, stage) ? (
-          <ClosedScreen brandName={brandName} />
+          <ClosedScreen />
         ) : (
           <RetailAttractScreen onBrowse={browse} />
         )}

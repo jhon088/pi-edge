@@ -3135,19 +3135,6 @@ button {
   text-align: center;
 }
 
-.k-closed__mark {
-  display: grid;
-  place-items: center;
-  width: 108px;
-  height: 108px;
-  margin: 8px 0 4px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  color: var(--fg-3);
-  font-size: 44px;
-}
-
 /* --- admin: identity, the day, the note acceptor ---------------------- */
 
 .k-admin__who {

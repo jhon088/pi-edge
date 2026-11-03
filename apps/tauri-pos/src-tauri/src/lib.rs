@@ -28,6 +28,7 @@ use tauri::{Emitter, Manager};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod alerts;
 mod authorization;
 mod bootstrap;
 mod cashgenic;

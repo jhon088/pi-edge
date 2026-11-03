@@ -14,6 +14,8 @@
  * state that caused the freeze is not reachable.
  */
 
+import type { PaymentGate } from "./types";
+
 /** Every screen the kiosk can be on. */
 export type Stage =
   | "loading"
@@ -104,6 +106,33 @@ export function showsClosedSign(kioskOpen: boolean, stage: string): boolean {
 }
 
 /**
+ * What a periodic re-read of the host's preferences is allowed to change.
+ *
+ * **Only the sign.** An operator can flip it from Admin on this machine or
+ * from a floor app over `POST /demo/control/kiosk`, and the second one has
+ * nothing to tell the webview with — so the webview asks, and this decides
+ * what it may take from the answer.
+ *
+ * Everything else in the lane is left alone, and the vertical above all: it is
+ * the mount key for the whole application, so adopting a fresh copy of it from
+ * a timer would throw away a customer's half-finished order the moment
+ * anybody saved anything in Admin. Switching lanes is a deliberate act with
+ * its own path through `onLeave`, not something a poll does by accident.
+ *
+ * An unchanged sign returns the **same object**, so a screen that is not
+ * changing does not re-render every second and a half.
+ */
+export function signAdopted<T extends { kiosk_open: boolean }>(
+  held: T | null,
+  fresh: { kiosk_open: boolean },
+): T | null {
+  if (held === null || held.kiosk_open === fresh.kiosk_open) {
+    return held;
+  }
+  return { ...held, kiosk_open: fresh.kiosk_open };
+}
+
+/**
  * Whether the note acceptor takes this payment, or the simulator does.
  *
  * Two conditions, both necessary: an operator enabled the device, and the
@@ -181,4 +210,47 @@ export function majorOf(minor: number): string {
   const sign = minor < 0 ? "-" : "";
   const absolute = Math.abs(minor);
   return `${sign}${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
+}
+
+/**
+ * What a fresh gate answer means while the lane is already holding a basket.
+ *
+ * The screen keeps a snapshot of *why* it stopped, and a snapshot cannot see
+ * an approval that happened anywhere else. A floor app releasing the basket
+ * over `POST /demo/control/authorization` changes the host's authorization
+ * state and nothing tells this window — which is how a lane stayed held after
+ * it had already been authorised from PX Console.
+ *
+ * So the lane re-asks `kiosk_payment_allowed`, the one command that owns the
+ * answer, and this says what the answer means. A PIN typed on the glass and a
+ * POST from the floor land on the same host state, so they are
+ * indistinguishable here by construction. That is the point of it.
+ */
+export type Recheck =
+  | { kind: "released" }
+  | { kind: "holding" }
+  | { kind: "waiting"; gate: PaymentGate }
+  | { kind: "printer"; message: string };
+
+export function afterAuthorizationRecheck(
+  held: PaymentGate,
+  fresh: PaymentGate,
+): Recheck {
+  if (fresh.allowed) {
+    // Somebody authorised it. The hold comes off and the customer carries on
+    // themselves — nothing here starts a payment on their behalf.
+    return { kind: "released" };
+  }
+  if (fresh.blocked_by !== "AUTHORIZATION") {
+    // A different problem now: the printer failed while somebody walked over.
+    return { kind: "printer", message: fresh.message };
+  }
+  if (fresh.authorization.request_id === held.authorization.request_id) {
+    // The same request, still unapproved. Nothing to redraw.
+    return { kind: "holding" };
+  }
+  // A new request id means the basket changed underneath: another restricted
+  // product went in, and the approval that was on its way does not cover it.
+  // The host has already voided the old one; the screen asks for the new one.
+  return { kind: "waiting", gate: fresh };
 }
