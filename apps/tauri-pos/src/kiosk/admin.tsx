@@ -19,6 +19,7 @@ import {
   probeCashGenic,
   resetDemo,
   saveCashGenic,
+  setCashGenicEnabled,
   printerStatus,
   savePrinterSettings,
   setCameraPreview,
@@ -144,6 +145,44 @@ export function AdminScreen({
       setNote(done ? { tone: "ok", text: done } : null);
     } catch (reason) {
       setNote({ tone: "bad", text: describe(reason) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * The "Habilitar CashGenic" switch, saved on the spot.
+   *
+   * The switch shows what the file says, never a wish: nothing changes on
+   * screen until the host has written it, and a refusal puts it back where the
+   * file still has it. The address and credentials being typed are left as
+   * they are — "Guardar" is still what saves those.
+   */
+  const switchCashGenic = async (wanted: boolean) => {
+    const persisted = lane?.cashgenic.enabled ?? !wanted;
+    setBusy(true);
+    try {
+      const saved = await setCashGenicEnabled(wanted);
+      setLane(saved);
+      setCash((current) =>
+        current
+          ? { ...current, enabled: saved.cashgenic.enabled }
+          : saved.cashgenic,
+      );
+      setNote({
+        tone: "ok",
+        text: saved.cashgenic.enabled
+          ? "CashGenic habilitado y guardado."
+          : "CashGenic deshabilitado y guardado.",
+      });
+    } catch (reason) {
+      setCash((current) =>
+        current ? { ...current, enabled: persisted } : current,
+      );
+      setNote({
+        tone: "bad",
+        text: `No se guardó: CashGenic sigue ${persisted ? "habilitado" : "deshabilitado"}. ${describe(reason)}`,
+      });
     } finally {
       setBusy(false);
     }
@@ -723,9 +762,7 @@ export function AdminScreen({
                   type="checkbox"
                   checked={cash.enabled}
                   disabled={busy}
-                  onChange={(event) =>
-                    setCash({ ...cash, enabled: event.target.checked })
-                  }
+                  onChange={(event) => void switchCashGenic(event.target.checked)}
                 />
                 <span>
                   <span className="k-field__label">Habilitar CashGenic</span>

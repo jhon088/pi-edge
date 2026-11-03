@@ -39,6 +39,9 @@ use crate::showroom;
 /// Fixed, because a monitoring app has to find it without being told.
 pub const PORT: u16 = 8_777;
 
+/// Every interface, so a floor app on the LAN reaches it as well as loopback.
+const BIND: &str = "0.0.0.0";
+
 /// A poller that has stopped reading still gets a complete answer or none.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -98,14 +101,17 @@ fn watch_core(app: tauri::AppHandle, client: Arc<IpcEdgeClient>) {
 pub fn serve(app: tauri::AppHandle, client: Arc<IpcEdgeClient>) {
     watch_core(app.clone(), Arc::clone(&client));
     std::thread::spawn(move || {
-        let listener = match TcpListener::bind(("0.0.0.0", PORT)) {
+        tracing::info!("STATUS_ENDPOINT_START bind={BIND}:{PORT}");
+        let listener = match TcpListener::bind((BIND, PORT)) {
             Ok(listener) => listener,
             Err(error) => {
-                tracing::warn!(%error, port = PORT, "the status endpoint is not listening");
+                // An error, not a warning: the floor cannot see this kiosk,
+                // and this line is the only place that says why.
+                tracing::error!("{}", bind_failure(&error));
                 return;
             }
         };
-        tracing::info!(port = PORT, "status endpoint ready on /demo/status");
+        tracing::info!("STATUS_ENDPOINT_LISTENING bind={BIND}:{PORT}");
         for incoming in listener.incoming() {
             match incoming {
                 Ok(stream) => {
@@ -119,6 +125,18 @@ pub fn serve(app: tauri::AppHandle, client: Arc<IpcEdgeClient>) {
             }
         }
     });
+}
+
+/// The bind failure as one line: the address, the operating system's own code
+/// (`10048` in use, `10013` reserved or forbidden on Windows) and its message.
+fn bind_failure(error: &std::io::Error) -> String {
+    let os_error = error
+        .raw_os_error()
+        .map_or_else(|| "none".to_owned(), |code| code.to_string());
+    format!(
+        "STATUS_ENDPOINT_BIND_FAILED bind={BIND}:{PORT} os_error={os_error} error={:?}",
+        error.to_string()
+    )
 }
 
 fn answer(app: &tauri::AppHandle, mut stream: TcpStream) -> std::io::Result<()> {
@@ -672,6 +690,15 @@ fn printer_payload(
 /// not report it rather than zero, because zero is a number a floor would act
 /// on.
 fn cashgenic(preferences: &showroom::KioskPreferencesV1) -> Value {
+    published_cashgenic(preferences, crate::cashgenic::cached_health)
+}
+
+/// The entry itself, given where the last answer comes from — which is only
+/// asked when the acceptor is enabled.
+fn published_cashgenic(
+    preferences: &showroom::KioskPreferencesV1,
+    last_answer: impl FnOnce() -> crate::cashgenic::CachedHealth,
+) -> Value {
     if !preferences.cashgenic.enabled {
         return json!({
             "enabled": false,
@@ -684,7 +711,7 @@ fn cashgenic(preferences: &showroom::KioskPreferencesV1) -> Value {
     // poll take four seconds when the acceptor was unplugged, and a floor
     // monitor with a three second budget would then call the whole kiosk
     // offline over a peripheral.
-    let health = crate::cashgenic::cached_health();
+    let health = last_answer();
     json!({
         "enabled": true,
         "online": health.status.online,
@@ -916,6 +943,66 @@ mod tests {
         for method in ["PUT", "DELETE", "PATCH", "OPTIONS"] {
             assert_eq!(unrouted(method, "/demo/status").0, 405, "{method}");
         }
+    }
+
+    #[test]
+    fn an_enabled_acceptor_that_answers_is_published_enabled_and_online() {
+        let mut preferences = kiosk();
+        preferences.cashgenic.enabled = true;
+        let health = crate::cashgenic::CachedHealth {
+            status: crate::cashgenic::CashGenicStatusV1 {
+                online: true,
+                device: Some("CashGenic 2.1.49".to_owned()),
+                state: "Idle".to_owned(),
+                deposited_minor: 0,
+                outstanding_minor: 0,
+                change_minor: 0,
+                cash_total_minor: Some(12_550),
+                detail: None,
+            },
+            last_checked_at: Some("2026-11-03T12:00:00+00:00".to_owned()),
+        };
+        let body = payload(
+            &preferences,
+            &day(),
+            json!({ "online": true, "paper": "UNKNOWN" }),
+            published_cashgenic(&preferences, || health),
+            "OPEN",
+            crate::authorization::AuthorizationV1::none().into_wire(),
+        );
+        assert_eq!(body["cashgenic"]["enabled"], true);
+        assert_eq!(body["cashgenic"]["online"], true);
+        assert_eq!(body["cashgenic"]["state"], "Idle");
+        assert_eq!(body["cashgenic"]["cash_total"], json!(125.5));
+        assert_eq!(
+            body["cashgenic"]["last_checked_at"],
+            "2026-11-03T12:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn a_disabled_acceptor_is_published_without_reading_the_cache() {
+        let body = published_cashgenic(&kiosk(), || panic!("the cache was read"));
+        assert_eq!(body["enabled"], false);
+        assert_eq!(body["online"], false);
+    }
+
+    #[test]
+    fn a_bind_failure_says_where_and_what_the_os_said() {
+        // A real refusal, not a constructed one: a port somebody already holds.
+        let held = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let error = TcpListener::bind(held.local_addr().unwrap()).unwrap_err();
+        let line = bind_failure(&error);
+        assert!(
+            line.starts_with("STATUS_ENDPOINT_BIND_FAILED bind=0.0.0.0:8777 os_error="),
+            "{line}"
+        );
+        let code = error.raw_os_error().unwrap();
+        assert!(line.contains(&format!("os_error={code} ")), "{line}");
+        assert!(
+            line.contains(&format!("error={:?}", error.to_string())),
+            "{line}"
+        );
     }
 
     #[test]

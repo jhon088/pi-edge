@@ -132,12 +132,42 @@ pub fn cached_health() -> CachedHealth {
 }
 
 fn remember(status: CashGenicStatusV1) {
-    if let Ok(mut held) = health().write() {
+    remember_in(health(), status);
+}
+
+fn remember_in(cache: &RwLock<CachedHealth>, status: CashGenicStatusV1) {
+    if let Ok(mut held) = cache.write() {
+        if let Some(line) = probe_change(&held.status, &status) {
+            tracing::info!("{line}");
+        }
         *held = CachedHealth {
             status,
             last_checked_at: Some(chrono::Utc::now().to_rfc3339()),
         };
     }
+}
+
+/// The log line for a probe whose answer differs from the last one, or `None`.
+///
+/// Only a change is written: the watcher asks every ten seconds, and a log of
+/// "still offline" would bury the one line that says when it went. What counts
+/// is whether it is enabled, whether it answers, its state and why — not the
+/// cash it holds, which moves with every note. `DISABLED` is the state a
+/// disabled acceptor and nothing else is given, so it is the enabled flag.
+fn probe_change(before: &CashGenicStatusV1, after: &CashGenicStatusV1) -> Option<String> {
+    let same = before.online == after.online
+        && before.state == after.state
+        && before.detail == after.detail;
+    if same {
+        return None;
+    }
+    Some(format!(
+        "CASHGENIC_PROBE enabled={} online={} state={:?} detail={:?}",
+        after.state != "DISABLED",
+        after.online,
+        after.state,
+        after.detail.as_deref().unwrap_or_default()
+    ))
 }
 
 /// Ask the acceptor how it is, every ten seconds, for the life of the kiosk.
@@ -724,10 +754,39 @@ pub fn cashgenic_save(
     app: tauri::AppHandle,
     settings: CashGenicSettingsV1,
 ) -> Result<crate::showroom::KioskPreferencesV1, BridgeError> {
-    let dir = crate::showroom::data_dir(&app)?;
-    let mut preferences = crate::showroom::stored(&dir);
+    save(&crate::showroom::data_dir(&app)?, settings)
+}
+
+fn save(
+    dir: &std::path::Path,
+    settings: CashGenicSettingsV1,
+) -> Result<crate::showroom::KioskPreferencesV1, BridgeError> {
+    let mut preferences = crate::showroom::stored(dir);
     preferences.cashgenic = settings;
-    crate::showroom::write(&dir, &preferences)?;
+    crate::showroom::write(dir, &preferences)?;
+    Ok(preferences)
+}
+
+/// The "Habilitar CashGenic" switch, saved the moment it is flipped.
+///
+/// Only the flag: the address and the credentials are whatever is stored, so a
+/// switch never carries half-typed fields into the file, and Admin can never
+/// show a device on that the runtime reads as off.
+#[tauri::command]
+pub fn cashgenic_set_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<crate::showroom::KioskPreferencesV1, BridgeError> {
+    set_enabled(&crate::showroom::data_dir(&app)?, enabled)
+}
+
+fn set_enabled(
+    dir: &std::path::Path,
+    enabled: bool,
+) -> Result<crate::showroom::KioskPreferencesV1, BridgeError> {
+    let mut preferences = crate::showroom::stored(dir);
+    preferences.cashgenic.enabled = enabled;
+    crate::showroom::write(dir, &preferences)?;
     Ok(preferences)
 }
 
@@ -890,6 +949,165 @@ pub fn cashgenic_close(app: tauri::AppHandle) -> Result<(), BridgeError> {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    use crate::logging::captured;
+    use crate::showroom::{stored, write, KioskPreferencesV1, Vertical};
+
+    fn configured(enabled: bool) -> CashGenicSettingsV1 {
+        CashGenicSettingsV1 {
+            enabled,
+            host: "192.168.88.240".to_owned(),
+            port: 44_333,
+            username: "ApiUserOne".to_owned(),
+            password: "s3cr3t-pw".to_owned(),
+        }
+    }
+
+    /// A stored kiosk with an identity and a PIN, so a save that dropped any
+    /// other field would show.
+    fn a_kiosk_with(dir: &std::path::Path, cashgenic: CashGenicSettingsV1) {
+        let preferences = KioskPreferencesV1 {
+            vertical: Vertical::Retail,
+            branch_id: "001".to_owned(),
+            kiosk_id: "K01".to_owned(),
+            admin_pin: "4321".to_owned(),
+            remote_control: true,
+            cashgenic,
+            ..KioskPreferencesV1::default()
+        };
+        write(dir, &preferences).unwrap();
+    }
+
+    #[test]
+    fn switching_the_acceptor_on_is_saved_at_once_and_keeps_its_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        a_kiosk_with(dir.path(), configured(false));
+        let before = stored(dir.path());
+
+        let answered = set_enabled(dir.path(), true).unwrap();
+
+        let after = stored(dir.path());
+        assert!(
+            after.cashgenic.enabled,
+            "ON is in the file, not only on screen"
+        );
+        assert_eq!(after.cashgenic, configured(true));
+        assert_eq!(answered, after, "Admin is handed what was written");
+        // Nothing else moved.
+        assert_eq!(
+            KioskPreferencesV1 {
+                cashgenic: before.cashgenic.clone(),
+                ..after
+            },
+            before
+        );
+    }
+
+    #[test]
+    fn switching_the_acceptor_off_is_saved_at_once_and_forgets_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        a_kiosk_with(dir.path(), configured(true));
+        let before = stored(dir.path());
+
+        set_enabled(dir.path(), false).unwrap();
+
+        let after = stored(dir.path());
+        assert!(!after.cashgenic.enabled);
+        assert_eq!(
+            after.cashgenic,
+            configured(false),
+            "address and credentials kept"
+        );
+        assert_eq!(after.admin_pin, before.admin_pin);
+        assert_eq!(after.branch_id, before.branch_id);
+        assert_eq!(after.vertical, before.vertical);
+        assert!(after.remote_control);
+    }
+
+    #[test]
+    fn a_saved_configuration_is_the_one_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        a_kiosk_with(dir.path(), CashGenicSettingsV1::default());
+
+        save(dir.path(), configured(true)).unwrap();
+
+        let back = stored(dir.path()).cashgenic;
+        assert!(back.enabled);
+        assert_eq!(back.host, "192.168.88.240");
+        assert_eq!(back.port, 44_333);
+        assert_eq!(back.username, "ApiUserOne");
+        assert_eq!(back.password, "s3cr3t-pw");
+        assert_eq!(stored(dir.path()).branch_id, "001");
+    }
+
+    fn answering(state: &str, cash_total_minor: i64) -> CashGenicStatusV1 {
+        CashGenicStatusV1 {
+            online: true,
+            device: Some("CashGenic 2.1.49".to_owned()),
+            state: state.to_owned(),
+            deposited_minor: 0,
+            outstanding_minor: 0,
+            change_minor: 0,
+            cash_total_minor: Some(cash_total_minor),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn a_probe_is_logged_when_its_answer_changes_and_only_then() {
+        let cache = RwLock::new(CachedHealth::default());
+        let disabled = CashGenicStatusV1 {
+            state: "DISABLED".to_owned(),
+            ..CashGenicStatusV1::offline("not enabled on this kiosk")
+        };
+        let log = captured(|| {
+            remember_in(&cache, disabled.clone());
+            let start = "the first answer replaces UNKNOWN";
+            tracing::info!("{start}");
+            remember_in(&cache, disabled.clone());
+            remember_in(&cache, answering("Idle", 100));
+            // The cash it holds moves with every note; that is not a change.
+            remember_in(&cache, answering("Idle", 200));
+            remember_in(&cache, CashGenicStatusV1::offline("timed out"));
+            remember_in(&cache, CashGenicStatusV1::offline("timed out"));
+        });
+        let after_start = log
+            .split("the first answer replaces UNKNOWN")
+            .nth(1)
+            .unwrap();
+        let lines: Vec<&str> = after_start
+            .lines()
+            .filter(|line| line.contains("CASHGENIC_PROBE"))
+            .collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "DISABLED->ONLINE and ONLINE->OFFLINE: {log}"
+        );
+        assert!(
+            lines[0].contains(r#"CASHGENIC_PROBE enabled=true online=true state="Idle" detail="""#)
+        );
+        assert!(
+            lines[1].contains(r#"enabled=true online=false state="OFFLINE" detail="timed out""#)
+        );
+    }
+
+    #[test]
+    fn a_probe_line_never_carries_a_secret() {
+        let cache = RwLock::new(CachedHealth::default());
+        let log = captured(|| {
+            remember_in(
+                &cache,
+                CashGenicStatusV1::offline(
+                    "refused: {\"access_token\":\"eyJabc\"} password=s3cr3t-pw Bearer tok-123",
+                ),
+            );
+        });
+        assert!(log.contains("CASHGENIC_PROBE"), "{log}");
+        for secret in ["eyJabc", "s3cr3t-pw", "tok-123"] {
+            assert!(!log.contains(secret), "{secret} leaked: {log}");
+        }
+    }
 
     #[test]
     fn amounts_leave_as_pesos_and_come_back_as_minor_units() {

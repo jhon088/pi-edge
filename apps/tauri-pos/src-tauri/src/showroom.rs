@@ -274,14 +274,57 @@ fn day_path(dir: &Path) -> PathBuf {
 /// default is a working screen. The default is also the *quiet* one — nothing
 /// here can turn a camera on, or reach for a note acceptor, by failing to
 /// parse.
+///
+/// A file that is there and cannot be used is written to the log as
+/// `PREFERENCES_UNREADABLE`, because the default it falls back to has the note
+/// acceptor off and no PIN, and the next save makes that permanent. A file
+/// that is simply not there yet is a fresh installation and says nothing.
 pub fn stored(dir: &Path) -> KioskPreferencesV1 {
-    fs::read_to_string(preferences_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str::<KioskPreferencesV1>(&text).ok())
+    let path = preferences_path(dir);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return KioskPreferencesV1::default();
+        }
+        Err(error) => {
+            tracing::error!("{}", unreadable(&path, &error.to_string()));
+            return KioskPreferencesV1::default();
+        }
+    };
+    match serde_json::from_str::<KioskPreferencesV1>(&text) {
         // The channel is the host's to decide, so it is recomputed rather than
         // trusted: an edited file cannot point a lane at another's goods.
-        .map(KioskPreferencesV1::with_channel)
-        .unwrap_or_default()
+        Ok(preferences) => preferences.with_channel(),
+        Err(error) => {
+            tracing::error!("{}", unreadable(&path, &parse_failure(&error)));
+            KioskPreferencesV1::default()
+        }
+    }
+}
+
+/// Where a parse failed and what kind of failure it was — never serde's own
+/// message, which quotes the offending value, and in this file that value can
+/// be the acceptor's password.
+fn parse_failure(error: &serde_json::Error) -> String {
+    let kind = match error.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    };
+    format!(
+        "{kind} error at line {} column {}",
+        error.line(),
+        error.column()
+    )
+}
+
+fn unreadable(path: &Path, error: &str) -> String {
+    format!(
+        "PREFERENCES_UNREADABLE path={:?} error={:?}",
+        path.display().to_string(),
+        error
+    )
 }
 
 pub fn write(dir: &Path, preferences: &KioskPreferencesV1) -> Result<(), BridgeError> {
@@ -412,6 +455,43 @@ fn now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unusable_preferences_file_is_logged_without_its_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        // A type error is the case serde would quote: its own message names
+        // the offending value, and here that value is the password.
+        fs::write(
+            preferences_path(dir.path()),
+            r#"{"vertical":"RETAIL","channel_ref":"x","cashgenic":{"enabled":true,"password":98765}}"#,
+        )
+        .unwrap();
+        let mut read = None;
+        let log = crate::logging::captured(|| read = Some(stored(dir.path())));
+
+        assert!(log.contains("PREFERENCES_UNREADABLE path="), "{log}");
+        assert!(log.contains("preferences.json"), "{log}");
+        assert!(log.contains("data error at line 1 column"), "{log}");
+        assert!(!log.contains("98765"), "the password leaked: {log}");
+        // The fallback is unchanged, for now.
+        assert_eq!(read, Some(KioskPreferencesV1::default()));
+
+        fs::write(preferences_path(dir.path()), "{\"vertical\": ").unwrap();
+        let log = crate::logging::captured(|| {
+            stored(dir.path());
+        });
+        assert!(log.contains("PREFERENCES_UNREADABLE"), "{log}");
+        assert!(log.contains("eof error at line 1"), "{log}");
+    }
+
+    #[test]
+    fn a_fresh_installation_has_nothing_to_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = crate::logging::captured(|| {
+            stored(dir.path());
+        });
+        assert!(!log.contains("PREFERENCES_UNREADABLE"), "{log}");
+    }
 
     #[test]
     fn each_lane_sells_from_its_own_channel() {

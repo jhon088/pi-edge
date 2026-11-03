@@ -94,8 +94,9 @@ impl CoreProcess {
 /// Never the install directory: on Windows that is Program Files, which is
 /// read-only for the user running the kiosk, and an installer that writes a
 /// database there produces an app that works for the person who installed it
-/// and fails for everybody else. Tauri resolves the platform's own answer —
-/// `%LOCALAPPDATA%\PX Kiosk` on Windows — so nothing here hardcodes a path.
+/// and fails for everybody else. Tauri resolves the platform's own answer,
+/// named after the identifier — `%LOCALAPPDATA%\com.pxcommerce.pxkiosk` on
+/// Windows — so nothing here hardcodes a path.
 pub fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, BootstrapError> {
     use tauri::Manager;
     let dir = app

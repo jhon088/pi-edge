@@ -270,6 +270,16 @@ export function saveCashGenic(
   return invoke<KioskPreferences>("cashgenic_save", { settings });
 }
 
+/**
+ * The "Habilitar CashGenic" switch. Saved the moment it is flipped, and only
+ * the flag: the host keeps the stored address and credentials as they are.
+ */
+export function setCashGenicEnabled(
+  enabled: boolean,
+): Promise<KioskPreferences> {
+  return invoke<KioskPreferences>("cashgenic_set_enabled", { enabled });
+}
+
 /** The "probar conexión" button: ask the device who it is. */
 export function probeCashGenic(): Promise<CashGenicStatus> {
   return invoke<CashGenicStatus>("cashgenic_probe");

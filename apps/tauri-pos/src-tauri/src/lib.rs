@@ -25,7 +25,6 @@ use edge_protocol::{
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager};
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 mod alerts;
@@ -33,6 +32,7 @@ mod authorization;
 mod bootstrap;
 mod cashgenic;
 mod kiosk;
+mod logging;
 mod overrides;
 mod retail;
 mod scanner;
@@ -352,7 +352,7 @@ fn connection_status(bridge: tauri::State<'_, EdgeBridge>) -> ConnectionStatusDt
 
 /// Start the diagnostic window.
 pub fn run() {
-    init_tracing();
+    let log = logging::init();
 
     // Two ways in. A development run points at a database somebody already
     // started a daemon on. An installed kiosk has no terminal and nobody to
@@ -372,40 +372,39 @@ pub fn run() {
             let database = match (&configured, installed) {
                 (Some(path), _) => path.clone(),
                 (None, true) => {
-                    let data = bootstrap::data_dir(app.handle())?;
-                    log_to_data_dir(&data);
+                    let data = setup_step("data_dir", bootstrap::data_dir(app.handle()))?;
+                    log_to_data_dir(log, &data);
                     data.join("pi-edge.db")
                 }
                 (None, false) => default_database(),
             };
-
             if installed {
                 // Everything a person would otherwise do at a prompt: start
                 // PI.Edge, and install the demo if this installation cannot
                 // already serve every lane the build ships.
                 let owned = app.state::<bootstrap::CoreProcess>();
-                bootstrap::ensure_core(&database, &owned)?;
+                setup_step("ensure_core", bootstrap::ensure_core(&database, &owned))?;
                 // The prices an operator changed on this machine travel with
                 // the seed, so an upgrade that re-imports the dataset carries
                 // them rather than quietly charging the shipped ones again.
-                let data = bootstrap::data_dir(app.handle())?;
-                bootstrap::ensure_demo(
-                    &database,
-                    &bootstrap::bundled_demo(app.handle()),
-                    Some(&overrides::path(&data)),
+                let data = setup_step("data_dir", bootstrap::data_dir(app.handle()))?;
+                setup_step(
+                    "ensure_demo",
+                    bootstrap::ensure_demo(
+                        &database,
+                        &bootstrap::bundled_demo(app.handle()),
+                        Some(&overrides::path(&data)),
+                    ),
                 )?;
+            } else {
+                tracing::info!(
+                    "PX_KIOSK_LOG path=none reason=\"not an installed run: stderr only\""
+                );
             }
 
-            let bridge = EdgeBridge::connect(database.clone()).map_err(|error| {
-                // A kiosk that opens onto nothing is worse than one that says
-                // why, so this is fatal and the reason is logged.
-                tracing::error!(
-                    database = %database.display(),
-                    %error,
-                    "PX Kiosk could not reach PI.Edge"
-                );
-                error
-            })?;
+            // A kiosk that opens onto nothing is worse than one that says why,
+            // so this is fatal and the reason is logged.
+            let bridge = setup_step("edge_bridge_connect", EdgeBridge::connect(database.clone()))?;
             // The resolved endpoint, not the path as written. If this line and
             // the daemon's "edge daemon ready" line disagree, they are talking
             // past each other and nothing else in the window will work.
@@ -473,6 +472,7 @@ pub fn run() {
             showroom::close_day,
             showroom::open_day_command,
             cashgenic::cashgenic_save,
+            cashgenic::cashgenic_set_enabled,
             cashgenic::cashgenic_probe,
             cashgenic::cashgenic_status,
             cashgenic::cashgenic_pay,
@@ -524,43 +524,60 @@ fn forward_core_events(app: &tauri::AppHandle) {
     };
 }
 
-fn init_tracing() {
-    let filter = EnvFilter::try_from_env("PI_EDGE_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_target(false)
-        .try_init();
+/// A setup step's result, with its failure written down first.
+///
+/// Tauri answers an `Err` from `setup` with a panic, and an installed kiosk
+/// has no console to print it on — so the step and the error go to the log
+/// before the error is handed on, unchanged.
+fn setup_step<T, E: std::fmt::Display>(step: &str, result: Result<T, E>) -> Result<T, E> {
+    if let Err(error) = &result {
+        tracing::error!("{}", setup_failure(step, error));
+    }
+    result
 }
 
-/// Also write the log to app-data once the data directory is known.
+fn setup_failure(step: &str, error: &dyn std::fmt::Display) -> String {
+    format!("SETUP_FAILED step={step} error={:?}", error.to_string())
+}
+
+/// Send the log to app-data as well, now that the data directory is known.
 ///
-/// An installed kiosk has no terminal, so a startup that fails has nowhere to
-/// have said so. Appends; never rotates by itself, because a kiosk that
-/// cannot start is the only thing that writes much here.
-fn log_to_data_dir(data: &std::path::Path) {
-    let dir = data.join("logs");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
+/// An installed kiosk has no terminal, so this file is the only place a
+/// startup that fails can have said so. Appends; never rotates by itself,
+/// because a kiosk that cannot start is the only thing that writes much here.
+fn log_to_data_dir(log: &logging::LogFile, data: &std::path::Path) {
+    let path = data.join("logs").join("px-kiosk.log");
+    let attached = std::fs::create_dir_all(data.join("logs")).and_then(|()| log.attach(&path));
+    match attached {
+        Ok(()) => tracing::info!("PX_KIOSK_LOG path={:?}", path.display().to_string()),
+        Err(error) => tracing::error!(
+            "PX_KIOSK_LOG_FAILED path={:?} error={:?}",
+            path.display().to_string(),
+            error.to_string()
+        ),
     }
-    let path = dir.join("px-kiosk.log");
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        Ok(file) => {
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(
-                    EnvFilter::try_from_env("PI_EDGE_LOG")
-                        .unwrap_or_else(|_| EnvFilter::new("info")),
-                )
-                .with_writer(std::sync::Mutex::new(file))
-                .with_ansi(false)
-                .with_target(false)
-                .try_init();
-            tracing::info!(log = %path.display(), "writing a startup log");
-        }
-        Err(error) => tracing::warn!(%error, path = %path.display(), "no startup log"),
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_setup_failure_names_its_step_and_keeps_the_error() {
+        let error = bootstrap::BootstrapError::CoreUnavailable("no \"ready\" in 30s".to_owned());
+        let line = setup_failure("ensure_core", &error);
+        assert!(
+            line.starts_with("SETUP_FAILED step=ensure_core error=\""),
+            "{line}"
+        );
+        assert!(line.contains(&format!("{:?}", error.to_string())), "{line}");
+    }
+
+    #[test]
+    fn setup_step_hands_the_original_error_on() {
+        let result: Result<(), String> = setup_step("ensure_demo", Err("seed refused".to_owned()));
+        assert_eq!(result, Err("seed refused".to_owned()));
+        assert_eq!(setup_step::<u8, String>("ensure_demo", Ok(7)), Ok(7));
     }
 }

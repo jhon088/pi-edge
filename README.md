@@ -99,11 +99,14 @@ the window. There is no console, no seed command and no path to configure.
   opens a second till, and never touches `printer.json`.
 * **Upgrading** installs over the top. Data is outside the install directory,
   so the database, the asset store and the printer configuration survive.
-* **Uninstalling removes the application only.** `%LOCALAPPDATA%\PX Kiosk` —
+* **Uninstalling removes the application only.** `%LOCALAPPDATA%\com.pxcommerce.pxkiosk` —
   database, assets, printer settings and logs — is left alone, deliberately:
   nobody's data should disappear without them asking. Delete that folder by
   hand to remove it.
-* A startup that fails writes `%LOCALAPPDATA%\PX Kiosk\logs\px-kiosk.log`.
+* Every run logs to `%LOCALAPPDATA%\com.pxcommerce.pxkiosk\logs\px-kiosk.log`, and
+  its first line after startup is `PX_KIOSK_LOG path="…"`. A failed startup
+  leaves `SETUP_FAILED step=… error="…"`; the floor endpoint leaves
+  `STATUS_ENDPOINT_LISTENING` or `STATUS_ENDPOINT_BIND_FAILED … os_error=…`.
 
 `demo-seed` is the whole bootstrap and touches no network: it imports the
 local photographs into the content-addressed store, imports and activates the
