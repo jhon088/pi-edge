@@ -49,12 +49,16 @@ use crate::BridgeError;
 /// never looks frozen waiting for one that is not there.
 const TIMEOUT: Duration = Duration::from_secs(4);
 
-/// What the background health check allows itself.
+/// What the background health check allows itself: the same as "Probar
+/// conexión".
 ///
-/// Much shorter, because nothing is waiting on its answer: a poll of
-/// `/demo/status` reads the last result and never dials. A device that cannot
-/// answer in a second on a local switch is a device that is not there.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+/// It was one second, on the theory that a device that cannot answer in a
+/// second on a local switch is not there. The unit on the stand disproved it:
+/// it answered every call, and the watcher still flipped between online and
+/// `connection timed out` (os error 10060) from one round to the next. Nothing
+/// waits on this answer — a poll of `/demo/status` reads the last result and
+/// never dials — so the budget can be the one a person already trusts.
+const PROBE_TIMEOUT: Duration = TIMEOUT;
 
 /// How often the acceptor is asked how it is.
 const PROBE_EVERY: Duration = Duration::from_secs(10);
@@ -251,9 +255,12 @@ impl<'a> CashGenic<'a> {
     }
 
     /// What the machine is: model, firmware, whatever it chooses to say.
-    pub fn system(&self) -> Result<Value, BridgeError> {
-        let token = self.token()?;
-        self.call("GET", "/system", Some(&token), None)
+    ///
+    /// Takes the token rather than asking for one: its only caller is the
+    /// health check, which asks once per round and reads `/status` with the
+    /// same grant.
+    fn system(&self, token: &str) -> Result<Value, BridgeError> {
+        self.call("GET", "/system", Some(token), None)
     }
 
     /// What it is doing right now, including any payment in progress.
@@ -264,7 +271,12 @@ impl<'a> CashGenic<'a> {
     /// hand-written client needs it to be.
     pub fn status(&self) -> Result<Value, BridgeError> {
         let token = self.token()?;
-        self.call("GET", "/status?eventVersion=2", Some(&token), None)
+        self.status_with(&token)
+    }
+
+    /// `status`, with a token the caller already holds.
+    fn status_with(&self, token: &str) -> Result<Value, BridgeError> {
+        self.call("GET", "/status?eventVersion=2", Some(token), None)
     }
 
     /// Start taking notes towards an amount.
@@ -818,9 +830,16 @@ fn probe_with(settings: &CashGenicSettingsV1, timeout: Duration) -> CashGenicSta
         };
     }
     let device = CashGenic::impatient(settings, timeout);
-    match device.system() {
+    // One grant per round: three connections, not four. A token outlives a
+    // round by a long way, and a refused grant is the same "offline" either
+    // way.
+    let token = match device.token() {
+        Ok(token) => token,
+        Err(error) => return CashGenicStatusV1::offline(error.message),
+    };
+    match device.system(&token) {
         Ok(system) => {
-            let mut status = match device.status() {
+            let mut status = match device.status_with(&token) {
                 Ok(reported) => progress(&reported, 0),
                 Err(error) => return CashGenicStatusV1::offline(error.message),
             };
@@ -1323,6 +1342,9 @@ mod tests {
         token_request: Mutex<String>,
         paths: Mutex<Vec<String>>,
         bearers: Mutex<Vec<String>>,
+        /// How long `GET /status` takes to answer. Zero unless a test is
+        /// standing in for a slow unit.
+        status_delay: Mutex<Duration>,
     }
 
     /// Serve TLS on loopback until the test drops it.
@@ -1395,6 +1417,8 @@ mod tests {
                 } else if first.contains("/system") {
                     r#"{"systemVersion":"2.1.49","currency":"MXN","bills":{"connected":true},"coins":{"connected":true}}"#.to_owned()
                 } else {
+                    let delay = heard.status_delay.lock().map(|d| *d).unwrap_or_default();
+                    std::thread::sleep(delay);
                     r#"{"state":"Idle","errorCondition":"None","deposited":0}"#.to_owned()
                 };
                 let _ = stream.write_all(
@@ -1409,6 +1433,82 @@ mod tests {
             }
         });
         address
+    }
+
+    fn bench_settings(address: std::net::SocketAddr, enabled: bool) -> CashGenicSettingsV1 {
+        CashGenicSettingsV1 {
+            enabled,
+            host: address.ip().to_string(),
+            port: address.port(),
+            username: "ApiUserOne".to_owned(),
+            password: "1234".to_owned(),
+        }
+    }
+
+    /// The unit on the stand: it answers, but not inside a second. The
+    /// watcher's own budget — the constant `watch` passes — has to call that
+    /// online, and what it caches is what `/demo/status` publishes.
+    #[test]
+    fn a_unit_slower_than_a_second_is_online_to_the_watcher() {
+        let heard = Arc::new(Heard {
+            status_delay: Mutex::new(Duration::from_millis(1_500)),
+            ..Heard::default()
+        });
+        let address = bench_acceptor(Arc::clone(&heard));
+
+        let status = probe_with(&bench_settings(address, true), PROBE_TIMEOUT);
+
+        assert!(
+            status.online,
+            "a 1.5 s answer was called offline: {:?}",
+            status.detail
+        );
+        assert_eq!(status.state, "Idle");
+        let cache = RwLock::new(CachedHealth::default());
+        remember_in(&cache, status);
+        assert!(
+            cache.read().unwrap().status.online,
+            "the cache holds what the probe saw"
+        );
+    }
+
+    /// And one that does not answer inside the budget is offline, with why.
+    #[test]
+    fn a_unit_slower_than_the_budget_is_offline_with_a_reason() {
+        let heard = Arc::new(Heard {
+            status_delay: Mutex::new(PROBE_TIMEOUT + Duration::from_millis(1_500)),
+            ..Heard::default()
+        });
+        let address = bench_acceptor(Arc::clone(&heard));
+
+        let status = probe_with(&bench_settings(address, true), PROBE_TIMEOUT);
+
+        assert!(!status.online);
+        assert_eq!(status.state, "OFFLINE");
+        let detail = status.detail.unwrap_or_default();
+        assert!(detail.contains(&address.to_string()), "{detail}");
+    }
+
+    #[test]
+    fn the_watcher_budget_is_the_probe_buttons() {
+        assert_eq!(PROBE_TIMEOUT, TIMEOUT);
+        assert_eq!(PROBE_TIMEOUT, Duration::from_secs(4));
+    }
+
+    /// Disabled means not dialled — even with a device right there to answer.
+    #[test]
+    fn a_disabled_acceptor_is_not_dialled_even_when_it_is_there() {
+        let heard = Arc::new(Heard::default());
+        let address = bench_acceptor(Arc::clone(&heard));
+
+        let status = probe_with(&bench_settings(address, false), PROBE_TIMEOUT);
+
+        assert_eq!(status.state, "DISABLED");
+        assert!(!status.online);
+        assert!(
+            heard.paths.lock().unwrap().is_empty(),
+            "a disabled acceptor was dialled"
+        );
     }
 
     /// The whole conversation, over TLS, against a self-signed certificate.
@@ -1457,16 +1557,15 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(" "))
                 .collect::<Vec<_>>(),
-            vec![
-                "POST /token",
-                "GET /system",
-                "POST /token",
-                "GET /status?eventVersion=2",
-            ],
-            "the conversation was not the one the firmware documents"
+            vec!["POST /token", "GET /system", "GET /status?eventVersion=2"],
+            "one grant, then the two reads it covers"
         );
         let bearers = heard.bearers.lock().unwrap().clone();
-        assert_eq!(bearers, vec!["bench-token", "bench-token"]);
+        assert_eq!(
+            bearers,
+            vec!["bench-token", "bench-token"],
+            "the same bearer, twice"
+        );
     }
 
     /// And a payment goes the same way, with the amount in pesos.
@@ -1544,7 +1643,7 @@ mod tests {
             enabled: true,
             ..CashGenicSettingsV1::default()
         };
-        let error = CashGenic::new(&settings).system().unwrap_err();
+        let error = CashGenic::new(&settings).system("t").unwrap_err();
         assert_eq!(error.code, "CASHGENIC_NOT_CONFIGURED");
     }
 }

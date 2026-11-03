@@ -524,15 +524,15 @@ fn products_payload(
 
 /// Everything this kiosk can honestly say about itself, right now.
 fn snapshot(app: &tauri::AppHandle) -> Value {
-    let dir = showroom::data_dir(app).ok();
-    let preferences = dir
-        .as_ref()
-        .map(|dir| showroom::stored(dir))
-        .unwrap_or_default();
-    let day = dir
-        .as_ref()
-        .map(|dir| showroom::stored_day(dir))
-        .unwrap_or_default();
+    snapshot_in(showroom::data_dir(app).ok().as_deref())
+}
+
+/// The same, against a directory: two small files and three locks in memory.
+/// No IPC, no device — the core and the acceptor are read by their own
+/// threads, and this only takes what they last left.
+fn snapshot_in(dir: Option<&std::path::Path>) -> Value {
+    let preferences = dir.map(showroom::stored).unwrap_or_default();
+    let day = dir.map(showroom::stored_day).unwrap_or_default();
 
     let core = core_health()
         .read()
@@ -1394,6 +1394,135 @@ mod tests {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/demo/status");
         assert_eq!(request.body, "");
+    }
+
+    // ------------------------------------------------- how long it takes
+    //
+    // The three routes the floor uses, timed over a real loopback socket from
+    // `accept` to the last byte the client reads. The harness is `answer`
+    // with the routing taken out — the same timeouts, the same request
+    // reader, the same response writer — so what is measured is what a floor
+    // app waits for, minus its own network.
+
+    fn timed(handler: impl Fn(&Request) -> (u16, Value), raw: &[u8]) -> (Duration, Value) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let raw = raw.to_vec();
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream.write_all(&raw).unwrap();
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).unwrap();
+            answer
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let started = std::time::Instant::now();
+        stream.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        stream.set_read_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        let request = read_request(&mut stream, FROM_LAN).unwrap();
+        let (code, body) = handler(&request);
+        stream.write_all(http(code, &body).as_bytes()).unwrap();
+        stream.flush().unwrap();
+        let _ = stream.shutdown(Shutdown::Both);
+        let answer = client.join().unwrap();
+        let took = started.elapsed();
+        let (_, json_body) = answer.split_once("\r\n\r\n").unwrap();
+        (took, serde_json::from_str(json_body).unwrap())
+    }
+
+    fn report(route: &str, mut samples: Vec<Duration>) -> Duration {
+        samples.sort();
+        let median = samples[samples.len() / 2];
+        let max = samples[samples.len() - 1];
+        println!(
+            "LATENCY {route}: median {median:?}, max {max:?}, n={}",
+            samples.len()
+        );
+        max
+    }
+
+    fn raw_post(path: &str, body: &str) -> Vec<u8> {
+        format!(
+            "POST {path} HTTP/1.1\r\nHost: kiosk\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
+    /// The showroom budget for an answer with no device behind it.
+    const SHOWROOM_BUDGET: Duration = Duration::from_millis(500);
+    const ROUNDS: usize = 25;
+
+    #[test]
+    fn a_status_poll_is_answered_from_local_state_inside_the_budget() {
+        let dir = controllable_kiosk();
+        let samples = (0..ROUNDS)
+            .map(|_| {
+                let (took, body) = timed(
+                    |_| (200, snapshot_in(Some(dir.path()))),
+                    b"GET /demo/status HTTP/1.1\r\nHost: kiosk\r\n\r\n",
+                );
+                assert_eq!(body["app_running"], true);
+                took
+            })
+            .collect();
+        assert!(report("GET /demo/status", samples) < SHOWROOM_BUDGET);
+    }
+
+    #[test]
+    fn opening_and_closing_is_persisted_and_answered_inside_the_budget() {
+        let dir = controllable_kiosk();
+        let samples = (0..ROUNDS)
+            .map(|round| {
+                let action = if round % 2 == 0 { "CLOSE" } else { "OPEN" };
+                let (took, body) = timed(
+                    |request| kiosk_control(dir.path(), request),
+                    &raw_post(
+                        "/demo/control/kiosk",
+                        &format!(r#"{{"action":"{action}","pin":"4821"}}"#),
+                    ),
+                );
+                assert_eq!(body["success"], true, "{body}");
+                // Persisted before the answer left: the file already says so.
+                assert_eq!(showroom::stored(dir.path()).kiosk_open, action == "OPEN");
+                took
+            })
+            .collect();
+        assert!(report("POST /demo/control/kiosk", samples) < SHOWROOM_BUDGET);
+    }
+
+    #[test]
+    fn an_approval_is_applied_and_answered_inside_the_budget() {
+        let _turn = crate::authorization::turn();
+        let dir = controllable_kiosk();
+        let restricted = std::collections::BTreeSet::from(["R-ARRACHERA".to_owned()]);
+        let samples = (0..ROUNDS)
+            .map(|round| {
+                crate::authorization::clear();
+                let sale = format!("sale-{round}");
+                let waiting = crate::authorization::require(
+                    &sale,
+                    vec![crate::authorization::AuthorizationProductV1 {
+                        product_ref: "R-ARRACHERA".to_owned(),
+                        name: "Arrachera".to_owned(),
+                    }],
+                );
+                let (took, body) = timed(
+                    |request| authorization_control(dir.path(), request),
+                    &raw_post(
+                        "/demo/control/authorization",
+                        &format!(r#"{{"request_id":"{}","pin":"4821"}}"#, waiting.request_id),
+                    ),
+                );
+                assert_eq!(body["success"], true, "{body}");
+                // Applied before the answer left: the gate is already open.
+                assert!(crate::authorization::allows(&sale, &restricted));
+                took
+            })
+            .collect();
+        crate::authorization::clear();
+        assert!(report("POST /demo/control/authorization", samples) < SHOWROOM_BUDGET);
     }
 
     // ------------------------------------ the control routes, end to end

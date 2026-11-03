@@ -72,10 +72,14 @@ const CONFIRM_SECONDS = 4 satisfies 4;
  * How often a held basket re-asks whether it is still held.
  *
  * Only while the hold is on the screen, and it stops the moment it comes off.
- * Two seconds is the pace of somebody walking over to a lane; the host answers
- * this from state it already has, and the question is idempotent.
+ * One second, because an approval sent from a floor app lands in the host in
+ * well under a millisecond and this interval is the whole of what the
+ * customer then waits: at two seconds, plus the live printer read every
+ * recheck makes, the lane could take longer than two seconds to let go. The
+ * question is idempotent, and a USB status read that is still out refuses the
+ * next one at once rather than stacking behind it.
  */
-const AUTHORIZATION_POLL_MS = 2_000;
+const AUTHORIZATION_POLL_MS = 1_000;
 
 type Stage =
   | "loading"
